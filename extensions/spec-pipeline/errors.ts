@@ -1,0 +1,332 @@
+/**
+ * Error handling for the spec pipeline
+ */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type {
+	ErrorType,
+	ErrorDetails,
+	AgentName,
+	RoleName,
+	AgentResult,
+	PipelineState,
+} from "./types.ts";
+import { getStateDir, saveState } from "./state.ts";
+import { stashChanges } from "./git.ts";
+import { formatBox, formatKeyValue, formatDivider } from "./formatting.ts";
+
+// ============================================
+// Error Classification
+// ============================================
+
+/**
+ * Classify error type from stderr output
+ */
+export function classifyError(stderr: string | undefined): ErrorType {
+	if (!stderr) return "UNKNOWN";
+	
+	const lowerStderr = stderr.toLowerCase();
+	
+	// Rate limit detection (HTTP 429 or rate limit text)
+	if (
+		lowerStderr.includes("429") ||
+		lowerStderr.includes("rate limit") ||
+		lowerStderr.includes("rate_limit") ||
+		lowerStderr.includes("ratelimit") ||
+		lowerStderr.includes("too many requests")
+	) {
+		return "RATE_LIMIT";
+	}
+	
+	// Timeout detection
+	if (
+		lowerStderr.includes("timeout") ||
+		lowerStderr.includes("timed out") ||
+		lowerStderr.includes("etimedout")
+	) {
+		return "TIMEOUT";
+	}
+	
+	// Network error detection
+	if (
+		lowerStderr.includes("econnrefused") ||
+		lowerStderr.includes("enotfound") ||
+		lowerStderr.includes("network") ||
+		lowerStderr.includes("connection") ||
+		lowerStderr.includes("socket") ||
+		lowerStderr.includes("dns")
+	) {
+		return "NETWORK";
+	}
+	
+	// Validation error detection
+	if (
+		lowerStderr.includes("invalid") ||
+		lowerStderr.includes("validation") ||
+		lowerStderr.includes("malformed") ||
+		lowerStderr.includes("parse error")
+	) {
+		return "VALIDATION";
+	}
+	
+	return "UNKNOWN";
+}
+
+/**
+ * Get emoji indicator for error type
+ */
+export function getErrorEmoji(errorType: ErrorType): string {
+	switch (errorType) {
+		case "RATE_LIMIT":
+			return "⏱️";  // Clock for rate limiting
+		case "TIMEOUT":
+			return "⌛";  // Hourglass for timeout
+		case "NETWORK":
+			return "🌐";  // Globe for network issues
+		case "VALIDATION":
+			return "⚠️";  // Warning for validation
+		case "UNKNOWN":
+		default:
+			return "❓";  // Question mark for unknown
+	}
+}
+
+/**
+ * Get actionable suggestion based on error type
+ */
+export function getErrorSuggestion(errorType: ErrorType): string {
+	switch (errorType) {
+		case "RATE_LIMIT":
+			return "Wait a few minutes for rate limits to reset, then run `/spec-resume` to retry";
+		case "TIMEOUT":
+			return "Check your network connection, then run `/spec-resume` to retry";
+		case "NETWORK":
+			return "Check your network connection, then run `/spec-resume` to retry";
+		case "VALIDATION":
+			return "Review the error details above. You may need to manually fix issues before resuming.";
+		case "UNKNOWN":
+		default:
+			return "Check error details in the log file, then run `/spec-resume` to retry";
+	}
+}
+
+// ============================================
+// Error Logging
+// ============================================
+
+/**
+ * Truncate string to specified length, adding ellipsis if truncated
+ */
+export function truncateString(str: string, maxLength: number): string {
+	if (str.length <= maxLength) return str;
+	return str.slice(0, maxLength - 3) + "...";
+}
+
+/**
+ * Append error details to the error log file.
+ * This file is intentionally preserved (not cleaned up) for debugging history.
+ */
+export function appendErrorLog(cwd: string, pipelineId: string, error: ErrorDetails): void {
+	const stateDir = getStateDir(cwd);
+	if (!fs.existsSync(stateDir)) {
+		fs.mkdirSync(stateDir, { recursive: true });
+	}
+	
+	const logPath = path.join(stateDir, `${pipelineId}.error.log`);
+	
+	const logEntry = `
+================================================================================
+ERROR LOG ENTRY - ${error.timestamp}
+================================================================================
+Agent: ${error.agent}
+Role: ${error.role}
+Error Type: ${error.errorType}
+Exit Code: ${error.exitCode}
+${error.phase !== undefined ? `Phase: ${error.phase}` : ""}
+${error.cycle !== undefined ? `Cycle: ${error.cycle}` : ""}
+
+--- STDERR ---
+${error.stderr || "(no stderr output)"}
+
+--- AGENT TASK ---
+${error.agentTask}
+================================================================================
+
+`;
+	
+	fs.appendFileSync(logPath, logEntry, "utf-8");
+}
+
+// ============================================
+// Error Handling
+// ============================================
+
+/**
+ * Handle agent error - save state, log error, notify user
+ * Returns the ErrorDetails object for the caller to use
+ */
+export async function handleAgentError(
+	cwd: string,
+	state: PipelineState,
+	result: AgentResult,
+	agent: AgentName,
+	role: RoleName,
+	task: string,
+	phase: number | undefined,
+	cycle: number | undefined,
+	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void
+): Promise<ErrorDetails> {
+	const errorDetails: ErrorDetails = {
+		timestamp: new Date().toISOString(),
+		agent,
+		role,
+		phase,
+		cycle,
+		exitCode: result.exitCode,
+		stderr: truncateString(result.error || "", 2000),
+		errorType: classifyError(result.error),
+		agentTask: task,
+	};
+	
+	// Stash any uncommitted changes from the failed operation
+	if (state.pipelineBranch) {
+		const stashRef = await stashChanges(cwd, errorDetails.timestamp.replace(/[:.]/g, "-"));
+		if (stashRef) {
+			state.errorStash = stashRef;
+			notify("💾 Uncommitted changes stashed for recovery", "info");
+		}
+	}
+	
+	// Save to state
+	state.lastError = errorDetails;
+	saveState(cwd, state);
+	
+	// Append to error log
+	appendErrorLog(cwd, state.id, errorDetails);
+	
+	// Format user notification with visual formatting
+	const emoji = getErrorEmoji(errorDetails.errorType);
+	const phaseInfo = phase !== undefined 
+		? ` (Phase ${phase}${cycle !== undefined ? `, Cycle ${cycle}` : ""})` 
+		: "";
+	
+	// Build notification content
+	const notifyLines: string[] = [];
+	notifyLines.push(`${emoji} ${role} failed${phaseInfo}`);
+	notifyLines.push("");
+	notifyLines.push(formatKeyValue("Error Type", errorDetails.errorType, 12));
+	
+	if (errorDetails.stderr) {
+		const preview = truncateString(errorDetails.stderr, 300);
+		notifyLines.push("");
+		notifyLines.push("Error Message:");
+		notifyLines.push(`  ${preview}`);
+	}
+	
+	notifyLines.push("");
+	notifyLines.push(formatDivider(40));
+	notifyLines.push("");
+	notifyLines.push(`💡 ${getErrorSuggestion(errorDetails.errorType)}`);
+	notifyLines.push("");
+	notifyLines.push(`📁 Error log: .pi/spec-pipeline/${state.id}.error.log`);
+	notifyLines.push(`🔍 Details: /spec-error`);
+	
+	notify(notifyLines.join("\n"), "error");
+	
+	return errorDetails;
+}
+
+// ============================================
+// Error Display Formatting
+// ============================================
+
+/**
+ * Format error details for display before retry
+ * Returns formatted string for user notification
+ */
+export function formatErrorForRetry(error: ErrorDetails, state: PipelineState): string {
+	const emoji = getErrorEmoji(error.errorType);
+	const content: string[] = [];
+	
+	content.push(formatKeyValue("Failed at", error.timestamp));
+	content.push(formatKeyValue("Agent", error.agent));
+	content.push(formatKeyValue("Role", error.role));
+	
+	if (error.phase !== undefined) {
+		const totalPhases = state.phases.length || "?";
+		const phaseInfo = `${error.phase} of ${totalPhases}`;
+		if (error.cycle !== undefined) {
+			content.push(formatKeyValue("Phase", phaseInfo));
+			// Note: We can't access projectConfig here, so show cycle count without total
+			content.push(formatKeyValue("Cycle", String(error.cycle)));
+		} else {
+			content.push(formatKeyValue("Phase", phaseInfo));
+		}
+	}
+	
+	content.push(formatKeyValue("Error type", `${emoji} ${error.errorType}`));
+	
+	if (error.stderr) {
+		const preview = error.stderr.length > 150 
+			? error.stderr.slice(0, 150) + "..." 
+			: error.stderr;
+		content.push(formatKeyValue("Message", preview));
+	}
+	
+	content.push("");
+	content.push(`💡 ${getErrorSuggestion(error.errorType)}`);
+	
+	const box = formatBox("Resuming from Error", content, 55);
+	return "\n" + box + "\n";
+}
+
+/**
+ * Format error details as a visually appealing box for display
+ * Used by /spec-status and /spec-error commands
+ */
+export function formatErrorBox(error: ErrorDetails, state: PipelineState): string {
+	const emoji = getErrorEmoji(error.errorType);
+	const content: string[] = [];
+	
+	content.push(formatKeyValue("Timestamp", error.timestamp));
+	content.push(formatKeyValue("Agent", `${error.agent} (${error.role})`));
+	
+	if (error.phase !== undefined) {
+		const totalPhases = state.phases.length || "?";
+		let phaseInfo = `${error.phase} of ${totalPhases}`;
+		if (error.cycle !== undefined) {
+			phaseInfo += `, Cycle ${error.cycle} of 3`;
+		}
+		content.push(formatKeyValue("Phase", phaseInfo));
+	}
+	
+	content.push(formatKeyValue("Error Type", `${emoji} ${error.errorType}`));
+	content.push(formatKeyValue("Exit Code", String(error.exitCode)));
+	
+	if (error.stderr) {
+		content.push("");
+		content.push("─── Error Message ───");
+		// Truncate and format error message
+		const preview = truncateString(error.stderr, 400);
+		// Split by newlines and add each line
+		for (const line of preview.split("\n").slice(0, 6)) {
+			content.push(`  ${line.trim()}`);
+		}
+	}
+	
+	content.push("");
+	content.push("─── Recovery ───");
+	content.push(`  ${getErrorSuggestion(error.errorType)}`);
+	
+	content.push("");
+	content.push(formatKeyValue("Error Log", `.pi/spec-pipeline/${state.id}.error.log`));
+	
+	if (error.agentTask) {
+		content.push(formatKeyValue("Can Retry", "Yes (/spec-resume)"));
+	} else {
+		content.push(formatKeyValue("Can Retry", "No (task not stored)"));
+	}
+	
+	return formatBox(`${emoji} Error Details`, content);
+}

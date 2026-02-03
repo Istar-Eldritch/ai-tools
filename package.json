@@ -1,0 +1,14 @@
+{
+  "workspaces": ["extensions/*"],
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.49.3",
+    "@types/node": "^25.1.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}

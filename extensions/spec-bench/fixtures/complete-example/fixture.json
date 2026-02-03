@@ -1,0 +1,7 @@
+{
+  "name": "Complete Example",
+  "description": "A complete fixture demonstrating all spec-bench features including discovery responses and hidden tests. Implements a calculator module.",
+  "hiddenTestsTarget": "tests/hidden",
+  "testCommand": "npm test",
+  "timeout": 3600
+}
