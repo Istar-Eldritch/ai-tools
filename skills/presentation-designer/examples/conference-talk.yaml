@@ -1,0 +1,130 @@
+presentation:
+  metadata:
+    title: "Building Resilient Microservices"
+    author: "Jane Smith"
+    date: "2026-03-15"
+    duration: 20
+    type: conference
+    version: "1.0"
+  
+  purpose:
+    primary_goal: "Share practical patterns for building fault-tolerant microservices"
+    objectives:
+      - "Introduce key resilience patterns"
+      - "Show real-world implementation examples"
+      - "Provide actionable takeaways"
+    success_criteria:
+      - "Attendees understand circuit breaker pattern"
+      - "Attendees can implement retry strategies"
+      - "At least 3 practical tips shared"
+  
+  audience:
+    profile: "Backend engineers and architects with microservices experience"
+    size: "100-200 people"
+    knowledge_level: "Intermediate - familiar with distributed systems"
+    expectations:
+      - "Practical, battle-tested solutions"
+      - "Real code examples"
+      - "Brief and focused content"
+  
+  key_messages:
+    - "Failures are inevitable in distributed systems"
+    - "Design for failure from the start"
+    - "Circuit breakers and retries are your friends"
+  
+  structure:
+    total_slides: 15
+    sections:
+      - name: "Introduction"
+        slides: 2
+        duration: 2
+        content:
+          - "Title and speaker intro"
+          - "Why resilience matters"
+      
+      - name: "The Problem"
+        slides: 3
+        duration: 4
+        content:
+          - "Common failure modes"
+          - "Cascade failures example"
+          - "Cost of downtime"
+      
+      - name: "Key Patterns"
+        slides: 7
+        duration: 11
+        content:
+          - "Circuit breaker pattern"
+          - "Code example: implementing circuit breaker"
+          - "Retry strategies"
+          - "Timeout configuration"
+          - "Bulkhead isolation"
+          - "Fallback mechanisms"
+          - "Health checks and monitoring"
+      
+      - name: "Real-World Case Study"
+        slides: 2
+        duration: 2
+        content:
+          - "Production incident walkthrough"
+          - "How resilience patterns helped"
+      
+      - name: "Conclusion"
+        slides: 1
+        duration: 1
+        content:
+          - "Key takeaways and resources"
+  
+  visual_style:
+    theme: "Modern tech conference"
+    color_scheme:
+      primary: "#FF6B6B"
+      secondary: "#4ECDC4"
+      accent: "#FFE66D"
+      background: "#FFFFFF"
+      text: "#2C3E50"
+    
+    typography:
+      heading_font: "Roboto"
+      body_font: "Open Sans"
+      code_font: "Fira Code"
+    
+    layout_preferences:
+      - "Clean and minimal"
+      - "Large code snippets"
+      - "One main idea per slide"
+      - "High contrast for readability"
+    
+    visual_elements:
+      - "Architecture diagrams"
+      - "Code examples with syntax highlighting"
+      - "Simple icons for patterns"
+      - "Before/after comparisons"
+  
+  content_guidelines:
+    tone: "Confident and practical"
+    language_level: "Technical but accessible"
+    complexity: "Intermediate - assume distributed systems knowledge"
+    
+    dos:
+      - "Use real production examples"
+      - "Show actual code, not pseudocode"
+      - "Keep text minimal on slides"
+      - "Use diagrams to explain concepts"
+    
+    donts:
+      - "Don't dive too deep into theory"
+      - "Avoid jargon without explanation"
+      - "Don't overload slides with text"
+  
+  technical_notes:
+    tools_needed:
+      - "Code editor for live demos"
+      - "Terminal for running examples"
+    
+    special_requirements:
+      - "High-resolution projector for code readability"
+    
+    backup_plans:
+      - "Screenshots of code in case live demo fails"
+      - "Pre-recorded demo video as fallback"

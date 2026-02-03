@@ -1,0 +1,22 @@
+{
+  "name": "presentation-designer",
+  "version": "1.0.0",
+  "description": "Interactive presentation design tool for AI-assisted Typst presentation generation",
+  "type": "module",
+  "main": "designer.js",
+  "scripts": {
+    "start": "node designer.js"
+  },
+  "keywords": [
+    "presentation",
+    "design",
+    "typst",
+    "polylux",
+    "slides"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "yaml": "^2.3.4"
+  }
+}
