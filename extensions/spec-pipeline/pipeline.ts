@@ -495,16 +495,27 @@ ${questions}
 		const resumingMidIteration = state.stage === "spec_review" || state.stage === "user_approval";
 		
 		while (!state.specApproved && state.specIteration < MAX_SPEC_ITERATIONS) {
+			// Check if spec file exists - this helps detect if we cancelled mid-drafting
+			const fullSpecPath = path.join(cwd, state.specPath);
+			const specFileExists = fs.existsSync(fullSpecPath);
+			
 			// Only increment iteration and run specDrafter if NOT resuming mid-iteration
-			const skipSpecDrafter = resumingMidIteration && state.specIteration > 0;
+			// Also check if we're on iteration > 0 but spec file doesn't exist (cancelled mid-draft)
+			const skipSpecDrafter = resumingMidIteration && state.specIteration > 0 && specFileExists;
+			
+			// If iteration counter is > 0 but spec file doesn't exist, we cancelled during first draft
+			// Reset iteration to 0 so we treat this as the initial drafting attempt
+			if (state.specIteration > 0 && !specFileExists) {
+				ctx.ui.notify("🔄 Detected cancelled mid-draft, resetting iteration counter", "info");
+				state.specIteration = 0;
+				saveState(cwd, state);
+			}
 			
 			if (!skipSpecDrafter) {
 				state.specIteration++;
 				state.stage = "spec_drafting";
 				saveState(cwd, state);
 			}
-
-			const fullSpecPath = path.join(cwd, state.specPath);
 			
 			// ========================================
 			// STEP 1: Spec Drafting (skip if resuming mid-iteration)
@@ -528,9 +539,11 @@ ${questions}
 					? `\n\n## Discovery Context\n\nThe following requirements were gathered during discovery:\n\n${state.discovery.discoverySummary}\n\nUse this information to create a comprehensive specification.\n`
 					: "";
 
-				const draftTask =
-					state.specIteration === 1
-						? `Create a technical specification for: ${state.description}
+				// Determine if this is truly the first iteration (even if counter says otherwise)
+				const isFirstIteration = state.specIteration === 1 || !specFileExists;
+				
+				const draftTask = isFirstIteration
+					? `Create a technical specification for: ${state.description}
 ${discoveryContext}
 The spec timestamp is: ${state.specTimestamp}
 
@@ -547,7 +560,7 @@ Explore the project structure first to understand conventions:
 Focus on creating a clear spec that fits this project's patterns.
 Incorporate all requirements gathered during discovery.
 After creating the spec content, use the write tool to save it to the path above.`
-						: `Revise the spec based on the feedback below.
+					: `Revise the spec based on the feedback below.
 
 IMPORTANT: If both user feedback and reviewer feedback are provided, USER FEEDBACK TAKES PRIORITY.
 Follow user instructions even if they conflict with reviewer suggestions.

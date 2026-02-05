@@ -318,14 +318,33 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 				// Reset cancelled state to the appropriate resume point
-				if (state.discovery && !state.discovery.completed) {
-					state.stage = "discovery";
-				} else if (!state.specApproved) {
-					state.stage = "spec_drafting";
-				} else if (!state.phasesGenerated.every(Boolean)) {
-					state.stage = "plan_generation";
+				// Use saved stage if available (newer cancellations)
+				if (state.stageBeforeCancellation && state.stageBeforeCancellation !== "cancelled") {
+					ctx.ui.notify(`Resuming from saved stage: ${formatStage(state.stageBeforeCancellation)}`, "info");
+					state.stage = state.stageBeforeCancellation;
+					state.stageBeforeCancellation = undefined;
 				} else {
-					state.stage = "implementation";
+					// Fallback: infer stage from state (older cancellations or edge cases)
+					if (state.discovery && !state.discovery.completed) {
+						state.stage = "discovery";
+					} else if (!state.specApproved) {
+						// Check if we were mid-iteration in spec drafting
+						const fullSpecPath = path.join(cwd, state.specPath);
+						const specFileExists = fs.existsSync(fullSpecPath);
+						
+						if (specFileExists && state.specIteration > 0) {
+							// Spec exists and we had started - likely in review or user_approval
+							// Default to spec_review as it's safer (will run review again)
+							state.stage = "spec_review";
+						} else {
+							// Either no spec file yet, or iteration 0 - start from drafting
+							state.stage = "spec_drafting";
+						}
+					} else if (!state.phasesGenerated.every(Boolean)) {
+						state.stage = "plan_generation";
+					} else {
+						state.stage = "implementation";
+					}
 				}
 				saveState(cwd, state);
 			}
@@ -660,6 +679,10 @@ export default function (pi: ExtensionAPI) {
 			);
 
 			if (confirm) {
+				// Save the current stage before cancelling
+				if (state.stage !== "cancelled") {
+					state.stageBeforeCancellation = state.stage;
+				}
 				state.stage = "cancelled";
 				saveState(cwd, state);
 				

@@ -273,6 +273,9 @@ export interface PipelineState {
 	createdAt: string;
 	updatedAt: string;
 	
+	// Stage before cancellation (for resume)
+	stageBeforeCancellation?: PipelineStage;
+	
 	// Discovery state (optional for backward compatibility)
 	discovery?: DiscoveryState;
 	
