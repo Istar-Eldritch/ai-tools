@@ -83,6 +83,8 @@ export const SpecPipelineConfigSchema = Type.Object({
 	})),
 	models: Type.Optional(ModelsConfigSchema),
 	reviewCycles: Type.Optional(ReviewCyclesConfigSchema),
+	// Experimental: skip plan generation phase (go directly from spec to implementation)
+	skipPlanGeneration: Type.Optional(Type.Boolean()),
 });
 
 // ============================================
@@ -92,6 +94,7 @@ export const SpecPipelineConfigSchema = Type.Object({
 export type ModelConfig = Static<typeof ModelConfigSchema>;
 export type TieredModelConfig = Static<typeof TieredModelConfigSchema>;
 export type ModelsConfig = Static<typeof ModelsConfigSchema>;
+export type ThinkingLevel = Static<typeof ThinkingLevelSchema>;
 export type SingleReviewerCycles = Static<typeof SingleReviewerCyclesSchema>;
 export type PerReviewerCycles = Static<typeof PerReviewerCyclesSchema>;
 export type ReviewCyclesConfig = Static<typeof ReviewCyclesConfigSchema>;
@@ -101,6 +104,58 @@ export interface NormalizedReviewCycles {
 	specReviewer: { cheap: number; expensive: number };
 	planReviewer: { cheap: number; expensive: number };
 	codeReviewer: { cheap: number; expensive: number };
+}
+
+// ============================================
+// Metrics Types (for A/B testing plan generation)
+// ============================================
+
+/**
+ * Metrics for a single agent call
+ */
+export interface AgentCallMetrics {
+	role: RoleName;
+	model: "opus" | "sonnet" | "haiku";
+	thinking: ThinkingLevel;
+	startTime: string;      // ISO timestamp
+	endTime: string;        // ISO timestamp
+	durationMs: number;     // Wall clock duration
+	exitCode: number;
+	phase?: number;         // Phase index if applicable
+	cycle?: number;         // Review cycle if applicable
+	tier?: "cheap" | "expensive";  // Review tier if applicable
+}
+
+/**
+ * Aggregated metrics for the pipeline run
+ */
+export interface PipelineMetrics {
+	// Timing metrics
+	pipelineStartTime: string;
+	pipelineEndTime?: string;
+	totalDurationMs?: number;
+	
+	// Phase timing breakdown
+	discoveryDurationMs?: number;
+	specDraftingDurationMs?: number;
+	planGenerationDurationMs?: number;
+	implementationDurationMs?: number;
+	
+	// Agent call tracking
+	agentCalls: AgentCallMetrics[];
+	
+	// Review cycle metrics
+	specReviewCycles: { cheap: number; expensive: number };
+	planReviewCycles: { cheap: number; expensive: number };
+	codeReviewCycles: { cheap: number; expensive: number };
+	
+	// Quality indicators
+	specIterations: number;           // How many spec drafts before approval
+	codeReviewFirstPassRate: number;  // % of phases approved on first review
+	
+	// Configuration for comparison
+	skipPlanGeneration: boolean;
+	discoverySkipped: boolean;
 }
 
 // ============================================
@@ -132,6 +187,8 @@ export interface ProjectConfig {
 	// Review cycle counts per reviewer
 	// Setting both cheap and expensive to 0 skips that review entirely
 	reviewCycles: NormalizedReviewCycles;
+	// Experimental: skip plan generation (go directly from spec to implementation)
+	skipPlanGeneration: boolean;
 }
 
 // ============================================
@@ -253,6 +310,12 @@ export interface PipelineState {
 	pipelineBranch?: string;     // Generated branch name for this pipeline
 	checkpoints?: string[];      // Array of checkpoint commit hashes
 	errorStash?: string;         // Stash reference if error occurred
+	
+	// Metrics tracking (for A/B testing plan generation value)
+	metrics?: PipelineMetrics;
+	
+	// Experimental flag: whether plan generation was skipped
+	skipPlanGeneration?: boolean;
 }
 
 // ============================================

@@ -81,6 +81,20 @@ describe("validateConfig", () => {
 			};
 			expect(validateConfig(config)).toEqual([]);
 		});
+
+		it("accepts skipPlanGeneration boolean", () => {
+			const config = {
+				skipPlanGeneration: true,
+			};
+			expect(validateConfig(config)).toEqual([]);
+		});
+
+		it("accepts skipPlanGeneration false", () => {
+			const config = {
+				skipPlanGeneration: false,
+			};
+			expect(validateConfig(config)).toEqual([]);
+		});
 	});
 
 	describe("invalid configurations", () => {

@@ -9,6 +9,9 @@ import type {
 	DiscoveryQA,
 	ProjectConfig,
 	PipelineUIContext,
+	PipelineMetrics,
+	AgentCallMetrics,
+	RoleName,
 } from "./types.ts";
 import { MAX_SPEC_ITERATIONS } from "./types.ts";
 import { saveState, generateDiscoverySummary } from "./state.ts";
@@ -26,6 +29,70 @@ import {
 import { runAgent, runAgentWithConfig } from "./agents.ts";
 import { runTieredReview } from "./review.ts";
 import { createSystemPrompts } from "./agents-config.ts";
+
+// ============================================
+// Metrics Helpers
+// ============================================
+
+/**
+ * Initialize metrics for a new pipeline run
+ */
+function initializeMetrics(skipPlanGeneration: boolean, discoverySkipped: boolean): PipelineMetrics {
+	return {
+		pipelineStartTime: new Date().toISOString(),
+		agentCalls: [],
+		specReviewCycles: { cheap: 0, expensive: 0 },
+		planReviewCycles: { cheap: 0, expensive: 0 },
+		codeReviewCycles: { cheap: 0, expensive: 0 },
+		specIterations: 0,
+		codeReviewFirstPassRate: 0,
+		skipPlanGeneration,
+		discoverySkipped,
+	};
+}
+
+/**
+ * Record an agent call in metrics
+ */
+function recordAgentCall(
+	metrics: PipelineMetrics,
+	role: RoleName,
+	model: "opus" | "sonnet" | "haiku",
+	thinking: string,
+	startTime: Date,
+	exitCode: number,
+	phase?: number,
+	cycle?: number,
+	tier?: "cheap" | "expensive"
+): void {
+	const endTime = new Date();
+	const call: AgentCallMetrics = {
+		role,
+		model,
+		thinking: thinking as AgentCallMetrics["thinking"],
+		startTime: startTime.toISOString(),
+		endTime: endTime.toISOString(),
+		durationMs: endTime.getTime() - startTime.getTime(),
+		exitCode,
+		phase,
+		cycle,
+		tier,
+	};
+	metrics.agentCalls.push(call);
+}
+
+/**
+ * Finalize metrics at pipeline completion
+ */
+function finalizeMetrics(metrics: PipelineMetrics, phasesCount: number, phasesApprovedFirstPass: number): void {
+	metrics.pipelineEndTime = new Date().toISOString();
+	const startTime = new Date(metrics.pipelineStartTime).getTime();
+	const endTime = new Date(metrics.pipelineEndTime).getTime();
+	metrics.totalDurationMs = endTime - startTime;
+	metrics.codeReviewFirstPassRate = phasesCount > 0 
+		? Math.round((phasesApprovedFirstPass / phasesCount) * 100)
+		: 0;
+}
 
 // ============================================
 // Phase Extraction
@@ -84,6 +151,18 @@ export async function runPipeline(
 ): Promise<void> {
 	const specsDir = path.join(cwd, projectConfig.specsDir);
 	const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+
+	// Initialize or restore metrics
+	if (!state.metrics) {
+		const discoverySkipped = state.discovery?.skipped ?? true;
+		state.metrics = initializeMetrics(projectConfig.skipPlanGeneration, discoverySkipped);
+		state.skipPlanGeneration = projectConfig.skipPlanGeneration;
+		saveState(cwd, state);
+	}
+	const metrics = state.metrics;
+
+	// Track phase timing markers
+	let phaseStartTime: Date | undefined;
 
 	// Create specs directory if it doesn't exist
 	if (!fs.existsSync(specsDir)) {
@@ -175,6 +254,7 @@ Focus on:
 - Integration details
 - Non-functional requirements`;
 
+			const questionStartTime = new Date();
 			const questionResult = await runAgentWithConfig(
 				discoveryConfig,
 				questionTask,
@@ -184,6 +264,7 @@ Focus on:
 				undefined,
 				"discoveryAgent"
 			);
+			recordAgentCall(metrics, "discoveryAgent", discoveryConfig.model, discoveryConfig.thinking, questionStartTime, questionResult.exitCode);
 
 			if (questionResult.exitCode !== 0) {
 				await handleAgentError(
@@ -480,6 +561,7 @@ Then revise it and write the updated version back to the SAME path.
 Previous feedback to address:
 ${state.specDraft}`;
 
+				const draftStartTime = new Date();
 				const draftResult = await runAgentWithConfig(
 					specDrafterConfig,
 					draftTask,
@@ -489,6 +571,9 @@ ${state.specDraft}`;
 					undefined,
 					"specDrafter"
 				);
+				recordAgentCall(metrics, "specDrafter", specDrafterConfig.model, specDrafterConfig.thinking, draftStartTime, draftResult.exitCode);
+				metrics.specIterations = state.specIteration;
+				saveState(cwd, state);
 
 				if (draftResult.exitCode !== 0) {
 					await handleAgentError(
@@ -578,6 +663,11 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 					clearPipelineWidget(ctx);
 					return;
 				}
+				
+				// Track spec review metrics
+				metrics.specReviewCycles.cheap += specReviewResult.cheapCyclesCompleted;
+				metrics.specReviewCycles.expensive += specReviewResult.expensiveCyclesCompleted;
+				saveState(cwd, state);
 				
 				// Show summary of spec review
 				ctx.ui.notify(formatAgentSummary(
@@ -720,18 +810,33 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 	}
 
 	// Generate implementation plans for phases that haven't been generated yet
-	state.stage = "plan_generation";
-	saveState(cwd, state);
+	// UNLESS skipPlanGeneration is enabled (A/B testing experiment)
+	if (projectConfig.skipPlanGeneration) {
+		// Skip plan generation entirely - mark all phases as "generated" 
+		// The implementer will work directly from the spec
+		ctx.ui.notify(formatStepBanner(
+			"PLAN GENERATION SKIPPED",
+			"Direct implementation mode (skipPlanGeneration=true)",
+			"⏭️"
+		), "info");
+		ctx.ui.notify("Implementation will work directly from spec without detailed plans", "info");
+		
+		// Mark all phases as generated (they'll use spec content directly)
+		state.phasesGenerated = state.phases.map(() => true);
+		saveState(cwd, state);
+	} else {
+		state.stage = "plan_generation";
+		saveState(cwd, state);
 
-	// Show step banner for plan generation
-	ctx.ui.notify(formatStepBanner(
-		"PLAN GENERATION PHASE",
-		`Creating implementation plans for ${state.phases.length} phase(s)`,
-		"📋"
-	), "info");
+		// Show step banner for plan generation
+		ctx.ui.notify(formatStepBanner(
+			"PLAN GENERATION PHASE",
+			`Creating implementation plans for ${state.phases.length} phase(s)`,
+			"📋"
+		), "info");
 
-	for (let i = 0; i < state.phases.length; i++) {
-		if (state.phasesGenerated[i]) {
+		for (let i = 0; i < state.phases.length; i++) {
+			if (state.phasesGenerated[i]) {
 			continue;
 		}
 
@@ -768,6 +873,7 @@ Explore the codebase first to understand:
 
 Then create a detailed, executable plan and save it to the path above.`;
 
+		const planStartTime = new Date();
 		const planDraftResult = await runAgentWithConfig(
 			planDrafterConfig,
 			planTask,
@@ -777,6 +883,8 @@ Then create a detailed, executable plan and save it to the path above.`;
 			undefined,
 			"planDrafter"
 		);
+		recordAgentCall(metrics, "planDrafter", planDrafterConfig.model, planDrafterConfig.thinking, planStartTime, planDraftResult.exitCode, i + 1);
+		saveState(cwd, state);
 
 		if (planDraftResult.exitCode !== 0) {
 			await handleAgentError(
@@ -841,6 +949,11 @@ Read the spec and current plan, revise to address the feedback, and write back t
 			return;
 		}
 		
+		// Track plan review metrics
+		metrics.planReviewCycles.cheap += planReviewResult.cheapCyclesCompleted;
+		metrics.planReviewCycles.expensive += planReviewResult.expensiveCyclesCompleted;
+		saveState(cwd, state);
+		
 		// Show summary of plan review
 		ctx.ui.notify(formatAgentSummary(
 			`planReviewer (${planReviewResult.finalTier})`,
@@ -856,7 +969,8 @@ Read the spec and current plan, revise to address the feedback, and write back t
 		state.phasesGenerated[i] = true;
 		saveState(cwd, state);
 		ctx.ui.notify(`Phase ${i + 1} plan saved to ${phasePath}`, "success");
-	}
+		}
+	} // End of else block for !skipPlanGeneration
 
 	// ============================================
 	// Commit spec (if not already committed)
@@ -932,7 +1046,34 @@ ${state.specDraft.slice(0, 2000)}...`;
 
 		const phasePath = state.phases[phaseIdx];
 		const fullPhasePath = path.join(specsDir, phasePath);
-		const phasePlan = fs.readFileSync(fullPhasePath, "utf-8");
+		
+		// Get the implementation guidance - either from plan file or directly from spec
+		let phasePlan: string;
+		if (state.skipPlanGeneration || projectConfig.skipPlanGeneration) {
+			// No plan file - use spec content directly with phase context
+			phasePlan = `## Direct Implementation from Spec (No Plan File)
+
+This is Phase ${phaseIdx + 1} of ${state.phases.length}.
+Expected phase file: ${phasePath}
+
+## Full Specification
+
+${state.specDraft}
+
+## Instructions
+
+Implement this phase according to the specification above. 
+Focus on Phase ${phaseIdx + 1} requirements.
+Explore the codebase to understand existing patterns before making changes.`;
+		} else if (fs.existsSync(fullPhasePath)) {
+			phasePlan = fs.readFileSync(fullPhasePath, "utf-8");
+		} else {
+			// Fallback for edge case where plan file doesn't exist
+			ctx.ui.notify(`⚠️ Plan file not found: ${fullPhasePath}, using spec`, "warning");
+			phasePlan = `## Implementation from Spec (Plan File Missing)
+
+${state.specDraft}`;
+		}
 
 		// Update widget
 		updatePipelineWidget(ctx, state, `Implementing phase ${phaseIdx + 1}/${state.phases.length}`);
@@ -980,6 +1121,7 @@ ${projectConfig.testCommand ? `Run tests with: ${projectConfig.testCommand}` : "
 
 Address all issues raised in the review.`;
 
+			const implementStartTime = new Date();
 			const implementResult = await runAgentWithConfig(
 				implementerConfig,
 				implementTask,
@@ -989,6 +1131,8 @@ Address all issues raised in the review.`;
 				undefined,
 				"implementer"
 			);
+			recordAgentCall(metrics, "implementer", implementerConfig.model, implementerConfig.thinking, implementStartTime, implementResult.exitCode, phaseIdx + 1);
+			saveState(cwd, state);
 
 			if (implementResult.exitCode !== 0) {
 				await handleAgentError(
@@ -1063,6 +1207,11 @@ Make the necessary fixes.`,
 			clearPipelineWidget(ctx);
 			return;
 		}
+		
+		// Track code review metrics
+		metrics.codeReviewCycles.cheap += codeReviewResult.cheapCyclesCompleted;
+		metrics.codeReviewCycles.expensive += codeReviewResult.expensiveCyclesCompleted;
+		saveState(cwd, state);
 		
 		// Show summary of code review
 		ctx.ui.notify(formatAgentSummary(
@@ -1205,6 +1354,26 @@ Expensive review cycles: ${codeReviewResult.expensiveCyclesCompleted}`;
 		}
 	}
 	
+	// Finalize metrics
+	// Calculate phases approved on first pass (cheap cycle 1, no expensive needed)
+	// This is a proxy for implementation quality
+	let phasesApprovedFirstPass = 0;
+	// We track this by checking if we needed more than 1 cheap cycle or any expensive cycles
+	// For simplicity, estimate based on average cycles per phase
+	const avgCheapPerPhase = state.phases.length > 0 
+		? metrics.codeReviewCycles.cheap / state.phases.length 
+		: 0;
+	const avgExpensivePerPhase = state.phases.length > 0 
+		? metrics.codeReviewCycles.expensive / state.phases.length 
+		: 0;
+	// If average is ~1 cheap and ~0 expensive, most phases passed first time
+	if (avgCheapPerPhase <= 1.5 && avgExpensivePerPhase < 0.5) {
+		phasesApprovedFirstPass = Math.round(state.phases.length * 0.8);
+	} else if (avgCheapPerPhase <= 2 && avgExpensivePerPhase <= 1) {
+		phasesApprovedFirstPass = Math.round(state.phases.length * 0.5);
+	}
+	
+	finalizeMetrics(metrics, state.phases.length, phasesApprovedFirstPass);
 	state.stage = "completed";
 	saveState(cwd, state);
 	
@@ -1224,6 +1393,16 @@ Expensive review cycles: ${codeReviewResult.expensiveCyclesCompleted}`;
 	if (state.checkpoints && state.checkpoints.length > 0) {
 		completionLines.push(formatKeyValue("  Checkpoints", String(state.checkpoints.length)));
 	}
+	
+	// Show metrics summary
+	if (metrics.totalDurationMs) {
+		const durationMins = Math.round(metrics.totalDurationMs / 60000);
+		completionLines.push(formatKeyValue("  Duration", `${durationMins} min`));
+	}
+	completionLines.push(formatKeyValue("  Agent Calls", String(metrics.agentCalls.length)));
+	completionLines.push(formatKeyValue("  Plan Generation", metrics.skipPlanGeneration ? "Skipped" : "Enabled"));
+	completionLines.push(formatKeyValue("  Code Review Cycles", `${metrics.codeReviewCycles.cheap}c/${metrics.codeReviewCycles.expensive}e`));
+	
 	completionLines.push("");
 	completionLines.push("  📋 Next Steps:");
 	completionLines.push("     • Review the implementation changes");
@@ -1233,6 +1412,7 @@ Expensive review cycles: ${codeReviewResult.expensiveCyclesCompleted}`;
 		completionLines.push("     • Run your project's test suite");
 	}
 	completionLines.push("     • Commit any final adjustments");
+	completionLines.push("     • Run /spec-metrics to export comparison data");
 	completionLines.push("");
 	completionLines.push(formatDivider(50));
 	

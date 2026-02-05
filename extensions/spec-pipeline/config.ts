@@ -325,6 +325,9 @@ function buildProjectConfig(
 		config.reviewCycles
 	);
 
+	// Skip plan generation (experimental A/B testing)
+	const skipPlanGeneration = config.skipPlanGeneration ?? false;
+
 	return {
 		specsDir,
 		testCommand,
@@ -333,6 +336,7 @@ function buildProjectConfig(
 		discovery: discoveryConfig,
 		models,
 		reviewCycles,
+		skipPlanGeneration,
 	};
 }
 

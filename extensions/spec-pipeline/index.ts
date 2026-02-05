@@ -23,10 +23,13 @@
  * Usage:
  *   /spec <description of what you want to build>
  *   /spec --quick <description>                     # Skip discovery phase
+ *   /spec --no-plan <description>                   # Skip plan generation (A/B test)
+ *   /spec --quick --no-plan <description>           # Skip both discovery and plans
  *   /spec-resume                                    # Resume last pipeline
  *   /spec-status                                    # Show current state
  *   /spec-list                                      # List all pipelines
  *   /spec-cancel                                    # Cancel current pipeline
+ *   /spec-metrics [id]                              # Export metrics for A/B comparison
  *
  * Configuration:
  *   Create .pi/spec-pipeline.json in your project root:
@@ -49,9 +52,14 @@
  *       "specReviewer": { "cheap": 2, "expensive": 2 },
  *       "planReviewer": { "cheap": 0, "expensive": 0 },  // Skip plan review
  *       "codeReviewer": { "cheap": 2, "expensive": 1 }
- *     }
+ *     },
  *     // Or use global format (applies to all reviewers):
  *     // "reviewCycles": { "cheap": 2, "expensive": 2 }
+ *     
+ *     // EXPERIMENTAL: Skip plan generation phase (A/B testing)
+ *     // When true, goes directly from spec → implementation without detailed plans
+ *     // Use /spec-metrics to compare outcomes
+ *     "skipPlanGeneration": false
  *   }
  *
  * Default Model Configuration (optimized for cost/quality balance):
@@ -72,7 +80,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 // Import from modules
-import type { PipelineState, TieredReviewerRole } from "./types.ts";
+import type { PipelineState, TieredReviewerRole, PipelineMetrics } from "./types.ts";
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
 import {
 	loadState,
@@ -118,19 +126,24 @@ import { createSystemPrompts } from "./agents-config.ts";
 export default function (pi: ExtensionAPI) {
 	// Main command to start a new spec pipeline
 	pi.registerCommand("spec", {
-		description: "Start the spec → implementation pipeline. Use --quick to skip discovery phase.",
+		description: "Start the spec → implementation pipeline. Use --quick to skip discovery, --no-plan to skip plan generation.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
 				return;
 			}
 
-			// Parse --quick flag
+			// Parse flags
 			const isQuick = args.includes("--quick");
-			const description = args.replace("--quick", "").replace(/\s+/g, " ").trim();
+			const noPlan = args.includes("--no-plan");
+			const description = args
+				.replace("--quick", "")
+				.replace("--no-plan", "")
+				.replace(/\s+/g, " ")
+				.trim();
 			
 			if (!description) {
-				ctx.ui.notify("Usage: /spec [--quick] <description of what you want to build>", "error");
+				ctx.ui.notify("Usage: /spec [--quick] [--no-plan] <description of what you want to build>", "error");
 				return;
 			}
 
@@ -180,9 +193,18 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const projectConfig = configResult.config;
+			
+			// Override skipPlanGeneration if --no-plan flag was passed
+			if (noPlan) {
+				projectConfig.skipPlanGeneration = true;
+			}
 
 			// Display effective configuration (R5)
 			ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+			
+			if (noPlan) {
+				ctx.ui.notify("⏭️ Plan generation will be skipped (--no-plan flag)", "info");
+			}
 
 			ctx.ui.notify("Starting spec pipeline...", "info");
 			if (projectConfig.contextFiles.length > 0) {
@@ -658,6 +680,135 @@ export default function (pi: ExtensionAPI) {
 					ctx.ui.notify("Pipeline cancelled. Resume with /spec-resume", "info");
 				}
 			}
+		},
+	});
+
+	// Command to export metrics for A/B comparison
+	pi.registerCommand("spec-metrics", {
+		description: "Export pipeline metrics for A/B testing (plan generation value)",
+		handler: async (args, ctx) => {
+			const cwd = ctx.cwd;
+			const pipelineId = args.trim();
+
+			// Get pipeline(s) to export
+			let statesToExport: PipelineState[] = [];
+			
+			if (pipelineId === "--all") {
+				// Export all completed pipelines
+				statesToExport = listStates(cwd).filter(s => s.stage === "completed" && s.metrics);
+			} else if (pipelineId) {
+				const state = loadState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Pipeline not found: ${pipelineId}`, "error");
+					return;
+				}
+				if (state.metrics) {
+					statesToExport = [state];
+				} else {
+					ctx.ui.notify(`Pipeline ${pipelineId} has no metrics (older version or not completed)`, "warning");
+					return;
+				}
+			} else {
+				// Export most recent completed pipeline with metrics
+				const states = listStates(cwd);
+				const completed = states.filter(s => s.stage === "completed" && s.metrics);
+				if (completed.length === 0) {
+					ctx.ui.notify("No completed pipelines with metrics found.", "info");
+					ctx.ui.notify("Metrics are collected for pipelines run after this feature was added.", "info");
+					return;
+				}
+				statesToExport = [completed[0]];
+			}
+
+			if (statesToExport.length === 0) {
+				ctx.ui.notify("No pipelines with metrics to export.", "info");
+				return;
+			}
+
+			// Format metrics for display and export
+			const lines: string[] = [];
+			lines.push(formatDivider(70));
+			lines.push(`  📊 Pipeline Metrics (${statesToExport.length} pipeline${statesToExport.length > 1 ? 's' : ''})`);
+			lines.push(formatDivider(70));
+			lines.push("");
+
+			// Summary table header
+			lines.push("| ID | Plan Gen | Duration | Spec Iter | Code Review (c/e) | First Pass |");
+			lines.push("|-----|----------|----------|-----------|-------------------|------------|");
+
+			for (const state of statesToExport) {
+				const m = state.metrics!;
+				const durationMins = m.totalDurationMs ? Math.round(m.totalDurationMs / 60000) : "?";
+				const planGen = m.skipPlanGeneration ? "SKIP" : "YES";
+				const codeReview = `${m.codeReviewCycles.cheap}/${m.codeReviewCycles.expensive}`;
+				const firstPass = `${m.codeReviewFirstPassRate}%`;
+				
+				lines.push(`| ${state.id.slice(0, 16)} | ${planGen.padEnd(8)} | ${String(durationMins).padEnd(8)} | ${String(m.specIterations).padEnd(9)} | ${codeReview.padEnd(17)} | ${firstPass.padEnd(10)} |`);
+			}
+
+			lines.push("");
+			lines.push(formatDivider(70));
+			lines.push("");
+
+			// Detailed view for single pipeline
+			if (statesToExport.length === 1) {
+				const state = statesToExport[0];
+				const m = state.metrics!;
+				
+				lines.push("📋 Detailed Metrics:");
+				lines.push("");
+				lines.push(formatKeyValue("  Pipeline ID", state.id));
+				lines.push(formatKeyValue("  Description", state.description.slice(0, 50)));
+				lines.push(formatKeyValue("  Status", state.stage));
+				lines.push("");
+				lines.push("  Configuration:");
+				lines.push(formatKeyValue("    Skip Plan Generation", m.skipPlanGeneration ? "Yes (A/B test)" : "No (normal)"));
+				lines.push(formatKeyValue("    Discovery Skipped", m.discoverySkipped ? "Yes" : "No"));
+				lines.push("");
+				lines.push("  Timing:");
+				if (m.totalDurationMs) {
+					lines.push(formatKeyValue("    Total Duration", `${Math.round(m.totalDurationMs / 60000)} minutes`));
+				}
+				lines.push(formatKeyValue("    Agent Calls", String(m.agentCalls.length)));
+				lines.push("");
+				lines.push("  Review Cycles:");
+				lines.push(formatKeyValue("    Spec Review", `${m.specReviewCycles.cheap} cheap, ${m.specReviewCycles.expensive} expensive`));
+				lines.push(formatKeyValue("    Plan Review", `${m.planReviewCycles.cheap} cheap, ${m.planReviewCycles.expensive} expensive`));
+				lines.push(formatKeyValue("    Code Review", `${m.codeReviewCycles.cheap} cheap, ${m.codeReviewCycles.expensive} expensive`));
+				lines.push("");
+				lines.push("  Quality Indicators:");
+				lines.push(formatKeyValue("    Spec Iterations", String(m.specIterations)));
+				lines.push(formatKeyValue("    First Pass Rate", `${m.codeReviewFirstPassRate}%`));
+				lines.push("");
+
+				// Agent call breakdown by role
+				const callsByRole: Record<string, number> = {};
+				for (const call of m.agentCalls) {
+					callsByRole[call.role] = (callsByRole[call.role] || 0) + 1;
+				}
+				lines.push("  Agent Calls by Role:");
+				for (const [role, count] of Object.entries(callsByRole)) {
+					lines.push(`    ${role}: ${count}`);
+				}
+			}
+
+			lines.push("");
+			lines.push(formatDivider(70));
+			
+			// Export to file option
+			const exportPath = path.join(getStateDir(cwd), "metrics-export.json");
+			const exportData = statesToExport.map(s => ({
+				id: s.id,
+				description: s.description,
+				stage: s.stage,
+				createdAt: s.createdAt,
+				metrics: s.metrics,
+			}));
+			fs.writeFileSync(exportPath, JSON.stringify(exportData, null, 2));
+			lines.push(`\n📁 Full metrics exported to: ${exportPath}`);
+			lines.push("   Use for spreadsheet analysis or comparison");
+
+			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
 
