@@ -291,5 +291,8 @@ export function createInitialState(
 		
 		specCommitted: false,
 		phaseCommits: [],
+		
+		// New pipelines use agent commits instead of checkpoints (R11)
+		useAgentCommits: true,
 	};
 }

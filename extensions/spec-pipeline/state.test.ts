@@ -320,4 +320,15 @@ describe("createInitialState", () => {
 		);
 		expect(state1.id).not.toBe(state2.id);
 	});
+
+	it("sets useAgentCommits flag to true for new pipelines (Phase 5 - R11)", () => {
+		const state = createInitialState(
+			"Build a feature",
+			"2602011200",
+			"feature",
+			"docs/specs",
+			defaultDiscoveryConfig
+		);
+		expect(state.useAgentCommits).toBe(true);
+	});
 });

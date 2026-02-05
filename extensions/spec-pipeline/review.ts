@@ -12,7 +12,7 @@ import type {
 } from "./types.ts";
 import { runAgentWithConfig } from "./agents.ts";
 import { saveState } from "./state.ts";
-import { createCheckpointAndSave } from "./git.ts";
+import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 
 // ============================================
@@ -256,9 +256,6 @@ export async function runTieredReview(
 		if (cycle < cheapCycles) {
 			notify(`${phaseCtx} Applying fixes for cheap tier...`, "info");
 			
-			// Create checkpoint before fix
-			await createCheckpointAndSave(cwd, state, "addressReview", phaseIndex, cycle, notify);
-			
 			// Apply fix using addressReview role but cheap model
 			const fixResult = await runAgentWithConfig(
 				tieredConfig.cheap,  // Use cheap model for cheap tier fixes
@@ -288,6 +285,47 @@ export async function runTieredReview(
 					expensiveCyclesCompleted,
 					hadError: true,
 				};
+			}
+			
+			// Create commit after addressReview (R1, R2, R10)
+			const commitResult = await createAgentCommit(
+				cwd,
+				state,
+				{
+					role: "addressReview",
+					modelConfig: tieredConfig.cheap,
+					phase: phaseIndex,
+					cycle: cycle,
+					reviewFeedback: lastReviewOutput,
+				},
+				projectConfig.models.agentCommitMessageWriter,
+				notify
+			);
+			
+			if (!commitResult.success) {
+				if (commitResult.usedFallback) {
+					// Fallback was used - abort pipeline (R7)
+					notify("Commit message generation failed - fallback used. Pipeline aborted.", "error");
+					return {
+						verdict: "NEEDS_CHANGES",
+						lastReviewOutput,
+						finalTier: "cheap",
+						cheapCyclesCompleted,
+						expensiveCyclesCompleted,
+						hadError: true,
+					};
+				} else {
+					// Other commit failure
+					notify("Failed to create agent commit", "error");
+					return {
+						verdict: "NEEDS_CHANGES",
+						lastReviewOutput,
+						finalTier: "cheap",
+						cheapCyclesCompleted,
+						expensiveCyclesCompleted,
+						hadError: true,
+					};
+				}
 			}
 		}
 	}
@@ -389,9 +427,6 @@ export async function runTieredReview(
 			notify(`${phaseCtx} Found significant issues - applying fix with expensive model`, "info");
 		}
 		
-		// Create checkpoint before fix
-		await createCheckpointAndSave(cwd, state, "addressReview", phaseIndex, cheapCycles + cycle, notify);
-		
 		// Apply fix using expensive model (R8 - stay at expensive tier)
 		const fixResult = await runAgentWithConfig(
 			tieredConfig.expensive,  // Use expensive model for expensive tier fixes (R8)
@@ -421,6 +456,47 @@ export async function runTieredReview(
 				expensiveCyclesCompleted,
 				hadError: true,
 			};
+		}
+		
+		// Create commit after addressReview (R1, R2, R10)
+		const commitResult = await createAgentCommit(
+			cwd,
+			state,
+			{
+				role: "addressReview",
+				modelConfig: tieredConfig.expensive,
+				phase: phaseIndex,
+				cycle: cheapCycles + cycle,
+				reviewFeedback: lastReviewOutput,
+			},
+			projectConfig.models.agentCommitMessageWriter,
+			notify
+		);
+		
+		if (!commitResult.success) {
+			if (commitResult.usedFallback) {
+				// Fallback was used - abort pipeline (R7)
+				notify("Commit message generation failed - fallback used. Pipeline aborted.", "error");
+				return {
+					verdict: "NEEDS_CHANGES",
+					lastReviewOutput,
+					finalTier: "expensive",
+					cheapCyclesCompleted,
+					expensiveCyclesCompleted,
+					hadError: true,
+				};
+			} else {
+				// Other commit failure
+				notify("Failed to create agent commit", "error");
+				return {
+					verdict: "NEEDS_CHANGES",
+					lastReviewOutput,
+					finalTier: "expensive",
+					cheapCyclesCompleted,
+					expensiveCyclesCompleted,
+					hadError: true,
+				};
+			}
 		}
 	}
 	

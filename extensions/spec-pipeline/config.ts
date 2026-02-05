@@ -31,6 +31,7 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 	planDrafter: { model: "opus", thinking: "high" },         // Complex planning task
 	implementer: { model: "opus", thinking: "high" },         // Complex code generation
 	addressReview: { model: "opus", thinking: "high" },       // Complex fix implementation
+	agentCommitMessageWriter: { model: "haiku", thinking: "off" },  // Fast, cheap commit message generation (R5)
 } as const;
 
 /**
@@ -194,6 +195,7 @@ function mergeWithDefaults(
 		implementer: userModels?.implementer ?? DEFAULT_MODEL_CONFIGS.implementer,
 		codeReviewer: userModels?.codeReviewer ?? DEFAULT_TIERED_CONFIGS.codeReviewer,
 		addressReview: userModels?.addressReview ?? DEFAULT_MODEL_CONFIGS.addressReview,
+		agentCommitMessageWriter: userModels?.agentCommitMessageWriter ?? DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
 	};
 	
 	// Normalize review cycles to per-reviewer format

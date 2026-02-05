@@ -88,6 +88,7 @@ All models are configurable via the `models` object. Example:
 | `implementer` | opus | high | Code generation |
 | `codeReviewer` | tiered | - | cheap: sonnet/medium, expensive: opus/high |
 | `addressReview` | opus | high | Fix implementation |
+| `agentCommitMessageWriter` | haiku | off | Commit messages after agent work |
 | `commitMessageWriter` | haiku | off | Fixed, not configurable |
 
 Reviewer roles use tiered configuration (`cheap`/`expensive` tiers). Other roles use flat `{ model, thinking }` configuration.

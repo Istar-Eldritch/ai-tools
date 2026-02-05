@@ -191,7 +191,12 @@ export async function createCheckpointAndSave(
 	cycle?: number,
 	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
 ): Promise<boolean> {
-	// Only create checkpoints if on a pipeline branch
+	// Skip checkpoints for pipelines using agent commits (R11 - backward compatibility)
+	if (state.useAgentCommits) {
+		return true;  // New pipelines use agent commits instead
+	}
+	
+	// Only create checkpoints if on a pipeline branch (old pipelines with branch isolation)
 	if (!state.pipelineBranch) {
 		return true;  // No branch isolation, skip checkpoint
 	}
@@ -210,18 +215,99 @@ export async function createCheckpointAndSave(
 }
 
 // ============================================
+// File Tracking Operations
+// ============================================
+
+/**
+ * Capture the current git status (dirty state) before an agent runs
+ * Returns the output of 'git status --porcelain' which shows:
+ * - Modified files (M)
+ * - Added files (A)
+ * - Deleted files (D)
+ * - Renamed files (R)
+ * - Untracked files (??)
+ */
+export async function captureGitStatus(cwd: string): Promise<string> {
+	const result = await execGit(cwd, ["status", "--porcelain"]);
+	return result.stdout;
+}
+
+/**
+ * Get the list of files modified since the last commit
+ * This includes modifications, deletions, renames, and new untracked files
+ * Returns an array of file paths
+ */
+export async function getModifiedFiles(cwd: string): Promise<string[]> {
+	const files = new Set<string>();
+	
+	// Get tracked modified/deleted files
+	const diffResult = await execGit(cwd, ["diff", "--name-only", "HEAD"]);
+	if (diffResult.code === 0 && diffResult.stdout) {
+		diffResult.stdout
+			.split("\n")
+			.map(line => line.trim())
+			.filter(line => line.length > 0)
+			.forEach(file => files.add(file));
+	}
+	
+	// Get untracked files (shows actual files, not just directories)
+	const untrackedResult = await execGit(cwd, ["ls-files", "--others", "--exclude-standard"]);
+	if (untrackedResult.code === 0 && untrackedResult.stdout) {
+		untrackedResult.stdout
+			.split("\n")
+			.map(line => line.trim())
+			.filter(line => line.length > 0)
+			.forEach(file => files.add(file));
+	}
+	
+	return Array.from(files);
+}
+
+/**
+ * Stage specific files (not all files)
+ * Handles modifications, deletions, and renames
+ * Returns true if staging was successful
+ */
+export async function stageFiles(cwd: string, files: string[]): Promise<boolean> {
+	if (files.length === 0) {
+		return true; // Nothing to stage
+	}
+	
+	// Use 'git add --all <file>...' to handle modifications, deletions, and renames
+	const result = await execGit(cwd, ["add", "--all", ...files]);
+	return result.code === 0;
+}
+
+/**
+ * Check if there are any staged changes ready to commit
+ * Returns true if there are staged changes, false otherwise
+ */
+export async function hasChangesStaged(cwd: string): Promise<boolean> {
+	// 'git diff --staged --quiet' exits with code 0 if no staged changes
+	// and code 1 if there are staged changes
+	const result = await execGit(cwd, ["diff", "--staged", "--quiet"]);
+	return result.code !== 0;
+}
+
+// ============================================
 // Stash Operations
 // ============================================
 
 /**
  * Stash any uncommitted changes with an identifiable message
  * Returns the stash reference or null if nothing to stash
+ * 
+ * NOTE: Stash references (stash@{N}) are positional and will change if new stashes
+ * are created. Use the returned reference immediately or verify existence before use.
  */
 export async function stashChanges(cwd: string, timestamp: string): Promise<string | null> {
 	// Check if there are changes to stash
 	const statusResult = await execGit(cwd, ["status", "--porcelain"]);
-	if (statusResult.code !== 0 || statusResult.stdout.length === 0) {
-		return null;
+	if (statusResult.code !== 0) {
+		return null; // Git command failed
+	}
+	if (statusResult.stdout.length === 0) {
+		return null; // No changes to stash
 	}
 	
 	// Create stash with message
@@ -231,8 +317,15 @@ export async function stashChanges(cwd: string, timestamp: string): Promise<stri
 		return null;
 	}
 	
-	// Get stash reference (stash@{0} after push)
-	return `stash@{0}`;
+	// Get the stable stash reference from the stash list
+	// The most recent stash is at the top of the list
+	const listResult = await execGit(cwd, ["stash", "list"]);
+	if (listResult.code !== 0) {
+		return null;
+	}
+	
+	const match = listResult.stdout.split('\n')[0]?.match(/^(stash@\{\d+\})/);
+	return match ? match[1] : null;
 }
 
 /**
@@ -250,6 +343,27 @@ export async function stashExists(cwd: string, stashRef: string): Promise<boolea
 	// Try to show the stash - if it fails, stash doesn't exist
 	const showResult = await execGit(cwd, ["stash", "show", stashRef]);
 	return showResult.code === 0;
+}
+
+/**
+ * Reset working directory to HEAD (discard all uncommitted changes)
+ * This is used for error recovery after stashing failed changes
+ * Returns true if reset was successful, false otherwise
+ * 
+ * Note: This performs both:
+ * 1. git reset --hard HEAD (resets tracked files)
+ * 2. git clean -fd (removes untracked files and directories)
+ */
+export async function resetToHead(cwd: string): Promise<boolean> {
+	// Reset tracked files to HEAD
+	const resetResult = await execGit(cwd, ["reset", "--hard", "HEAD"]);
+	if (resetResult.code !== 0) {
+		return false;
+	}
+	
+	// Remove untracked files and directories
+	const cleanResult = await execGit(cwd, ["clean", "-fd"]);
+	return cleanResult.code === 0;
 }
 
 // ============================================
@@ -290,6 +404,152 @@ export function extractCommitMessage(output: string): string {
 	}
 	
 	return output.trim();
+}
+
+// ============================================
+// Agent Commit Operations
+// ============================================
+
+/**
+ * Create a commit after an agent successfully modifies files (R1, R2, R3, R4, R8)
+ * 
+ * This function:
+ * 1. Detects which files were modified by the agent
+ * 2. Stages only those files (not all changes)
+ * 3. Generates a commit message using the agentCommitMessageWriter
+ * 4. Creates the commit
+ * 5. Adds the commit hash to state.checkpoints[] for squash merge compatibility
+ * 
+ * @param cwd - Working directory
+ * @param state - Pipeline state (will be modified to add commit hash to checkpoints)
+ * @param context - Context for commit message generation (role, model, phase, etc.)
+ * @param agentConfig - Model configuration for the commit message writer
+ * @param notify - UI notification callback
+ * @returns { success: boolean; commitHash?: string; usedFallback?: boolean }
+ */
+export async function createAgentCommit(
+	cwd: string,
+	state: any, // PipelineState type
+	context: {
+		role: string;
+		modelConfig: { model: string; thinking: string };
+		phase?: number;
+		cycle?: number;
+		reviewFeedback?: string;
+	},
+	agentConfig: { model: string; thinking: string },
+	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
+): Promise<{ success: boolean; commitHash?: string; usedFallback?: boolean }> {
+	// Import generateCommitMessage dynamically to avoid circular dependencies
+	const { generateCommitMessage } = await import("./commit-agent.ts");
+	const { saveState } = await import("./state.ts");
+	
+	// Only create commits for new pipelines with agent commits enabled (R11 - backward compatibility)
+	if (!state.useAgentCommits) {
+		notify?.("Skipping agent commit (pipeline uses checkpoints)", "info");
+		return { success: true };  // Old pipeline using checkpoints
+	}
+	
+	// Only create commits if on a pipeline branch
+	if (!state.pipelineBranch) {
+		notify?.("Skipping agent commit (not on pipeline branch)", "info");
+		return { success: true };  // No branch isolation, skip commit
+	}
+	
+	// Step 1: Get modified files (R4, R8)
+	const modifiedFiles = await getModifiedFiles(cwd);
+	
+	// Step 2: Check if any files were modified (R8)
+	if (modifiedFiles.length === 0) {
+		notify?.("No files modified by agent - skipping commit", "info");
+		return { success: true };  // Nothing to commit
+	}
+	
+	// Step 3: Stage the modified files (R8)
+	const staged = await stageFiles(cwd, modifiedFiles);
+	if (!staged) {
+		notify?.("Failed to stage files", "error");
+		return { success: false };
+	}
+	
+	// Step 4: Check if there are actually staged changes (R8)
+	const hasChanges = await hasChangesStaged(cwd);
+	if (!hasChanges) {
+		notify?.("No staged changes after staging - skipping commit", "info");
+		return { success: true };  // No changes to commit
+	}
+	
+	// Step 5: Generate commit message (R4, R7)
+	notify?.(`Generating commit message for ${context.role}...`, "info");
+	const messageResult = await generateCommitMessage(
+		{
+			role: context.role as any,
+			modelConfig: context.modelConfig as any,
+			files: modifiedFiles,
+			phase: context.phase,
+			cycle: context.cycle,
+			reviewFeedback: context.reviewFeedback,
+		},
+		agentConfig as any,
+		cwd
+	);
+	
+	// Step 6: Handle fallback case (R7)
+	if (messageResult.type === "fallback") {
+		notify?.(`⚠️ Commit message generation failed - using fallback`, "warning");
+		notify?.(`Fallback message: ${messageResult.message}`, "info");
+		notify?.("Pipeline aborted - please review and resume with /spec-resume", "error");
+		
+		// Create the commit with fallback message
+		const commitResult = await execGit(cwd, ["commit", "-m", messageResult.message]);
+		if (commitResult.code !== 0) {
+			notify?.("Failed to create commit with fallback message", "error");
+			return { success: false, usedFallback: true };
+		}
+		
+		// Get commit hash
+		const hashResult = await execGit(cwd, ["rev-parse", "HEAD"]);
+		const commitHash = hashResult.code === 0 ? hashResult.stdout : undefined;
+		
+		// Add to checkpoints array for squash merge (R12)
+		if (commitHash) {
+			if (!state.checkpoints) {
+				state.checkpoints = [];
+			}
+			state.checkpoints.push(commitHash);
+			saveState(cwd, state);
+			notify?.(`📍 Agent commit created (fallback): ${commitHash.slice(0, 8)}`, "info");
+		}
+		
+		// Return success:false to abort pipeline (R7)
+		return { success: false, commitHash, usedFallback: true };
+	}
+	
+	// Step 7: Create the commit with generated message (R1, R2)
+	const commitResult = await execGit(cwd, ["commit", "-m", messageResult.message]);
+	if (commitResult.code !== 0) {
+		notify?.("Failed to create commit", "error");
+		return { success: false };
+	}
+	
+	// Step 8: Get commit hash
+	const hashResult = await execGit(cwd, ["rev-parse", "HEAD"]);
+	if (hashResult.code !== 0) {
+		notify?.("Failed to get commit hash", "error");
+		return { success: false };
+	}
+	const commitHash = hashResult.stdout;
+	
+	// Step 9: Add to checkpoints array for squash merge (R12)
+	if (!state.checkpoints) {
+		state.checkpoints = [];
+	}
+	state.checkpoints.push(commitHash);
+	saveState(cwd, state);
+	
+	notify?.(`✅ Agent commit created: ${commitHash.slice(0, 8)}`, "success");
+	
+	return { success: true, commitHash };
 }
 
 // ============================================

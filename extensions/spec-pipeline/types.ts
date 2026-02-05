@@ -46,6 +46,8 @@ export const ModelsConfigSchema = Type.Object({
 	implementer: Type.Optional(ModelConfigSchema),
 	codeReviewer: Type.Optional(TieredModelConfigSchema),
 	addressReview: Type.Optional(ModelConfigSchema),
+	// agentCommitMessageWriter for commits after agent operations (R5)
+	agentCommitMessageWriter: Type.Optional(ModelConfigSchema),
 	// commitMessageWriter allowed in config but silently ignored (R5a)
 	commitMessageWriter: Type.Optional(Type.Any()),
 });
@@ -183,6 +185,7 @@ export interface ProjectConfig {
 		implementer: ModelConfig;
 		codeReviewer: TieredModelConfig;
 		addressReview: ModelConfig;
+		agentCommitMessageWriter: ModelConfig;
 	};
 	// Review cycle counts per reviewer
 	// Setting both cheap and expensive to 0 skips that review entirely
@@ -206,7 +209,7 @@ export type RoleName =
 	| "implementer"
 	| "codeReviewer"
 	| "addressReview"
-	| "commitMessageWriter";
+	| "commitMessageWriter"; // Role for tool restrictions (read-only for both old and new commit agents)
 
 export interface ErrorDetails {
 	timestamp: string;           // ISO timestamp of error
@@ -310,6 +313,7 @@ export interface PipelineState {
 	pipelineBranch?: string;     // Generated branch name for this pipeline
 	checkpoints?: string[];      // Array of checkpoint commit hashes
 	errorStash?: string;         // Stash reference if error occurred
+	useAgentCommits?: boolean;   // If true, use agent commits instead of checkpoints (R11)
 	
 	// Metrics tracking (for A/B testing plan generation value)
 	metrics?: PipelineMetrics;

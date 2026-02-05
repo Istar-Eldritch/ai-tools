@@ -15,7 +15,7 @@ import type {
 } from "./types.ts";
 import { MAX_SPEC_ITERATIONS } from "./types.ts";
 import { saveState, generateDiscoverySummary } from "./state.ts";
-import { createCheckpointAndSave, createCommit, extractCommitMessage, squashCheckpointCommits, mergePipelineBranch, switchToBranch, deleteBranch } from "./git.ts";
+import { createCheckpointAndSave, createCommit, extractCommitMessage, squashCheckpointCommits, mergePipelineBranch, switchToBranch, deleteBranch, createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 import {
 	formatStepBanner,
@@ -519,9 +519,6 @@ ${questions}
 					"📄"
 				), "info");
 
-				// Create checkpoint before spec drafting
-				await createCheckpointAndSave(cwd, state, "specDrafter", undefined, undefined, ctx.ui.notify.bind(ctx.ui));
-
 				// Draft spec using configured model
 				const specDrafterConfig = projectConfig.models.specDrafter;
 				ctx.ui.notify(`📝 ${specDrafterConfig.model} drafting spec...`, "info");
@@ -605,6 +602,35 @@ ${state.specDraft}`;
 				}
 				state.specDraft = fs.readFileSync(fullSpecPath, "utf-8");
 				ctx.ui.notify(`📄 Spec draft saved to ${projectConfig.specsDir}/${state.specFilename}`, "info");
+
+				// Create commit after spec drafting (R1, R2)
+				const commitResult = await createAgentCommit(
+					cwd,
+					state,
+					{
+						role: "specDrafter",
+						modelConfig: specDrafterConfig,
+					},
+					projectConfig.models.agentCommitMessageWriter,
+					ctx.ui.notify.bind(ctx.ui)
+				);
+				
+				if (!commitResult.success) {
+					if (commitResult.usedFallback) {
+						// Fallback was used - abort pipeline (R7)
+						state.lastError = "Commit message generation failed - fallback used";
+						saveState(cwd, state);
+						clearPipelineWidget(ctx);
+						return;
+					} else {
+						// Other commit failure
+						state.lastError = undefined;
+						saveState(cwd, state);
+						clearPipelineWidget(ctx);
+						ctx.ui.notify("Failed to create agent commit", "error");
+						return;
+					}
+				}
 
 				// Mark that we're now in spec_review stage
 				state.stage = "spec_review";
@@ -852,9 +878,6 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			"📝"
 		), "info");
 
-		// Create checkpoint before plan drafting
-		await createCheckpointAndSave(cwd, state, "planDrafter", i + 1, undefined, ctx.ui.notify.bind(ctx.ui));
-
 		// Draft plan using configured model
 		const planDrafterConfig = projectConfig.models.planDrafter;
 		ctx.ui.notify(`📋 ${planDrafterConfig.model} drafting implementation plan...`, "info");
@@ -916,6 +939,36 @@ Then create a detailed, executable plan and save it to the path above.`;
 		}
 
 		const planContent = fs.readFileSync(fullPhasePath, "utf-8");
+
+		// Create commit after plan drafting (R1, R2)
+		const commitResult = await createAgentCommit(
+			cwd,
+			state,
+			{
+				role: "planDrafter",
+				modelConfig: planDrafterConfig,
+				phase: i + 1,
+			},
+			projectConfig.models.agentCommitMessageWriter,
+			ctx.ui.notify.bind(ctx.ui)
+		);
+		
+		if (!commitResult.success) {
+			if (commitResult.usedFallback) {
+				// Fallback was used - abort pipeline (R7)
+				state.lastError = "Commit message generation failed - fallback used";
+				saveState(cwd, state);
+				clearPipelineWidget(ctx);
+				return;
+			} else {
+				// Other commit failure
+				state.lastError = undefined;
+				saveState(cwd, state);
+				clearPipelineWidget(ctx);
+				ctx.ui.notify("Failed to create agent commit", "error");
+				return;
+			}
+		}
 
 		// Review plan with tiered approach
 		ctx.ui.notify("📝 Running tiered plan review...", "info");
@@ -1091,9 +1144,6 @@ ${state.specDraft}`;
 		let implementationSummary: string;
 		
 		if (!resumingMidPhase) {
-			// Create checkpoint before implementation
-			await createCheckpointAndSave(cwd, state, "implementer", phaseIdx + 1, 1, ctx.ui.notify.bind(ctx.ui));
-
 			const implementerConfig = projectConfig.models.implementer;
 			
 			// Update widget for implementation
@@ -1152,6 +1202,37 @@ Address all issues raised in the review.`;
 			ctx.ui.notify(formatAgentSummary("implementer", implementerConfig.model, implementResult.output, "✅", phaseIdx + 1), "info");
 			
 			implementationSummary = implementResult.output.slice(0, 1500);
+			
+			// Create commit after implementation (R1, R2, R10)
+			const commitResult = await createAgentCommit(
+				cwd,
+				state,
+				{
+					role: "implementer",
+					modelConfig: implementerConfig,
+					phase: phaseIdx + 1,
+					cycle: 1,
+				},
+				projectConfig.models.agentCommitMessageWriter,
+				ctx.ui.notify.bind(ctx.ui)
+			);
+			
+			if (!commitResult.success) {
+				if (commitResult.usedFallback) {
+					// Fallback was used - abort pipeline (R7)
+					state.lastError = "Commit message generation failed - fallback used";
+					saveState(cwd, state);
+					clearPipelineWidget(ctx);
+					return;
+				} else {
+					// Other commit failure
+					state.lastError = undefined;
+					saveState(cwd, state);
+					clearPipelineWidget(ctx);
+					ctx.ui.notify("Failed to create agent commit", "error");
+					return;
+				}
+			}
 			
 			// Mark implementer as completed for this phase
 			state.implementerCompletedForPhase = true;
