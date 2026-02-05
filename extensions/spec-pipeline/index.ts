@@ -406,6 +406,14 @@ export default function (pi: ExtensionAPI) {
 			), "info");
 			ctx.ui.notify(`Current stage: ${formatStage(state.stage)}`, "info");
 			
+			// Show remembered flag settings
+			if (state.discovery?.skipped) {
+				ctx.ui.notify("📌 Discovery was skipped (--quick)", "info");
+			}
+			if (state.skipPlanGeneration) {
+				ctx.ui.notify("📌 Plan generation is skipped (--no-plan)", "info");
+			}
+			
 			// Initialize the status widget
 			updatePipelineWidget(ctx, state, "Resuming...");
 

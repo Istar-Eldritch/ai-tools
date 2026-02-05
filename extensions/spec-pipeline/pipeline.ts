@@ -161,6 +161,10 @@ export async function runPipeline(
 	}
 	const metrics = state.metrics;
 
+	// Use skipPlanGeneration from state if available (for resume), otherwise from config
+	// This ensures --no-plan flag is remembered when resuming
+	const effectiveSkipPlanGeneration = state.skipPlanGeneration ?? projectConfig.skipPlanGeneration;
+
 	// Track phase timing markers
 	let phaseStartTime: Date | undefined;
 
@@ -850,7 +854,7 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 
 	// Generate implementation plans for phases that haven't been generated yet
 	// UNLESS skipPlanGeneration is enabled (A/B testing experiment)
-	if (projectConfig.skipPlanGeneration) {
+	if (effectiveSkipPlanGeneration) {
 		// Skip plan generation entirely - mark all phases as "generated" 
 		// The implementer will work directly from the spec
 		ctx.ui.notify(formatStepBanner(
@@ -1115,7 +1119,7 @@ ${state.specDraft.slice(0, 2000)}...`;
 		
 		// Get the implementation guidance - either from plan file or directly from spec
 		let phasePlan: string;
-		if (state.skipPlanGeneration || projectConfig.skipPlanGeneration) {
+		if (effectiveSkipPlanGeneration) {
 			// No plan file - use spec content directly with phase context
 			phasePlan = `## Direct Implementation from Spec (No Plan File)
 

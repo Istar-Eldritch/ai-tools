@@ -281,4 +281,118 @@ describe("Pipeline Resume After Cancellation", () => {
 			teardownTempDir();
 		}
 	});
+	
+	it("should remember --quick flag (discovery skipped) when resuming", () => {
+		setupTempDir();
+		
+		try {
+			// Create initial state with discovery skipped (--quick flag)
+			const state = createInitialState(
+				"Test feature",
+				"2602051400",
+				"test_feature",
+				"docs",
+				{ enabled: true, maxRounds: 5, questionsPerRound: 3 },
+				true // skip discovery (--quick flag)
+			);
+			
+			// Verify initial state has discovery skipped
+			expect(state.discovery?.skipped).toBe(true);
+			expect(state.discovery?.completed).toBe(true);
+			
+			saveState(cwd, state);
+			
+			// Simulate some progress
+			state.stage = "spec_drafting";
+			saveState(cwd, state);
+			
+			// Cancel
+			state.stage = "cancelled";
+			saveState(cwd, state);
+			
+			// Load and verify flag is preserved
+			const loadedState = loadState(cwd, state.id);
+			expect(loadedState).not.toBeNull();
+			expect(loadedState!.discovery?.skipped).toBe(true);
+			expect(loadedState!.discovery?.completed).toBe(true);
+			
+		} finally {
+			teardownTempDir();
+		}
+	});
+	
+	it("should remember --no-plan flag (skipPlanGeneration) when resuming", () => {
+		setupTempDir();
+		
+		try {
+			// Create initial state
+			const state = createInitialState(
+				"Test feature",
+				"2602051400",
+				"test_feature",
+				"docs",
+				{ enabled: false, maxRounds: 5, questionsPerRound: 3 },
+				true
+			);
+			
+			// Set skipPlanGeneration flag (--no-plan)
+			state.skipPlanGeneration = true;
+			
+			// Move through some stages
+			state.stage = "spec_drafting";
+			saveState(cwd, state);
+			
+			// Cancel
+			state.stage = "cancelled";
+			saveState(cwd, state);
+			
+			// Load and verify flag is preserved
+			const loadedState = loadState(cwd, state.id);
+			expect(loadedState).not.toBeNull();
+			expect(loadedState!.skipPlanGeneration).toBe(true);
+			
+		} finally {
+			teardownTempDir();
+		}
+	});
+	
+	it("should remember both --quick and --no-plan flags when resuming", () => {
+		setupTempDir();
+		
+		try {
+			// Create initial state with both flags
+			const state = createInitialState(
+				"Test feature",
+				"2602051400",
+				"test_feature",
+				"docs",
+				{ enabled: true, maxRounds: 5, questionsPerRound: 3 },
+				true // skip discovery (--quick)
+			);
+			state.skipPlanGeneration = true; // skip plan generation (--no-plan)
+			
+			// Verify initial state
+			expect(state.discovery?.skipped).toBe(true);
+			expect(state.skipPlanGeneration).toBe(true);
+			
+			saveState(cwd, state);
+			
+			// Simulate progress and cancellation
+			state.stage = "implementation";
+			state.specApproved = true;
+			saveState(cwd, state);
+			
+			state.stage = "cancelled";
+			saveState(cwd, state);
+			
+			// Load and verify both flags are preserved
+			const loadedState = loadState(cwd, state.id);
+			expect(loadedState).not.toBeNull();
+			expect(loadedState!.discovery?.skipped).toBe(true);
+			expect(loadedState!.skipPlanGeneration).toBe(true);
+			
+		} finally {
+			teardownTempDir();
+		}
+	});
 });
