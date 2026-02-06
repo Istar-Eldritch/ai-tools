@@ -427,9 +427,10 @@ ${questions}
 			ctx.ui.notify("─────────────────────────────────────────", "info");
 			
 			// Show a condensed version of the summary
-			const summaryPreview = state.discovery.discoverySummary.length > 2000
-				? state.discovery.discoverySummary.slice(0, 2000) + "\n\n[... truncated for preview ...]"
-				: state.discovery.discoverySummary;
+			const discoverySummary = state.discovery.discoverySummary || "";
+			const summaryPreview = discoverySummary.length > 2000
+				? discoverySummary.slice(0, 2000) + "\n\n[... truncated for preview ...]"
+				: discoverySummary;
 			
 			ctx.ui.notify(summaryPreview, "info");
 			ctx.ui.notify("─────────────────────────────────────────", "info");
@@ -1057,12 +1058,13 @@ Read the spec and current plan, revise to address the feedback, and write back t
 			"Creating commit for specification",
 			"💾"
 		), "info");
+		const specDraft = state.specDraft || "";
 		const specCommitTask = `Write a commit message for this new specification:
 
 File: ${state.specFilename}
 Description: ${state.description}
 
-${state.specDraft.slice(0, 2000)}...`;
+${specDraft.slice(0, 2000)}...`;
 
 		const commitMsgResult = await runAgent(
 			"haiku",
@@ -1218,7 +1220,8 @@ Address all issues raised in the review.`;
 			// Show summary of implementer output
 			ctx.ui.notify(formatAgentSummary("implementer", implementerConfig.model, implementResult.output, "✅", phaseIdx + 1), "info");
 			
-			implementationSummary = implementResult.output.slice(0, 1500);
+			const implementOutput = implementResult.output || "";
+			implementationSummary = implementOutput.slice(0, 1500);
 			
 			// Create commit after implementation (R1, R2, R10)
 			const commitResult = await createAgentCommit(
@@ -1256,7 +1259,8 @@ Address all issues raised in the review.`;
 			saveState(cwd, state);
 		} else {
 			ctx.ui.notify(`🔄 Resuming phase ${phaseIdx + 1} (skipping implementation step)`, "info");
-			implementationSummary = `(Resumed from previous run)\n\nImplementation plan:\n${phasePlan.slice(0, 1200)}`;
+			const planPreview = phasePlan || "";
+			implementationSummary = `(Resumed from previous run)\n\nImplementation plan:\n${planPreview.slice(0, 1200)}`;
 		}
 
 		// ========================================
@@ -1338,13 +1342,14 @@ Make the necessary fixes.`,
 		updatePipelineWidget(ctx, state, "Creating commit...");
 		
 		ctx.ui.notify(`💾 Creating commit for phase ${phaseIdx + 1}...`, "info");
+		const lastReviewOutput = codeReviewResult.lastReviewOutput || "";
 		const phaseCommitTask = `Write a commit message for Phase ${phaseIdx + 1} implementation.
 
 What was implemented:
 ${implementationSummary}
 
 Review summary:
-${codeReviewResult.lastReviewOutput.slice(0, 500)}
+${lastReviewOutput.slice(0, 500)}
 
 Final review verdict: ${codeReviewResult.verdict}
 Cheap review cycles: ${codeReviewResult.cheapCyclesCompleted}

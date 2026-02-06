@@ -263,7 +263,7 @@ export function formatErrorForRetry(error: ErrorDetails, state: PipelineState): 
 	content.push(formatKeyValue("Role", error.role));
 	
 	if (error.phase !== undefined) {
-		const totalPhases = state.phases.length || "?";
+		const totalPhases = (state.phases || []).length || "?";
 		const phaseInfo = `${error.phase} of ${totalPhases}`;
 		if (error.cycle !== undefined) {
 			content.push(formatKeyValue("Phase", phaseInfo));
@@ -302,7 +302,7 @@ export function formatErrorBox(error: ErrorDetails, state: PipelineState): strin
 	content.push(formatKeyValue("Agent", `${error.agent} (${error.role})`));
 	
 	if (error.phase !== undefined) {
-		const totalPhases = state.phases.length || "?";
+		const totalPhases = (state.phases || []).length || "?";
 		let phaseInfo = `${error.phase} of ${totalPhases}`;
 		if (error.cycle !== undefined) {
 			phaseInfo += `, Cycle ${error.cycle} of 3`;

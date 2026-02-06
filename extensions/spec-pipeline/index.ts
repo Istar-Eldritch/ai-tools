@@ -133,10 +133,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Parse flags
-			const isQuick = args.includes("--quick");
-			const noPlan = args.includes("--no-plan");
-			const description = args
+			// Parse flags (handle undefined/null args)
+			const argsStr = args || "";
+			const isQuick = argsStr.includes("--quick");
+			const noPlan = argsStr.includes("--no-plan");
+			const description = argsStr
 				.replace("--quick", "")
 				.replace("--no-plan", "")
 				.replace(/\s+/g, " ")
@@ -287,7 +288,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const cwd = ctx.cwd;
-			const pipelineId = args.trim();
+			const pipelineId = (args || "").trim();
 
 			let state: PipelineState | null;
 			if (pipelineId) {
@@ -474,7 +475,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Show current spec pipeline status",
 		handler: async (args, ctx) => {
 			const cwd = ctx.cwd;
-			const pipelineId = args.trim();
+			const pipelineId = (args || "").trim();
 
 			let state: PipelineState | null;
 			if (pipelineId) {
@@ -543,8 +544,9 @@ export default function (pi: ExtensionAPI) {
 					statusIcon = "▶️";
 				}
 				
-				lines.push(`${statusIcon} ${state.id}`);
-				lines.push(`   ${state.description.slice(0, 55)}${state.description.length > 55 ? "..." : ""}`);
+				lines.push(`${statusIcon} ${state.id || "unknown"}`);
+				const desc = state.description || "(no description)";
+				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
 				lines.push(`   Stage: ${formatStage(state.stage)}`);
 				
 				if (hasError && state.lastError && typeof state.lastError !== "string") {
@@ -573,7 +575,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Show detailed error information for the current pipeline",
 		handler: async (args, ctx) => {
 			const cwd = ctx.cwd;
-			const pipelineId = args.trim();
+			const pipelineId = (args || "").trim();
 
 			let state: PipelineState | null;
 			if (pipelineId) {
@@ -659,7 +661,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const cwd = ctx.cwd;
-			const pipelineId = args.trim();
+			const pipelineId = (args || "").trim();
 
 			let state: PipelineState | null;
 			if (pipelineId) {
@@ -719,7 +721,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Export pipeline metrics for A/B testing (plan generation value)",
 		handler: async (args, ctx) => {
 			const cwd = ctx.cwd;
-			const pipelineId = args.trim();
+			const pipelineId = (args || "").trim();
 
 			// Get pipeline(s) to export
 			let statesToExport: PipelineState[] = [];
@@ -774,7 +776,8 @@ export default function (pi: ExtensionAPI) {
 				const codeReview = `${m.codeReviewCycles.cheap}/${m.codeReviewCycles.expensive}`;
 				const firstPass = `${m.codeReviewFirstPassRate}%`;
 				
-				lines.push(`| ${state.id.slice(0, 16)} | ${planGen.padEnd(8)} | ${String(durationMins).padEnd(8)} | ${String(m.specIterations).padEnd(9)} | ${codeReview.padEnd(17)} | ${firstPass.padEnd(10)} |`);
+				const stateId = state.id || "unknown";
+				lines.push(`| ${stateId.slice(0, 16)} | ${planGen.padEnd(8)} | ${String(durationMins).padEnd(8)} | ${String(m.specIterations).padEnd(9)} | ${codeReview.padEnd(17)} | ${firstPass.padEnd(10)} |`);
 			}
 
 			lines.push("");
@@ -788,8 +791,9 @@ export default function (pi: ExtensionAPI) {
 				
 				lines.push("📋 Detailed Metrics:");
 				lines.push("");
-				lines.push(formatKeyValue("  Pipeline ID", state.id));
-				lines.push(formatKeyValue("  Description", state.description.slice(0, 50)));
+				lines.push(formatKeyValue("  Pipeline ID", state.id || "unknown"));
+				const desc = state.description || "(no description)";
+				lines.push(formatKeyValue("  Description", desc.slice(0, 50)));
 				lines.push(formatKeyValue("  Status", state.stage));
 				lines.push("");
 				lines.push("  Configuration:");

@@ -4,7 +4,10 @@ import {
 	getErrorEmoji,
 	getErrorSuggestion,
 	truncateString,
+	formatErrorForRetry,
+	formatErrorBox,
 } from "./errors.ts";
+import type { PipelineState, ErrorDetails } from "./types.ts";
 
 describe("classifyError", () => {
 	describe("RATE_LIMIT detection", () => {
@@ -201,5 +204,165 @@ describe("truncateString", () => {
 		const result = truncateString("hello world foo bar", 10);
 		expect(result.length).toBe(10);
 		expect(result).toBe("hello w...");
+	});
+});
+
+describe("formatErrorForRetry", () => {
+	function createMinimalState(overrides: Partial<PipelineState> = {}): PipelineState {
+		return {
+			id: "test-id-123",
+			description: "Test description",
+			stage: "implementation",
+			createdAt: "2026-02-06T12:00:00.000Z",
+			updatedAt: "2026-02-06T12:00:00.000Z",
+			specTimestamp: "2602061200",
+			specFilename: "test_spec.md",
+			specPath: "docs/test_spec.md",
+			specDraft: "",
+			specApproved: true,
+			specIteration: 1,
+			phases: ["phase1.md", "phase2.md"],
+			phasesGenerated: [true, true],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			specCommitted: true,
+			phaseCommits: [],
+			...overrides,
+		};
+	}
+
+	function createError(overrides: Partial<ErrorDetails> = {}): ErrorDetails {
+		return {
+			timestamp: "2026-02-06T12:00:00.000Z",
+			agent: "opus",
+			role: "implementer",
+			phase: 1,
+			cycle: 1,
+			exitCode: 1,
+			errorType: "UNKNOWN",
+			agentTask: "test task",
+			...overrides,
+		};
+	}
+
+	it("handles state with undefined phases", () => {
+		const error = createError({ phase: 1 });
+		const state = createMinimalState();
+		(state as any).phases = undefined;
+		
+		expect(() => formatErrorForRetry(error, state)).not.toThrow();
+		const result = formatErrorForRetry(error, state);
+		// Should show "?" for unknown total phases
+		expect(result).toContain("1 of ?");
+	});
+
+	it("handles state with empty phases array", () => {
+		const error = createError({ phase: 1 });
+		const state = createMinimalState({ phases: [] });
+		
+		expect(() => formatErrorForRetry(error, state)).not.toThrow();
+		const result = formatErrorForRetry(error, state);
+		expect(result).toContain("1 of ?");
+	});
+
+	it("handles error without phase", () => {
+		const error = createError();
+		delete (error as any).phase;
+		const state = createMinimalState();
+		
+		expect(() => formatErrorForRetry(error, state)).not.toThrow();
+	});
+
+	it("includes all error details when present", () => {
+		const error = createError({
+			stderr: "Some error output",
+			phase: 2,
+			cycle: 3,
+		});
+		const state = createMinimalState({ phases: ["p1.md", "p2.md", "p3.md"] });
+		
+		const result = formatErrorForRetry(error, state);
+		expect(result).toContain("opus");
+		expect(result).toContain("implementer");
+		expect(result).toContain("2 of 3");
+	});
+});
+
+describe("formatErrorBox", () => {
+	function createMinimalState(overrides: Partial<PipelineState> = {}): PipelineState {
+		return {
+			id: "test-id-123",
+			description: "Test description",
+			stage: "implementation",
+			createdAt: "2026-02-06T12:00:00.000Z",
+			updatedAt: "2026-02-06T12:00:00.000Z",
+			specTimestamp: "2602061200",
+			specFilename: "test_spec.md",
+			specPath: "docs/test_spec.md",
+			specDraft: "",
+			specApproved: true,
+			specIteration: 1,
+			phases: ["phase1.md", "phase2.md"],
+			phasesGenerated: [true, true],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			specCommitted: true,
+			phaseCommits: [],
+			...overrides,
+		};
+	}
+
+	function createError(overrides: Partial<ErrorDetails> = {}): ErrorDetails {
+		return {
+			timestamp: "2026-02-06T12:00:00.000Z",
+			agent: "opus",
+			role: "implementer",
+			phase: 1,
+			cycle: 1,
+			exitCode: 1,
+			errorType: "UNKNOWN",
+			agentTask: "test task",
+			...overrides,
+		};
+	}
+
+	it("handles state with undefined phases", () => {
+		const error = createError({ phase: 1 });
+		const state = createMinimalState();
+		(state as any).phases = undefined;
+		
+		expect(() => formatErrorBox(error, state)).not.toThrow();
+		const result = formatErrorBox(error, state);
+		expect(result).toContain("1 of ?");
+	});
+
+	it("handles error with stderr", () => {
+		const error = createError({
+			stderr: "Error: Something went wrong\nStack trace here",
+		});
+		const state = createMinimalState();
+		
+		const result = formatErrorBox(error, state);
+		expect(result).toContain("Error Message");
+		expect(result).toContain("Something went wrong");
+	});
+
+	it("handles error without optional fields", () => {
+		const error: ErrorDetails = {
+			timestamp: "2026-02-06T12:00:00.000Z",
+			agent: "sonnet",
+			role: "specReviewer",
+			exitCode: 1,
+			errorType: "NETWORK",
+			agentTask: "review task",
+		};
+		const state = createMinimalState();
+		
+		expect(() => formatErrorBox(error, state)).not.toThrow();
+		const result = formatErrorBox(error, state);
+		expect(result).toContain("sonnet");
+		expect(result).toContain("specReviewer");
 	});
 });

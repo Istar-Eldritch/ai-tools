@@ -268,13 +268,14 @@ export function formatState(state: PipelineState): string {
 	
 	// Header section
 	lines.push(formatDivider(50));
-	lines.push(`  Pipeline: ${state.id}`);
+	lines.push(`  Pipeline: ${state.id || "unknown"}`);
 	lines.push(formatDivider(50));
 	lines.push("");
 	
 	// Basic info section
 	lines.push("📋 Basic Information");
-	lines.push(formatKeyValue("  Description", state.description.slice(0, 50) + (state.description.length > 50 ? "..." : "")));
+	const description = state.description || "(no description)";
+	lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
 	lines.push(formatKeyValue("  Stage", formatStage(state.stage)));
 	lines.push(formatKeyValue("  Created", state.createdAt));
 	lines.push(formatKeyValue("  Updated", state.updatedAt));
@@ -300,20 +301,21 @@ export function formatState(state: PipelineState): string {
 	
 	// Discovery progress section
 	if (state.discovery) {
+		const qaHistory = state.discovery.qaHistory || [];
 		lines.push("");
 		lines.push("🔍 Discovery");
 		if (state.discovery.skipped) {
 			lines.push("  Skipped (--quick mode)");
 		} else if (state.stage === "discovery") {
 			lines.push(formatKeyValue("  Round", `${state.discovery.currentRound}/${state.discovery.maxRounds}`));
-			lines.push(formatKeyValue("  Q&A Exchanges", String(state.discovery.qaHistory.length)));
-			if (state.discovery.qaHistory.length > 0) {
-				const lastExchange = state.discovery.qaHistory[state.discovery.qaHistory.length - 1];
+			lines.push(formatKeyValue("  Q&A Exchanges", String(qaHistory.length)));
+			if (qaHistory.length > 0) {
+				const lastExchange = qaHistory[qaHistory.length - 1];
 				const lastTime = new Date(lastExchange.timestamp).toISOString().slice(11, 19);
 				lines.push(formatKeyValue("  Last Exchange", `Round ${lastExchange.round} at ${lastTime} UTC`));
 			}
-		} else if (state.discovery.completed && state.discovery.qaHistory.length > 0) {
-			lines.push(formatKeyValue("  Status", `Completed (${state.discovery.qaHistory.length} exchanges)`));
+		} else if (state.discovery.completed && qaHistory.length > 0) {
+			lines.push(formatKeyValue("  Status", `Completed (${qaHistory.length} exchanges)`));
 			const summaryLength = state.discovery.discoverySummary?.length || 0;
 			if (summaryLength > 0) {
 				lines.push(formatKeyValue("  Summary", `${Math.round(summaryLength / 1000)}KB`));
@@ -332,15 +334,17 @@ export function formatState(state: PipelineState): string {
 	}
 	
 	// Phases section
-	if (state.phases.length > 0) {
+	const phases = state.phases || [];
+	const phasesGenerated = state.phasesGenerated || [];
+	if (phases.length > 0) {
 		lines.push("");
 		lines.push("🏗️ Implementation Phases");
-		const generatedCount = state.phasesGenerated.filter(Boolean).length;
-		lines.push(formatKeyValue("  Total Phases", String(state.phases.length)));
-		lines.push(formatKeyValue("  Plans Ready", `${generatedCount}/${state.phases.length}`));
+		const generatedCount = phasesGenerated.filter(Boolean).length;
+		lines.push(formatKeyValue("  Total Phases", String(phases.length)));
+		lines.push(formatKeyValue("  Plans Ready", `${generatedCount}/${phases.length}`));
 		
 		if (state.stage === "implementation") {
-			lines.push(formatKeyValue("  Current Phase", `${state.currentPhaseIndex + 1}/${state.phases.length}`));
+			lines.push(formatKeyValue("  Current Phase", `${state.currentPhaseIndex + 1}/${phases.length}`));
 			// Show tiered review state if available
 			if (state.currentReviewTier) {
 				lines.push(formatKeyValue("  Review Tier", state.currentReviewTier));
@@ -353,8 +357,9 @@ export function formatState(state: PipelineState): string {
 			// Show phase names with progress indicators
 			lines.push("");
 			lines.push("  Phase Progress:");
-			for (let i = 0; i < state.phases.length && i < 5; i++) {  // Limit to 5 phases for display
-				const phaseName = state.phases[i].slice(0, 30) + (state.phases[i].length > 30 ? "..." : "");
+			for (let i = 0; i < phases.length && i < 5; i++) {  // Limit to 5 phases for display
+				const phase = phases[i] || "(unnamed phase)";
+				const phaseName = phase.slice(0, 30) + (phase.length > 30 ? "..." : "");
 				let status = "  ⬜";  // Pending
 				if (i < state.currentPhaseIndex) {
 					status = "  ✅";  // Completed
@@ -363,8 +368,8 @@ export function formatState(state: PipelineState): string {
 				}
 				lines.push(`  ${status} Phase ${i + 1}: ${phaseName}`);
 			}
-			if (state.phases.length > 5) {
-				lines.push(`    ... and ${state.phases.length - 5} more phases`);
+			if (phases.length > 5) {
+				lines.push(`    ... and ${phases.length - 5} more phases`);
 			}
 		}
 	}
@@ -385,7 +390,7 @@ export function formatState(state: PipelineState): string {
 			content.push(formatKeyValue("Agent", `${state.lastError.agent} (${state.lastError.role})`));
 			
 			if (state.lastError.phase !== undefined) {
-				const totalPhases = state.phases.length || "?";
+				const totalPhases = (state.phases || []).length || "?";
 				let phaseInfo = `${state.lastError.phase} of ${totalPhases}`;
 				if (state.lastError.cycle !== undefined) {
 					phaseInfo += `, Cycle ${state.lastError.cycle} of 3`;
@@ -437,7 +442,8 @@ export function updatePipelineWidget(
 	const lines: string[] = [];
 	
 	// Header
-	lines.push(`📋 Pipeline: ${state.id.slice(0, 16)}...`);
+	const stateId = state.id || "unknown";
+	lines.push(`📋 Pipeline: ${stateId.slice(0, 16)}...`);
 	lines.push(formatDivider(40));
 	
 	// Stage indicator
@@ -455,9 +461,10 @@ export function updatePipelineWidget(
 	lines.push(`Stage: ${stageEmoji[state.stage] || "▶"} ${formatStage(state.stage)}`);
 	
 	// Phase progress if in implementation
-	if (state.phases.length > 0 && state.stage === "implementation") {
+	const widgetPhases = state.phases || [];
+	if (widgetPhases.length > 0 && state.stage === "implementation") {
 		const completed = state.currentPhaseIndex;
-		const total = state.phases.length;
+		const total = widgetPhases.length;
 		const progressBar = "█".repeat(completed) + "░".repeat(total - completed);
 		lines.push(`Phases: [${progressBar}] ${completed + 1}/${total}`);
 	}

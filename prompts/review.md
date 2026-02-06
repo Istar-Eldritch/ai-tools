@@ -5,8 +5,9 @@ Review a GitHub pull request or local changes and add inline comments to the cod
 ## Target
 
 **PR URL or scope:** `$1`
+**Base branch (optional):** `$2` (defaults to `main` if not provided)
 
-If no argument is provided, review the diff between HEAD and `main` branch on the current repository.
+If no argument is provided, review the diff between HEAD and the base branch (default: `main`) on the current repository.
 
 ## Workflow
 
@@ -24,15 +25,19 @@ If no argument is provided, review the diff between HEAD and `main` branch on th
 
 ### For Local Changes (no PR provided):
 
-1. **Get the Diff**
-   - Use `git diff main...HEAD` to get the diff between main and current HEAD
-   - Use `git log main..HEAD --oneline` to see commits being reviewed
-   - Use `git diff main...HEAD --stat` to get list of changed files
+1. **Determine Base Branch**
+   - Use `$2` as the base branch if provided, otherwise default to `main`
+   - Store in a variable like `BASE_BRANCH="${2:-main}"`
 
-2. **Stay on Current Branch**
+2. **Get the Diff**
+   - Use `git diff ${BASE_BRANCH}...HEAD` to get the diff between base branch and current HEAD
+   - Use `git log ${BASE_BRANCH}..HEAD --oneline` to see commits being reviewed
+   - Use `git diff ${BASE_BRANCH}...HEAD --stat` to get list of changed files
+
+3. **Stay on Current Branch**
    - No checkout needed, review changes in place
 
-3. **Analyze the Changes**
+4. **Analyze the Changes**
    - Read each modified/added file in full
    - Compare with existing similar code in the codebase for consistency
    - Check for:
@@ -45,7 +50,7 @@ If no argument is provided, review the diff between HEAD and `main` branch on th
      - Performance concerns
      - Security issues
 
-4. **Add Comments**
+5. **Add Comments**
 
    **For GitHub PRs:** Create a pending review with all inline comments in a single API call
    - Use `gh api` to create a pending review with all comments at once:
@@ -82,7 +87,7 @@ If no argument is provided, review the diff between HEAD and `main` branch on th
      problematicCode();
      ```
 
-5. **Finalize**
+6. **Finalize**
 
    **For GitHub PRs:**
    - Submit the review when ready:
