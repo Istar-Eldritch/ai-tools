@@ -1,77 +1,42 @@
 /**
  * Spec Pipeline Extension
  *
- * Automates the spec → implementation workflow with configurable AI agents:
+ * Split into two separate workflows:
  *
- * 1. Discovery (optional): Sonnet asks clarifying questions
- * 2. Spec Drafting: Opus drafts technical specification
- * 3. Spec Review: Tiered review (Sonnet → Opus), user approves or requests changes
- * 4. For each implementation phase:
- *    - Plan Drafting: Opus drafts implementation plan
- *    - Plan Review: Tiered review (Sonnet → Opus)
- * 5. Haiku creates commit message for spec
- * 6. For each implementation phase:
- *    - Implementation: Opus implements according to plan
- *    - Code Review: Tiered review (Sonnet → Opus)
- *    - Haiku creates commit after phase completion
+ * SPEC CREATION (/spec):
+ *   1. Discovery (optional): Sonnet asks clarifying questions
+ *   2. Spec Drafting: Opus drafts technical specification
+ *   3. Spec Review: Tiered review (Sonnet → Opus), user approves or requests changes
+ *   4. Stays on spec branch for user to review and merge
  *
- * Tiered Review System:
- *   - Cheap tier (default: Sonnet) runs first for initial review cycles
- *   - Expensive tier (default: Opus) runs as final quality gate
- *   - Fixes during expensive tier stay at expensive tier
+ * IMPLEMENTATION (/implement):
+ *   1. Takes a spec file path as input
+ *   2. For each implementation phase:
+ *      - Plan Drafting: Opus drafts implementation plan
+ *      - Plan Review: Tiered review (Sonnet → Opus)
+ *   3. For each implementation phase:
+ *      - Implementation: Opus implements according to plan
+ *      - Code Review: Tiered review (Sonnet → Opus)
+ *   4. Stays on implement branch for user to review and merge
  *
  * Usage:
- *   /spec <description of what you want to build>
+ *   /spec <description>                             # Start spec creation
  *   /spec --quick <description>                     # Skip discovery phase
- *   /spec --no-plan <description>                   # Skip plan generation (A/B test)
- *   /spec --quick --no-plan <description>           # Skip both discovery and plans
- *   /spec-resume                                    # Resume last pipeline
- *   /spec-status                                    # Show current state
- *   /spec-list                                      # List all pipelines
- *   /spec-cancel                                    # Cancel current pipeline
- *   /spec-metrics [id]                              # Export metrics for A/B comparison
+ *   /spec-resume                                    # Resume spec creation
+ *   /spec-status                                    # Show spec status
+ *   /spec-list                                      # List spec pipelines
+ *   /spec-cancel                                    # Cancel spec pipeline
+ *
+ *   /implement <spec-path>                          # Start implementation
+ *   /implement --no-plan <spec-path>                # Skip plan generation
+ *   /implement-resume                               # Resume implementation
+ *   /implement-status                               # Show implementation status
+ *   /implement-list                                 # List implementations
+ *   /implement-cancel                               # Cancel implementation
+ *   /implement-metrics [id]                         # Export metrics
  *
  * Configuration:
- *   Create .pi/spec-pipeline.json in your project root:
- *   {
- *     "specsDir": "docs/specs",
- *     "testCommand": "npm test",
- *     "contextFiles": ["CONTRIBUTING.md", "docs/architecture.md"],
- *     "discovery": { "enabled": true, "maxRounds": 5, "questionsPerRound": 4 },
- *     "models": {
- *       "discoveryAgent": { "model": "sonnet", "thinking": "medium" },
- *       "specDrafter": { "model": "opus", "thinking": "high" },
- *       "specReviewer": {
- *         "cheap": { "model": "sonnet", "thinking": "medium" },
- *         "expensive": { "model": "opus", "thinking": "high" }
- *       }
- *       // ... other roles
- *     },
- *     // Per-reviewer cycles (set both to 0 to skip that review):
- *     "reviewCycles": {
- *       "specReviewer": { "cheap": 2, "expensive": 2 },
- *       "planReviewer": { "cheap": 0, "expensive": 0 },  // Skip plan review
- *       "codeReviewer": { "cheap": 2, "expensive": 1 }
- *     },
- *     // Or use global format (applies to all reviewers):
- *     // "reviewCycles": { "cheap": 2, "expensive": 2 }
- *     
- *     // EXPERIMENTAL: Skip plan generation phase (A/B testing)
- *     // When true, goes directly from spec → implementation without detailed plans
- *     // Use /spec-metrics to compare outcomes
- *     "skipPlanGeneration": false
- *   }
- *
- * Default Model Configuration (optimized for cost/quality balance):
- *   - discoveryAgent: Sonnet (question generation doesn't need Opus)
- *   - specDrafter: Opus (complex synthesis task)
- *   - specReviewer: Sonnet → Opus (tiered)
- *   - planDrafter: Opus (complex planning task)
- *   - planReviewer: Sonnet → Opus (tiered)
- *   - implementer: Opus (complex code generation)
- *   - codeReviewer: Sonnet → Opus (tiered)
- *   - addressReview: Opus (complex fix implementation)
- *   - commitMessageWriter: Haiku (fixed, not configurable)
+ *   Create .pi/spec-pipeline.json in your project root (same config for both)
  */
 
 import * as fs from "node:fs";
@@ -79,18 +44,32 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-// Import from modules
-import type { PipelineState, TieredReviewerRole, PipelineMetrics } from "./types.ts";
+// Import types
+import type { SpecState, ImplementationState, TieredReviewerRole } from "./types.ts";
+
+// Import config
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
+
+// Import state management
 import {
-	loadState,
-	saveState,
-	listStates,
-	getLatestActivePipeline,
-	generateSpecTimestamp,
-	createInitialState,
+	loadSpecState,
+	saveSpecState,
+	listSpecStates,
+	getLatestActiveSpecPipeline,
+	loadImplState,
+	saveImplState,
+	listImplStates,
+	getLatestActiveImplPipeline,
+	generateTimestamp,
+	generatePipelineId,
+	createInitialSpecState,
+	createInitialImplState,
 	getStateDir,
+	getSpecStateDir,
+	getImplStateDir,
 } from "./state.ts";
+
+// Import git operations
 import {
 	validateGitRepo,
 	checkGitClean,
@@ -101,6 +80,8 @@ import {
 	stashExists,
 	dropStash,
 } from "./git.ts";
+
+// Import error handling
 import {
 	getErrorEmoji,
 	getErrorSuggestion,
@@ -108,54 +89,103 @@ import {
 	formatErrorBox,
 	truncateString,
 } from "./errors.ts";
+
+// Import formatting
 import {
 	formatStepBanner,
 	formatEffectiveConfig,
-	formatStage,
-	formatState,
+	formatSpecStage,
+	formatImplStage,
+	formatSpecState,
+	formatImplState,
 	formatDivider,
 	formatKeyValue,
-	updatePipelineWidget,
+	updateSpecWidget,
+	updateImplWidget,
 	clearPipelineWidget,
 } from "./formatting.ts";
+
+// Import agents
 import { runAgent } from "./agents.ts";
+
+// Import review
 import { retryFailedOperation } from "./review.ts";
-import { runPipeline } from "./pipeline.ts";
+
+// Import pipelines
+import { runSpecPipeline } from "./spec-pipeline.ts";
+import { runImplementPipeline } from "./implement-pipeline.ts";
+
+// Import system prompts
 import { createSystemPrompts } from "./agents-config.ts";
 
+// ============================================
+// Helpers
+// ============================================
+
+/** Common stop words for generating short names from descriptions */
+const STOP_WORDS = new Set([
+	"a", "an", "the", "i", "we", "you", "it", "is", "are", "was", "were",
+	"want", "need", "would", "like", "to", "for", "of", "in", "on", "at",
+	"with", "and", "or", "but", "that", "this", "these", "those", "be",
+	"have", "has", "had", "do", "does", "did", "will", "can", "could",
+	"should", "may", "might", "must", "shall", "add", "create", "make",
+	"build", "implement", "new", "some", "my", "our", "your", "their"
+]);
+
+function generateShortName(text: string): string {
+	return text
+		.toLowerCase()
+		.replace(/[^a-z0-9\s]/g, "")
+		.split(/\s+/)
+		.filter(word => word.length > 1 && !STOP_WORDS.has(word))
+		.slice(0, 3)
+		.join("_") || "spec";
+}
+
+function generateBranchShortName(text: string): string {
+	return text
+		.toLowerCase()
+		.replace(/[^a-z0-9\s]/g, "")
+		.split(/\s+/)
+		.filter(word => word.length > 1 && !STOP_WORDS.has(word))
+		.slice(0, 3)
+		.join("-") || "spec";
+}
+
 export default function (pi: ExtensionAPI) {
-	// Main command to start a new spec pipeline
+
+	// ============================================
+	// SPEC CREATION COMMANDS
+	// ============================================
+
 	pi.registerCommand("spec", {
-		description: "Start the spec → implementation pipeline. Use --quick to skip discovery, --no-plan to skip plan generation.",
+		description: "Start spec creation. Use --quick to skip discovery.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
 				return;
 			}
 
-			// Parse flags (handle undefined/null args)
 			const argsStr = args || "";
 			const isQuick = argsStr.includes("--quick");
-			const noPlan = argsStr.includes("--no-plan");
 			const description = argsStr
 				.replace("--quick", "")
-				.replace("--no-plan", "")
 				.replace(/\s+/g, " ")
 				.trim();
 			
 			if (!description) {
-				ctx.ui.notify("Usage: /spec [--quick] [--no-plan] <description of what you want to build>", "error");
+				ctx.ui.notify("Usage: /spec [--quick] <description of what you want to build>", "error");
 				return;
 			}
 
 			const cwd = ctx.cwd;
 
-			// Check for existing active pipeline
-			const existingPipeline = getLatestActivePipeline(cwd);
+			// Check for existing active spec pipeline
+			const existingPipeline = getLatestActiveSpecPipeline(cwd);
 			if (existingPipeline) {
 				const resume = await ctx.ui.confirm(
-					"Active Pipeline Found",
-					`There's an active pipeline:\n${formatState(existingPipeline)}\n\nDo you want to continue with a NEW pipeline? (No = cancel)`
+					"Active Spec Pipeline Found",
+					`There's an active spec pipeline:\n${formatSpecState(existingPipeline)}\n\nDo you want to continue with a NEW pipeline? (No = cancel)`
 				);
 				if (!resume) {
 					ctx.ui.notify("Use /spec-resume to continue the existing pipeline", "info");
@@ -163,77 +193,49 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			// Git repository validation
+			// Git validation
 			const gitValidation = await validateGitRepo(cwd);
 			if (!gitValidation.valid) {
 				ctx.ui.notify(gitValidation.error!, "error");
 				return;
 			}
 			
-			// Check for clean working directory
 			const gitClean = await checkGitClean(cwd);
 			if (!gitClean.clean) {
-				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash your changes before starting the pipeline.", "error");
+				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
 				if (gitClean.status) {
 					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
 				}
 				return;
 			}
 			
-			// Store original branch name
 			const originalBranch = await getCurrentBranch(cwd);
 			if (!originalBranch) {
 				ctx.ui.notify("Failed to determine current branch", "error");
 				return;
 			}
 
-			// Load and validate project configuration
+			// Load config
 			const configResult = loadPipelineConfig(cwd);
 			if (!configResult.success) {
 				ctx.ui.notify(configResult.error, "error");
 				return;
 			}
 			const projectConfig = configResult.config;
-			
-			// Override skipPlanGeneration if --no-plan flag was passed
-			if (noPlan) {
-				projectConfig.skipPlanGeneration = true;
-			}
 
-			// Display effective configuration (R5)
 			ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
-			
-			if (noPlan) {
-				ctx.ui.notify("⏭️ Plan generation will be skipped (--no-plan flag)", "info");
-			}
-
-			ctx.ui.notify("Starting spec pipeline...", "info");
+			ctx.ui.notify("Starting spec creation...", "info");
 			if (projectConfig.contextFiles.length > 0) {
 				ctx.ui.notify(`Using context from: ${projectConfig.contextFiles.join(", ")}`, "info");
 			}
 
-			// Generate spec timestamp
-			const specTimestamp = generateSpecTimestamp();
+			// Generate names and timestamps
+			const specTimestamp = generateTimestamp();
+			const shortName = generateShortName(description);
+			const branchShortName = generateBranchShortName(description);
 
-			// Generate short name - extract key nouns, skip common words
-			const stopWords = new Set([
-				"a", "an", "the", "i", "we", "you", "it", "is", "are", "was", "were",
-				"want", "need", "would", "like", "to", "for", "of", "in", "on", "at",
-				"with", "and", "or", "but", "that", "this", "these", "those", "be",
-				"have", "has", "had", "do", "does", "did", "will", "can", "could",
-				"should", "may", "might", "must", "shall", "add", "create", "make",
-				"build", "implement", "new", "some", "my", "our", "your", "their"
-			]);
-			const shortName = description
-				.toLowerCase()
-				.replace(/[^a-z0-9\s]/g, "")
-				.split(/\s+/)
-				.filter(word => word.length > 1 && !stopWords.has(word))
-				.slice(0, 3)
-				.join("_") || "spec";
-
-			// Create initial state (discovery enabled unless --quick flag used)
-			const state = createInitialState(
+			// Create initial state
+			const state = createInitialSpecState(
 				description,
 				specTimestamp,
 				shortName,
@@ -242,27 +244,25 @@ export default function (pi: ExtensionAPI) {
 				isQuick
 			);
 			
-			// Save original branch to state
 			state.originalBranch = originalBranch;
 			state.checkpoints = [];
-			saveState(cwd, state);
+			saveSpecState(cwd, state);
 			
-			// Create and switch to pipeline branch
-			const branchResult = await createPipelineBranch(cwd, state.id);
+			// Create branch: spec/<timestamp>-<short-name>
+			const branchResult = await createPipelineBranch(cwd, "spec", `${specTimestamp}-${branchShortName}`);
 			if (!branchResult.success) {
-				ctx.ui.notify(`Failed to create pipeline branch: ${branchResult.error}`, "error");
+				ctx.ui.notify(`Failed to create spec branch: ${branchResult.error}`, "error");
 				state.stage = "cancelled";
-				saveState(cwd, state);
+				saveSpecState(cwd, state);
 				return;
 			}
 			state.pipelineBranch = branchResult.branchName;
-			saveState(cwd, state);
+			saveSpecState(cwd, state);
 			
-			// Show initial pipeline banner
 			ctx.ui.notify(formatStepBanner(
-				"SPEC PIPELINE STARTED",
+				"SPEC CREATION STARTED",
 				`ID: ${state.id}`,
-				"🚀"
+				"📝"
 			), "info");
 			ctx.ui.notify(`Branch: ${branchResult.branchName}`, "info");
 			
@@ -270,17 +270,14 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("Skipping discovery phase (--quick mode)", "info");
 			}
 			
-			// Initialize the status widget
-			updatePipelineWidget(ctx, state, "Initializing...");
+			updateSpecWidget(ctx, state, "Initializing...");
 
-			// Run the pipeline
-			await runPipeline(state, cwd, projectConfig, ctx);
+			await runSpecPipeline(state, cwd, projectConfig, ctx);
 		},
 	});
 
-	// Command to resume the last active pipeline
 	pi.registerCommand("spec-resume", {
-		description: "Resume the last active spec pipeline",
+		description: "Resume an active spec pipeline",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -290,94 +287,78 @@ export default function (pi: ExtensionAPI) {
 			const cwd = ctx.cwd;
 			const pipelineId = (args || "").trim();
 
-			let state: PipelineState | null;
+			let state: SpecState | null;
 			if (pipelineId) {
-				state = loadState(cwd, pipelineId);
+				state = loadSpecState(cwd, pipelineId);
 				if (!state) {
-					ctx.ui.notify(`Pipeline not found: ${pipelineId}`, "error");
+					ctx.ui.notify(`Spec pipeline not found: ${pipelineId}`, "error");
 					return;
 				}
 			} else {
-				state = getLatestActivePipeline(cwd);
+				state = getLatestActiveSpecPipeline(cwd);
 				if (!state) {
-					ctx.ui.notify("No active pipeline found. Use /spec to start a new one.", "error");
+					ctx.ui.notify("No active spec pipeline found. Use /spec to start one.", "error");
 					return;
 				}
 			}
 
 			if (state.stage === "completed") {
-				ctx.ui.notify("This pipeline is already completed.", "info");
+				ctx.ui.notify("This spec pipeline is already completed.", "info");
 				return;
 			}
 
 			if (state.stage === "cancelled") {
 				const restart = await ctx.ui.confirm(
 					"Pipeline Cancelled",
-					"This pipeline was cancelled. Do you want to restart it from where it left off?"
+					"This pipeline was cancelled. Restart from where it left off?"
 				);
-				if (!restart) {
-					return;
-				}
-				// Reset cancelled state to the appropriate resume point
-				// Use saved stage if available (newer cancellations)
+				if (!restart) return;
+				
 				if (state.stageBeforeCancellation && state.stageBeforeCancellation !== "cancelled") {
-					ctx.ui.notify(`Resuming from saved stage: ${formatStage(state.stageBeforeCancellation)}`, "info");
+					ctx.ui.notify(`Resuming from saved stage: ${formatSpecStage(state.stageBeforeCancellation)}`, "info");
 					state.stage = state.stageBeforeCancellation;
 					state.stageBeforeCancellation = undefined;
 				} else {
-					// Fallback: infer stage from state (older cancellations or edge cases)
 					if (state.discovery && !state.discovery.completed) {
 						state.stage = "discovery";
 					} else if (!state.specApproved) {
-						// Check if we were mid-iteration in spec drafting
 						const fullSpecPath = path.join(cwd, state.specPath);
-						const specFileExists = fs.existsSync(fullSpecPath);
-						
-						if (specFileExists && state.specIteration > 0) {
-							// Spec exists and we had started - likely in review or user_approval
-							// Default to spec_review as it's safer (will run review again)
+						if (fs.existsSync(fullSpecPath) && state.specIteration > 0) {
 							state.stage = "spec_review";
 						} else {
-							// Either no spec file yet, or iteration 0 - start from drafting
 							state.stage = "spec_drafting";
 						}
-					} else if (!state.phasesGenerated.every(Boolean)) {
-						state.stage = "plan_generation";
 					} else {
-						state.stage = "implementation";
+						state.stage = "completed";
 					}
 				}
-				saveState(cwd, state);
+				saveSpecState(cwd, state);
 			}
 
-			// Validate git repo
+			// Git validation
 			const gitValidation = await validateGitRepo(cwd);
 			if (!gitValidation.valid) {
 				ctx.ui.notify(gitValidation.error!, "error");
 				return;
 			}
 			
-			// Check for clean working directory
 			const gitClean = await checkGitClean(cwd);
 			if (!gitClean.clean) {
-				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash them before resuming.", "error");
+				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
 				if (gitClean.status) {
 					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
 				}
 				return;
 			}
 			
-			// Handle pipeline branch switching
+			// Switch to pipeline branch
 			if (state.pipelineBranch) {
 				const currentBranch = await getCurrentBranch(cwd);
-				
 				const pipelineBranchExists = await branchExists(cwd, state.pipelineBranch);
 				if (!pipelineBranchExists) {
 					ctx.ui.notify(`Pipeline branch '${state.pipelineBranch}' no longer exists.`, "error");
-					ctx.ui.notify("You can recreate it manually from an existing commit or start a new pipeline.", "info");
 					return;
 				}
-				
 				if (currentBranch !== state.pipelineBranch) {
 					ctx.ui.notify(`Switching to pipeline branch: ${state.pipelineBranch}`, "info");
 					const switchResult = await switchToBranch(cwd, state.pipelineBranch);
@@ -387,7 +368,6 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 				
-				// Drop error stash if it exists
 				if (state.errorStash) {
 					const stashStillExists = await stashExists(cwd, state.errorStash);
 					if (stashStillExists) {
@@ -395,30 +375,23 @@ export default function (pi: ExtensionAPI) {
 						await dropStash(cwd, state.errorStash);
 					}
 					state.errorStash = undefined;
-					saveState(cwd, state);
+					saveSpecState(cwd, state);
 				}
 			}
 
-			// Show resume banner
 			ctx.ui.notify(formatStepBanner(
-				"RESUMING PIPELINE",
+				"RESUMING SPEC PIPELINE",
 				`ID: ${state.id}`,
 				"🔄"
 			), "info");
-			ctx.ui.notify(`Current stage: ${formatStage(state.stage)}`, "info");
+			ctx.ui.notify(`Current stage: ${formatSpecStage(state.stage)}`, "info");
 			
-			// Show remembered flag settings
 			if (state.discovery?.skipped) {
 				ctx.ui.notify("📌 Discovery was skipped (--quick)", "info");
 			}
-			if (state.skipPlanGeneration) {
-				ctx.ui.notify("📌 Plan generation is skipped (--no-plan)", "info");
-			}
 			
-			// Initialize the status widget
-			updatePipelineWidget(ctx, state, "Resuming...");
+			updateSpecWidget(ctx, state, "Resuming...");
 
-			// Load and validate project configuration
 			const configResult = loadPipelineConfig(cwd);
 			if (!configResult.success) {
 				ctx.ui.notify(configResult.error, "error");
@@ -426,15 +399,13 @@ export default function (pi: ExtensionAPI) {
 			}
 			const projectConfig = configResult.config;
 
-			// Check if we're resuming from an error state
+			// Handle error retry
 			if (state.lastError) {
 				if (typeof state.lastError === "string") {
 					ctx.ui.notify(`Previous error (legacy): ${state.lastError.slice(0, 200)}`, "warning");
-					ctx.ui.notify("Cannot retry legacy error format. Pipeline will attempt to continue.", "info");
 					state.lastError = undefined;
-					saveState(cwd, state);
+					saveSpecState(cwd, state);
 				} else if (state.lastError.agentTask) {
-					// Display the previous error
 					const errorDisplay = formatErrorForRetry(state.lastError, state);
 					ctx.ui.notify(errorDisplay, "info");
 					
@@ -444,13 +415,15 @@ export default function (pi: ExtensionAPI) {
 					);
 					
 					if (!shouldRetry) {
-						ctx.ui.notify("Resume cancelled. Use /spec-resume to try again later.", "info");
+						ctx.ui.notify("Resume cancelled.", "info");
 						return;
 					}
 					
-					ctx.ui.notify("Retrying the same operation...", "info");
-					
-					const retrySuccess = await retryFailedOperation(state, cwd, projectConfig, ctx);
+					const retrySuccess = await retryFailedOperation(
+						state, cwd, projectConfig,
+						() => saveSpecState(cwd, state),
+						ctx
+					);
 					
 					if (!retrySuccess) {
 						ctx.ui.notify("Retry failed. Run /spec-resume to try again.", "info");
@@ -459,201 +432,98 @@ export default function (pi: ExtensionAPI) {
 					
 					ctx.ui.notify("Retry successful! Continuing pipeline...", "success");
 				} else {
-					ctx.ui.notify("Previous error detected but cannot retry (no task stored).", "warning");
 					state.lastError = undefined;
-					saveState(cwd, state);
+					saveSpecState(cwd, state);
 				}
 			}
 
-			// Run the pipeline
-			await runPipeline(state, cwd, projectConfig, ctx);
+			await runSpecPipeline(state, cwd, projectConfig, ctx);
 		},
 	});
 
-	// Command to show pipeline status
 	pi.registerCommand("spec-status", {
-		description: "Show current spec pipeline status",
+		description: "Show spec pipeline status",
 		handler: async (args, ctx) => {
 			const cwd = ctx.cwd;
 			const pipelineId = (args || "").trim();
 
-			let state: PipelineState | null;
+			let state: SpecState | null;
 			if (pipelineId) {
-				state = loadState(cwd, pipelineId);
+				state = loadSpecState(cwd, pipelineId);
 				if (!state) {
-					ctx.ui.notify(`Pipeline not found: ${pipelineId}`, "error");
+					ctx.ui.notify(`Spec pipeline not found: ${pipelineId}`, "error");
 					return;
 				}
 			} else {
-				state = getLatestActivePipeline(cwd);
+				state = getLatestActiveSpecPipeline(cwd);
 				if (!state) {
-					const states = listStates(cwd);
+					const states = listSpecStates(cwd);
 					if (states.length === 0) {
-						ctx.ui.notify("No pipelines found. Use /spec to start one.", "info");
+						ctx.ui.notify("No spec pipelines found. Use /spec to start one.", "info");
 						return;
 					}
 					state = states[0];
 				}
 			}
 
-			ctx.ui.notify(formatState(state), "info");
+			ctx.ui.notify(formatSpecState(state), "info");
 			
 			if (state.stage === "completed") {
-				ctx.ui.notify("\n✅ This pipeline completed successfully.", "success");
+				ctx.ui.notify(`\n✅ Spec completed. Run: /implement ${state.specPath}`, "success");
 			} else if (state.stage === "cancelled") {
-				ctx.ui.notify("\n🚫 This pipeline was cancelled. Use /spec-resume to restart.", "info");
+				ctx.ui.notify("\n🚫 Cancelled. Use /spec-resume to restart.", "info");
 			} else if (state.lastError) {
-				ctx.ui.notify("\n❌ This pipeline stopped due to an error.", "warning");
-				ctx.ui.notify("   Use /spec-error for details, /spec-resume to retry", "info");
+				ctx.ui.notify("\n❌ Stopped due to error. Use /spec-resume to retry.", "warning");
 			} else {
-				ctx.ui.notify("\n▶️ This pipeline is active. Use /spec-resume to continue.", "info");
+				ctx.ui.notify("\n▶️ Active. Use /spec-resume to continue.", "info");
 			}
 		},
 	});
 
-	// Command to list all pipelines
 	pi.registerCommand("spec-list", {
 		description: "List all spec pipelines",
 		handler: async (_args, ctx) => {
 			const cwd = ctx.cwd;
-			const states = listStates(cwd);
+			const states = listSpecStates(cwd);
 
 			if (states.length === 0) {
-				ctx.ui.notify("No pipelines found. Use /spec to start one.", "info");
+				ctx.ui.notify("No spec pipelines found. Use /spec to start one.", "info");
 				return;
 			}
 
 			const lines: string[] = [];
 			lines.push(formatDivider(60));
-			lines.push(`  📋 Pipelines (${states.length} total)`);
+			lines.push(`  📋 Spec Pipelines (${states.length} total)`);
 			lines.push(formatDivider(60));
 			lines.push("");
 
 			for (const state of states) {
-				const isActive = state.stage !== "completed" && state.stage !== "cancelled";
 				const hasError = state.lastError !== undefined;
-				
 				let statusIcon = "  ";
-				if (state.stage === "completed") {
-					statusIcon = "✅";
-				} else if (state.stage === "cancelled") {
-					statusIcon = "🚫";
-				} else if (hasError) {
-					statusIcon = "❌";
-				} else if (isActive) {
-					statusIcon = "▶️";
-				}
+				if (state.stage === "completed") statusIcon = "✅";
+				else if (state.stage === "cancelled") statusIcon = "🚫";
+				else if (hasError) statusIcon = "❌";
+				else statusIcon = "▶️";
 				
 				lines.push(`${statusIcon} ${state.id || "unknown"}`);
 				const desc = state.description || "(no description)";
 				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
-				lines.push(`   Stage: ${formatStage(state.stage)}`);
-				
-				if (hasError && state.lastError && typeof state.lastError !== "string") {
-					const errEmoji = getErrorEmoji(state.lastError.errorType);
-					lines.push(`   Error: ${errEmoji} ${state.lastError.errorType}`);
-				}
-				
-				if (state.pipelineBranch) {
-					lines.push(`   Branch: ${state.pipelineBranch}`);
-				}
-				
+				lines.push(`   Stage: ${formatSpecStage(state.stage)}`);
+				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
 				lines.push(`   Updated: ${state.updatedAt}`);
+				if (state.stage === "completed") {
+					lines.push(`   Spec: ${state.specPath}`);
+				}
 				lines.push("");
 			}
 
 			lines.push(formatDivider(60));
-			lines.push("Legend: ▶️ Active  ✅ Completed  🚫 Cancelled  ❌ Error");
-			lines.push(formatDivider(60));
-
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
 
-	// Command to view error details
-	pi.registerCommand("spec-error", {
-		description: "Show detailed error information for the current pipeline",
-		handler: async (args, ctx) => {
-			const cwd = ctx.cwd;
-			const pipelineId = (args || "").trim();
-
-			let state: PipelineState | null;
-			if (pipelineId) {
-				state = loadState(cwd, pipelineId);
-				if (!state) {
-					ctx.ui.notify(`Pipeline not found: ${pipelineId}`, "error");
-					return;
-				}
-			} else {
-				state = getLatestActivePipeline(cwd);
-				if (!state) {
-					const states = listStates(cwd);
-					if (states.length === 0) {
-						ctx.ui.notify("No pipelines found.", "info");
-						return;
-					}
-					state = states[0];
-				}
-			}
-
-			if (!state.lastError) {
-				ctx.ui.notify("No error recorded for this pipeline.", "info");
-				ctx.ui.notify(`Pipeline stage: ${formatStage(state.stage)}`, "info");
-				return;
-			}
-
-			if (typeof state.lastError === "string") {
-				ctx.ui.notify("Legacy Error Format", "warning");
-				ctx.ui.notify(state.lastError, "info");
-				ctx.ui.notify("\nThis is a legacy error format. Limited details available.", "info");
-				return;
-			}
-
-			const error = state.lastError;
-
-			ctx.ui.notify(formatErrorBox(error, state), "info");
-
-			if (error.stderr) {
-				ctx.ui.notify("\n📜 Full Error Output:", "info");
-				ctx.ui.notify(formatDivider(60), "info");
-				ctx.ui.notify(error.stderr, "info");
-				ctx.ui.notify(formatDivider(60), "info");
-			}
-
-			if (error.agentTask) {
-				ctx.ui.notify("\n📋 Agent Task (excerpt):", "info");
-				ctx.ui.notify(formatDivider(60), "info");
-				const taskPreview = error.agentTask.slice(0, 1000);
-				ctx.ui.notify(taskPreview, "info");
-				if (error.agentTask.length > 1000) {
-					ctx.ui.notify(`... (${error.agentTask.length - 1000} more characters)`, "info");
-				}
-				ctx.ui.notify(formatDivider(60), "info");
-			}
-
-			const logPath = path.join(getStateDir(cwd), `${state.id}.error.log`);
-			if (fs.existsSync(logPath)) {
-				ctx.ui.notify(`\n📁 Full error log: ${logPath}`, "info");
-				ctx.ui.notify("   View with: cat " + logPath, "info");
-			} else {
-				ctx.ui.notify(`\n📁 Error log not found: ${logPath}`, "warning");
-			}
-
-			ctx.ui.notify("\n💡 Recovery Options:", "info");
-			ctx.ui.notify(`   1. ${getErrorSuggestion(error.errorType)}`, "info");
-			if (state.pipelineBranch) {
-				ctx.ui.notify(`   2. View changes: git diff ${state.pipelineBranch}`, "info");
-				if (state.checkpoints && state.checkpoints.length > 0) {
-					const lastCheckpoint = state.checkpoints[state.checkpoints.length - 1];
-					ctx.ui.notify(`   3. Revert to checkpoint: git reset --hard ${lastCheckpoint}`, "info");
-				}
-			}
-		},
-	});
-
-	// Command to cancel current pipeline
 	pi.registerCommand("spec-cancel", {
-		description: "Cancel the current spec pipeline",
+		description: "Cancel an active spec pipeline",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -663,17 +533,17 @@ export default function (pi: ExtensionAPI) {
 			const cwd = ctx.cwd;
 			const pipelineId = (args || "").trim();
 
-			let state: PipelineState | null;
+			let state: SpecState | null;
 			if (pipelineId) {
-				state = loadState(cwd, pipelineId);
+				state = loadSpecState(cwd, pipelineId);
 				if (!state) {
-					ctx.ui.notify(`Pipeline not found: ${pipelineId}`, "error");
+					ctx.ui.notify(`Spec pipeline not found: ${pipelineId}`, "error");
 					return;
 				}
 			} else {
-				state = getLatestActivePipeline(cwd);
+				state = getLatestActiveSpecPipeline(cwd);
 				if (!state) {
-					ctx.ui.notify("No active pipeline to cancel.", "info");
+					ctx.ui.notify("No active spec pipeline to cancel.", "info");
 					return;
 				}
 			}
@@ -684,25 +554,21 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const confirm = await ctx.ui.confirm(
-				"Cancel Pipeline?",
-				`Are you sure you want to cancel pipeline ${state.id}?\n\nYou can resume it later with /spec-resume.`
+				"Cancel Spec Pipeline?",
+				`Cancel spec pipeline ${state.id}?\n\nYou can resume later with /spec-resume.`
 			);
 
 			if (confirm) {
-				// Save the current stage before cancelling
 				if (state.stage !== "cancelled") {
 					state.stageBeforeCancellation = state.stage;
 				}
 				state.stage = "cancelled";
-				saveState(cwd, state);
+				saveSpecState(cwd, state);
 				
 				clearPipelineWidget(ctx);
 				
 				if (state.pipelineBranch) {
 					ctx.ui.notify(`Pipeline cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
-					ctx.ui.notify("You can delete it manually with: git branch -D " + state.pipelineBranch, "info");
-					ctx.ui.notify("Or resume later with: /spec-resume", "info");
-					
 					if (state.originalBranch) {
 						const switchResult = await switchToBranch(cwd, state.originalBranch);
 						if (switchResult.success) {
@@ -716,58 +582,495 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Command to export metrics for A/B comparison
-	pi.registerCommand("spec-metrics", {
-		description: "Export pipeline metrics for A/B testing (plan generation value)",
+	// ============================================
+	// IMPLEMENTATION COMMANDS
+	// ============================================
+
+	pi.registerCommand("implement", {
+		description: "Start implementation from a spec file. Use --no-plan to skip plan generation.",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const argsStr = args || "";
+			const noPlan = argsStr.includes("--no-plan");
+			const specPath = argsStr
+				.replace("--no-plan", "")
+				.replace(/\s+/g, " ")
+				.trim();
+			
+			if (!specPath) {
+				ctx.ui.notify("Usage: /implement [--no-plan] <path-to-spec-file>", "error");
+				return;
+			}
+
+			const cwd = ctx.cwd;
+
+			// Validate spec file exists
+			const fullSpecPath = path.isAbsolute(specPath)
+				? specPath
+				: path.join(cwd, specPath);
+			
+			if (!fs.existsSync(fullSpecPath)) {
+				ctx.ui.notify(`Spec file not found: ${specPath}`, "error");
+				return;
+			}
+
+			const specContent = fs.readFileSync(fullSpecPath, "utf-8");
+			if (!specContent.trim()) {
+				ctx.ui.notify("Spec file is empty", "error");
+				return;
+			}
+
+			// Make specPath relative to cwd
+			const relativeSpecPath = path.isAbsolute(specPath)
+				? path.relative(cwd, specPath)
+				: specPath;
+
+			// Check for existing active implementation
+			const existingPipeline = getLatestActiveImplPipeline(cwd);
+			if (existingPipeline) {
+				const resume = await ctx.ui.confirm(
+					"Active Implementation Found",
+					`There's an active implementation:\n${formatImplState(existingPipeline)}\n\nStart a NEW implementation? (No = cancel)`
+				);
+				if (!resume) {
+					ctx.ui.notify("Use /implement-resume to continue the existing implementation", "info");
+					return;
+				}
+			}
+
+			// Git validation
+			const gitValidation = await validateGitRepo(cwd);
+			if (!gitValidation.valid) {
+				ctx.ui.notify(gitValidation.error!, "error");
+				return;
+			}
+			
+			const gitClean = await checkGitClean(cwd);
+			if (!gitClean.clean) {
+				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
+				if (gitClean.status) {
+					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
+				}
+				return;
+			}
+			
+			const originalBranch = await getCurrentBranch(cwd);
+			if (!originalBranch) {
+				ctx.ui.notify("Failed to determine current branch", "error");
+				return;
+			}
+
+			// Load config
+			const configResult = loadPipelineConfig(cwd);
+			if (!configResult.success) {
+				ctx.ui.notify(configResult.error, "error");
+				return;
+			}
+			const projectConfig = configResult.config;
+
+			if (noPlan) {
+				projectConfig.skipPlanGeneration = true;
+			}
+
+			ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+			
+			if (noPlan) {
+				ctx.ui.notify("⏭️ Plan generation will be skipped (--no-plan flag)", "info");
+			}
+
+			ctx.ui.notify(`Starting implementation from: ${relativeSpecPath}`, "info");
+
+			// Generate timestamp and names
+			const implTimestamp = generateTimestamp();
+			const branchShortName = generateBranchShortName(
+				path.basename(relativeSpecPath, path.extname(relativeSpecPath))
+			);
+
+			// Create initial state
+			const state = createInitialImplState(
+				relativeSpecPath,
+				specContent,
+				implTimestamp,
+				noPlan
+			);
+			
+			state.originalBranch = originalBranch;
+			state.checkpoints = [];
+			saveImplState(cwd, state);
+			
+			// Create branch: implement/<timestamp>-<short-name>
+			const branchResult = await createPipelineBranch(cwd, "implement", `${implTimestamp}-${branchShortName}`);
+			if (!branchResult.success) {
+				ctx.ui.notify(`Failed to create implementation branch: ${branchResult.error}`, "error");
+				state.stage = "cancelled";
+				saveImplState(cwd, state);
+				return;
+			}
+			state.pipelineBranch = branchResult.branchName;
+			saveImplState(cwd, state);
+			
+			ctx.ui.notify(formatStepBanner(
+				"IMPLEMENTATION STARTED",
+				`ID: ${state.id}`,
+				"🚀"
+			), "info");
+			ctx.ui.notify(`Branch: ${branchResult.branchName}`, "info");
+			ctx.ui.notify(`Spec: ${relativeSpecPath}`, "info");
+			
+			updateImplWidget(ctx, state, "Initializing...");
+
+			await runImplementPipeline(state, cwd, projectConfig, ctx);
+		},
+	});
+
+	pi.registerCommand("implement-resume", {
+		description: "Resume an active implementation pipeline",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: ImplementationState | null;
+			if (pipelineId) {
+				state = loadImplState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveImplPipeline(cwd);
+				if (!state) {
+					ctx.ui.notify("No active implementation found. Use /implement to start one.", "error");
+					return;
+				}
+			}
+
+			if (state.stage === "completed") {
+				ctx.ui.notify("This implementation is already completed.", "info");
+				return;
+			}
+
+			if (state.stage === "cancelled") {
+				const restart = await ctx.ui.confirm(
+					"Implementation Cancelled",
+					"This implementation was cancelled. Restart from where it left off?"
+				);
+				if (!restart) return;
+				
+				if (state.stageBeforeCancellation && state.stageBeforeCancellation !== "cancelled") {
+					ctx.ui.notify(`Resuming from saved stage: ${formatImplStage(state.stageBeforeCancellation)}`, "info");
+					state.stage = state.stageBeforeCancellation;
+					state.stageBeforeCancellation = undefined;
+				} else {
+					if (!state.phasesGenerated.every(Boolean)) {
+						state.stage = "plan_generation";
+					} else {
+						state.stage = "implementation";
+					}
+				}
+				saveImplState(cwd, state);
+			}
+
+			// Git validation
+			const gitValidation = await validateGitRepo(cwd);
+			if (!gitValidation.valid) {
+				ctx.ui.notify(gitValidation.error!, "error");
+				return;
+			}
+			
+			const gitClean = await checkGitClean(cwd);
+			if (!gitClean.clean) {
+				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
+				if (gitClean.status) {
+					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
+				}
+				return;
+			}
+			
+			// Switch to pipeline branch
+			if (state.pipelineBranch) {
+				const currentBranch = await getCurrentBranch(cwd);
+				const pipelineBranchExists = await branchExists(cwd, state.pipelineBranch);
+				if (!pipelineBranchExists) {
+					ctx.ui.notify(`Pipeline branch '${state.pipelineBranch}' no longer exists.`, "error");
+					return;
+				}
+				if (currentBranch !== state.pipelineBranch) {
+					ctx.ui.notify(`Switching to pipeline branch: ${state.pipelineBranch}`, "info");
+					const switchResult = await switchToBranch(cwd, state.pipelineBranch);
+					if (!switchResult.success) {
+						ctx.ui.notify(`Failed to switch to pipeline branch: ${switchResult.error}`, "error");
+						return;
+					}
+				}
+				
+				if (state.errorStash) {
+					const stashStillExists = await stashExists(cwd, state.errorStash);
+					if (stashStillExists) {
+						ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+						await dropStash(cwd, state.errorStash);
+					}
+					state.errorStash = undefined;
+					saveImplState(cwd, state);
+				}
+			}
+
+			ctx.ui.notify(formatStepBanner(
+				"RESUMING IMPLEMENTATION",
+				`ID: ${state.id}`,
+				"🔄"
+			), "info");
+			ctx.ui.notify(`Current stage: ${formatImplStage(state.stage)}`, "info");
+			
+			if (state.skipPlanGeneration) {
+				ctx.ui.notify("📌 Plan generation is skipped (--no-plan)", "info");
+			}
+			
+			updateImplWidget(ctx, state, "Resuming...");
+
+			const configResult = loadPipelineConfig(cwd);
+			if (!configResult.success) {
+				ctx.ui.notify(configResult.error, "error");
+				return;
+			}
+			const projectConfig = configResult.config;
+
+			// Handle error retry
+			if (state.lastError) {
+				if (typeof state.lastError === "string") {
+					ctx.ui.notify(`Previous error (legacy): ${state.lastError.slice(0, 200)}`, "warning");
+					state.lastError = undefined;
+					saveImplState(cwd, state);
+				} else if (state.lastError.agentTask) {
+					const errorDisplay = formatErrorForRetry(state.lastError, state);
+					ctx.ui.notify(errorDisplay, "info");
+					
+					const shouldRetry = await ctx.ui.confirm(
+						"Retry Failed Operation?",
+						`The implementation failed at ${state.lastError.role}.\n\nRetry the same operation?`
+					);
+					
+					if (!shouldRetry) {
+						ctx.ui.notify("Resume cancelled.", "info");
+						return;
+					}
+					
+					const retrySuccess = await retryFailedOperation(
+						state, cwd, projectConfig,
+						() => saveImplState(cwd, state),
+						ctx
+					);
+					
+					if (!retrySuccess) {
+						ctx.ui.notify("Retry failed. Run /implement-resume to try again.", "info");
+						return;
+					}
+					
+					ctx.ui.notify("Retry successful! Continuing pipeline...", "success");
+				} else {
+					state.lastError = undefined;
+					saveImplState(cwd, state);
+				}
+			}
+
+			await runImplementPipeline(state, cwd, projectConfig, ctx);
+		},
+	});
+
+	pi.registerCommand("implement-status", {
+		description: "Show implementation status",
 		handler: async (args, ctx) => {
 			const cwd = ctx.cwd;
 			const pipelineId = (args || "").trim();
 
-			// Get pipeline(s) to export
-			let statesToExport: PipelineState[] = [];
+			let state: ImplementationState | null;
+			if (pipelineId) {
+				state = loadImplState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveImplPipeline(cwd);
+				if (!state) {
+					const states = listImplStates(cwd);
+					if (states.length === 0) {
+						ctx.ui.notify("No implementations found. Use /implement to start one.", "info");
+						return;
+					}
+					state = states[0];
+				}
+			}
+
+			ctx.ui.notify(formatImplState(state), "info");
+			
+			if (state.stage === "completed") {
+				ctx.ui.notify("\n✅ Implementation completed.", "success");
+			} else if (state.stage === "cancelled") {
+				ctx.ui.notify("\n🚫 Cancelled. Use /implement-resume to restart.", "info");
+			} else if (state.lastError) {
+				ctx.ui.notify("\n❌ Stopped due to error. Use /implement-resume to retry.", "warning");
+			} else {
+				ctx.ui.notify("\n▶️ Active. Use /implement-resume to continue.", "info");
+			}
+		},
+	});
+
+	pi.registerCommand("implement-list", {
+		description: "List all implementations",
+		handler: async (_args, ctx) => {
+			const cwd = ctx.cwd;
+			const states = listImplStates(cwd);
+
+			if (states.length === 0) {
+				ctx.ui.notify("No implementations found. Use /implement to start one.", "info");
+				return;
+			}
+
+			const lines: string[] = [];
+			lines.push(formatDivider(60));
+			lines.push(`  🚀 Implementations (${states.length} total)`);
+			lines.push(formatDivider(60));
+			lines.push("");
+
+			for (const state of states) {
+				const hasError = state.lastError !== undefined;
+				let statusIcon = "  ";
+				if (state.stage === "completed") statusIcon = "✅";
+				else if (state.stage === "cancelled") statusIcon = "🚫";
+				else if (hasError) statusIcon = "❌";
+				else statusIcon = "▶️";
+				
+				lines.push(`${statusIcon} ${state.id || "unknown"}`);
+				lines.push(`   Spec: ${state.specPath}`);
+				lines.push(`   Stage: ${formatImplStage(state.stage)}`);
+				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
+				const phases = state.phases || [];
+				if (phases.length > 0) {
+					lines.push(`   Phases: ${state.currentPhaseIndex + 1}/${phases.length}`);
+				}
+				lines.push(`   Updated: ${state.updatedAt}`);
+				lines.push("");
+			}
+
+			lines.push(formatDivider(60));
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
+
+	pi.registerCommand("implement-cancel", {
+		description: "Cancel an active implementation",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: ImplementationState | null;
+			if (pipelineId) {
+				state = loadImplState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveImplPipeline(cwd);
+				if (!state) {
+					ctx.ui.notify("No active implementation to cancel.", "info");
+					return;
+				}
+			}
+
+			if (state.stage === "completed" || state.stage === "cancelled") {
+				ctx.ui.notify("Implementation is already finished.", "info");
+				return;
+			}
+
+			const confirm = await ctx.ui.confirm(
+				"Cancel Implementation?",
+				`Cancel implementation ${state.id}?\n\nYou can resume later with /implement-resume.`
+			);
+
+			if (confirm) {
+				if (state.stage !== "cancelled") {
+					state.stageBeforeCancellation = state.stage;
+				}
+				state.stage = "cancelled";
+				saveImplState(cwd, state);
+				
+				clearPipelineWidget(ctx);
+				
+				if (state.pipelineBranch) {
+					ctx.ui.notify(`Implementation cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
+					if (state.originalBranch) {
+						const switchResult = await switchToBranch(cwd, state.originalBranch);
+						if (switchResult.success) {
+							ctx.ui.notify(`Switched back to '${state.originalBranch}'`, "info");
+						}
+					}
+				} else {
+					ctx.ui.notify("Implementation cancelled. Resume with /implement-resume", "info");
+				}
+			}
+		},
+	});
+
+	pi.registerCommand("implement-metrics", {
+		description: "Export implementation metrics for A/B testing",
+		handler: async (args, ctx) => {
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let statesToExport: ImplementationState[] = [];
 			
 			if (pipelineId === "--all") {
-				// Export all completed pipelines
-				statesToExport = listStates(cwd).filter(s => s.stage === "completed" && s.metrics);
+				statesToExport = listImplStates(cwd).filter(s => s.stage === "completed" && s.metrics);
 			} else if (pipelineId) {
-				const state = loadState(cwd, pipelineId);
+				const state = loadImplState(cwd, pipelineId);
 				if (!state) {
-					ctx.ui.notify(`Pipeline not found: ${pipelineId}`, "error");
+					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
 					return;
 				}
 				if (state.metrics) {
 					statesToExport = [state];
 				} else {
-					ctx.ui.notify(`Pipeline ${pipelineId} has no metrics (older version or not completed)`, "warning");
+					ctx.ui.notify(`Implementation ${pipelineId} has no metrics`, "warning");
 					return;
 				}
 			} else {
-				// Export most recent completed pipeline with metrics
-				const states = listStates(cwd);
+				const states = listImplStates(cwd);
 				const completed = states.filter(s => s.stage === "completed" && s.metrics);
 				if (completed.length === 0) {
-					ctx.ui.notify("No completed pipelines with metrics found.", "info");
-					ctx.ui.notify("Metrics are collected for pipelines run after this feature was added.", "info");
+					ctx.ui.notify("No completed implementations with metrics found.", "info");
 					return;
 				}
 				statesToExport = [completed[0]];
 			}
 
 			if (statesToExport.length === 0) {
-				ctx.ui.notify("No pipelines with metrics to export.", "info");
+				ctx.ui.notify("No implementations with metrics to export.", "info");
 				return;
 			}
 
-			// Format metrics for display and export
 			const lines: string[] = [];
 			lines.push(formatDivider(70));
-			lines.push(`  📊 Pipeline Metrics (${statesToExport.length} pipeline${statesToExport.length > 1 ? 's' : ''})`);
+			lines.push(`  📊 Implementation Metrics (${statesToExport.length} pipeline${statesToExport.length > 1 ? 's' : ''})`);
 			lines.push(formatDivider(70));
 			lines.push("");
 
-			// Summary table header
-			lines.push("| ID | Plan Gen | Duration | Spec Iter | Code Review (c/e) | First Pass |");
-			lines.push("|-----|----------|----------|-----------|-------------------|------------|");
+			lines.push("| ID | Plan Gen | Duration | Code Review (c/e) | First Pass |");
+			lines.push("|-----|----------|----------|-------------------|------------|");
 
 			for (const state of statesToExport) {
 				const m = state.metrics!;
@@ -777,14 +1080,11 @@ export default function (pi: ExtensionAPI) {
 				const firstPass = `${m.codeReviewFirstPassRate}%`;
 				
 				const stateId = state.id || "unknown";
-				lines.push(`| ${stateId.slice(0, 16)} | ${planGen.padEnd(8)} | ${String(durationMins).padEnd(8)} | ${String(m.specIterations).padEnd(9)} | ${codeReview.padEnd(17)} | ${firstPass.padEnd(10)} |`);
+				lines.push(`| ${stateId.slice(0, 16)} | ${planGen.padEnd(8)} | ${String(durationMins).padEnd(8)} | ${codeReview.padEnd(17)} | ${firstPass.padEnd(10)} |`);
 			}
 
 			lines.push("");
-			lines.push(formatDivider(70));
-			lines.push("");
 
-			// Detailed view for single pipeline
 			if (statesToExport.length === 1) {
 				const state = statesToExport[0];
 				const m = state.metrics!;
@@ -792,13 +1092,11 @@ export default function (pi: ExtensionAPI) {
 				lines.push("📋 Detailed Metrics:");
 				lines.push("");
 				lines.push(formatKeyValue("  Pipeline ID", state.id || "unknown"));
-				const desc = state.description || "(no description)";
-				lines.push(formatKeyValue("  Description", desc.slice(0, 50)));
+				lines.push(formatKeyValue("  Spec Path", state.specPath));
 				lines.push(formatKeyValue("  Status", state.stage));
 				lines.push("");
 				lines.push("  Configuration:");
 				lines.push(formatKeyValue("    Skip Plan Generation", m.skipPlanGeneration ? "Yes (A/B test)" : "No (normal)"));
-				lines.push(formatKeyValue("    Discovery Skipped", m.discoverySkipped ? "Yes" : "No"));
 				lines.push("");
 				lines.push("  Timing:");
 				if (m.totalDurationMs) {
@@ -807,16 +1105,13 @@ export default function (pi: ExtensionAPI) {
 				lines.push(formatKeyValue("    Agent Calls", String(m.agentCalls.length)));
 				lines.push("");
 				lines.push("  Review Cycles:");
-				lines.push(formatKeyValue("    Spec Review", `${m.specReviewCycles.cheap} cheap, ${m.specReviewCycles.expensive} expensive`));
 				lines.push(formatKeyValue("    Plan Review", `${m.planReviewCycles.cheap} cheap, ${m.planReviewCycles.expensive} expensive`));
 				lines.push(formatKeyValue("    Code Review", `${m.codeReviewCycles.cheap} cheap, ${m.codeReviewCycles.expensive} expensive`));
 				lines.push("");
-				lines.push("  Quality Indicators:");
-				lines.push(formatKeyValue("    Spec Iterations", String(m.specIterations)));
+				lines.push("  Quality:");
 				lines.push(formatKeyValue("    First Pass Rate", `${m.codeReviewFirstPassRate}%`));
 				lines.push("");
 
-				// Agent call breakdown by role
 				const callsByRole: Record<string, number> = {};
 				for (const call of m.agentCalls) {
 					callsByRole[call.role] = (callsByRole[call.role] || 0) + 1;
@@ -830,24 +1125,29 @@ export default function (pi: ExtensionAPI) {
 			lines.push("");
 			lines.push(formatDivider(70));
 			
-			// Export to file option
-			const exportPath = path.join(getStateDir(cwd), "metrics-export.json");
+			const stateDir = getStateDir(cwd);
+			if (!fs.existsSync(stateDir)) {
+				fs.mkdirSync(stateDir, { recursive: true });
+			}
+			const exportPath = path.join(stateDir, "metrics-export.json");
 			const exportData = statesToExport.map(s => ({
 				id: s.id,
-				description: s.description,
+				specPath: s.specPath,
 				stage: s.stage,
 				createdAt: s.createdAt,
 				metrics: s.metrics,
 			}));
 			fs.writeFileSync(exportPath, JSON.stringify(exportData, null, 2));
 			lines.push(`\n📁 Full metrics exported to: ${exportPath}`);
-			lines.push("   Use for spreadsheet analysis or comparison");
 
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
 
-	// Register a tool for programmatic access
+	// ============================================
+	// SHARED TOOL (programmatic access)
+	// ============================================
+
 	pi.registerTool({
 		name: "run_spec_agent",
 		label: "Run Spec Agent",

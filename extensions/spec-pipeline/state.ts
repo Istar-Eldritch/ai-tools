@@ -1,14 +1,17 @@
 /**
- * Pipeline state management - CRUD operations for pipeline state
+ * Pipeline state management - CRUD operations for spec and implementation state
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-	type PipelineState,
+	type SpecState,
+	type ImplementationState,
 	type DiscoveryState,
 	type DiscoveryQA,
 	type ProjectConfig,
+	SPEC_STATE_DIR,
+	IMPL_STATE_DIR,
 	STATE_DIR,
 } from "./types.ts";
 import { classifyError } from "./errors.ts";
@@ -18,86 +21,87 @@ import { classifyError } from "./errors.ts";
 // ============================================
 
 /**
- * Get the state directory for a project
+ * Get the state directory for specs
+ */
+export function getSpecStateDir(cwd: string): string {
+	return path.join(cwd, SPEC_STATE_DIR);
+}
+
+/**
+ * Get the state directory for implementations
+ */
+export function getImplStateDir(cwd: string): string {
+	return path.join(cwd, IMPL_STATE_DIR);
+}
+
+/**
+ * Get the base state directory (for shared resources like error logs)
  */
 export function getStateDir(cwd: string): string {
 	return path.join(cwd, STATE_DIR);
 }
 
 /**
- * Get path to a specific pipeline state file
+ * Get path to a specific spec state file
  */
-export function getStatePath(cwd: string, id: string): string {
-	return path.join(getStateDir(cwd), `${id}.json`);
+export function getSpecStatePath(cwd: string, id: string): string {
+	return path.join(getSpecStateDir(cwd), `${id}.json`);
+}
+
+/**
+ * Get path to a specific implementation state file
+ */
+export function getImplStatePath(cwd: string, id: string): string {
+	return path.join(getImplStateDir(cwd), `${id}.json`);
 }
 
 // ============================================
-// State CRUD Operations
+// Spec State CRUD Operations
 // ============================================
 
 /**
- * Load pipeline state by ID
+ * Load spec state by ID
  */
-export function loadState(cwd: string, id: string): PipelineState | null {
-	const statePath = getStatePath(cwd, id);
+export function loadSpecState(cwd: string, id: string): SpecState | null {
+	const statePath = getSpecStatePath(cwd, id);
 	if (!fs.existsSync(statePath)) {
 		return null;
 	}
 	try {
-		const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PipelineState;
+		const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as SpecState;
 		
-		// Migrate old state files that don't have discovery field
+		// Migrate: ensure discovery field exists
 		if (!state.discovery) {
 			state.discovery = {
-				skipped: true,  // Treat existing pipelines as if discovery was skipped
+				skipped: true,
 				currentRound: 0,
 				maxRounds: 5,
 				qaHistory: [],
 				discoverySummary: "",
-				completed: true,  // Already past discovery
+				completed: true,
 			};
 		}
 		
-		// Migrate old state files that have absolute specPath (bug from before 2026-01-31)
-		// If specPath starts with cwd, make it relative
+		// Migrate: convert absolute specPath to relative
 		let needsSave = false;
 		if (state.specPath && path.isAbsolute(state.specPath)) {
 			const relativePath = path.relative(cwd, state.specPath);
 			if (!relativePath.startsWith('..')) {
-				// Only convert if it's actually within cwd
 				state.specPath = relativePath;
 				needsSave = true;
 			}
 		}
 		
-		// Also migrate phase paths that might be absolute
-		if (state.phases && Array.isArray(state.phases)) {
-			const migratedPhases = state.phases.map(phasePath => {
-				if (phasePath && path.isAbsolute(phasePath)) {
-					const relativePath = path.relative(cwd, phasePath);
-					if (!relativePath.startsWith('..')) {
-						needsSave = true;
-						return relativePath;
-					}
-				}
-				return phasePath;
-			});
-			if (needsSave) {
-				state.phases = migratedPhases;
-			}
-		}
-		
-		// Migrate old string lastError to ErrorDetails, or remove null values
+		// Migrate: handle null lastError
 		if (state.lastError === null) {
-			// JSON stores null, but we want undefined
 			state.lastError = undefined;
 			needsSave = true;
 		} else if (state.lastError && typeof state.lastError === "string") {
 			const legacyError = state.lastError as unknown as string;
 			state.lastError = {
 				timestamp: state.updatedAt || new Date().toISOString(),
-				agent: "opus",  // Default, unknown
-				role: "implementer",  // Default, unknown
+				agent: "opus",
+				role: "specDrafter",
 				exitCode: 1,
 				stderr: legacyError,
 				errorType: classifyError(legacyError),
@@ -106,30 +110,16 @@ export function loadState(cwd: string, id: string): PipelineState | null {
 			needsSave = true;
 		}
 		
-		// Initialize missing git-related fields for backward compatibility
+		// Initialize missing fields
 		if (state.checkpoints === undefined) {
 			state.checkpoints = [];
-			// Don't set needsSave - old pipelines without branches are OK
 		}
 		
-		// Initialize tiered review fields for backward compatibility (Phase 3)
-		// Old pipelines don't have tier tracking - they'll be initialized when
-		// implementation resumes with the new tiered review system
-		if (state.cheapCyclesCompleted === undefined) {
-			state.cheapCyclesCompleted = 0;
-		}
-		if (state.expensiveCyclesCompleted === undefined) {
-			state.expensiveCyclesCompleted = 0;
-		}
-		// currentReviewTier remains undefined for old pipelines - this is OK
-		// The tiered review will initialize it when it starts
-		
-		// Save the migrated state back to disk
 		if (needsSave) {
 			try {
 				fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
 			} catch {
-				// Ignore write errors, the migration will apply again on next load
+				// Ignore write errors
 			}
 		}
 		
@@ -140,32 +130,30 @@ export function loadState(cwd: string, id: string): PipelineState | null {
 }
 
 /**
- * Save pipeline state
+ * Save spec state
  */
-export function saveState(cwd: string, state: PipelineState): void {
-	const stateDir = getStateDir(cwd);
+export function saveSpecState(cwd: string, state: SpecState): void {
+	const stateDir = getSpecStateDir(cwd);
 	if (!fs.existsSync(stateDir)) {
 		fs.mkdirSync(stateDir, { recursive: true });
 	}
 	state.updatedAt = new Date().toISOString();
-	fs.writeFileSync(getStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+	fs.writeFileSync(getSpecStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
 }
 
 /**
- * List all pipeline states
+ * List all spec states
  */
-export function listStates(cwd: string): PipelineState[] {
-	const stateDir = getStateDir(cwd);
+export function listSpecStates(cwd: string): SpecState[] {
+	const stateDir = getSpecStateDir(cwd);
 	if (!fs.existsSync(stateDir)) {
 		return [];
 	}
 	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
-	const states: PipelineState[] = [];
+	const states: SpecState[] = [];
 	for (const file of files) {
-		// Extract the pipeline ID from the filename (remove .json extension)
 		const id = file.replace(/\.json$/, "");
-		// Use loadState to apply migrations
-		const state = loadState(cwd, id);
+		const state = loadSpecState(cwd, id);
 		if (state) {
 			states.push(state);
 		}
@@ -174,10 +162,110 @@ export function listStates(cwd: string): PipelineState[] {
 }
 
 /**
- * Get the most recent active (non-completed, non-cancelled) pipeline
+ * Get the most recent active spec pipeline
  */
-export function getLatestActivePipeline(cwd: string): PipelineState | null {
-	const states = listStates(cwd);
+export function getLatestActiveSpecPipeline(cwd: string): SpecState | null {
+	const states = listSpecStates(cwd);
+	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
+}
+
+// ============================================
+// Implementation State CRUD Operations
+// ============================================
+
+/**
+ * Load implementation state by ID
+ */
+export function loadImplState(cwd: string, id: string): ImplementationState | null {
+	const statePath = getImplStatePath(cwd, id);
+	if (!fs.existsSync(statePath)) {
+		return null;
+	}
+	try {
+		const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as ImplementationState;
+		
+		let needsSave = false;
+		
+		// Migrate: handle null lastError
+		if (state.lastError === null) {
+			state.lastError = undefined;
+			needsSave = true;
+		} else if (state.lastError && typeof state.lastError === "string") {
+			const legacyError = state.lastError as unknown as string;
+			state.lastError = {
+				timestamp: state.updatedAt || new Date().toISOString(),
+				agent: "opus",
+				role: "implementer",
+				exitCode: 1,
+				stderr: legacyError,
+				errorType: classifyError(legacyError),
+				agentTask: "(task not recorded in legacy state)",
+			};
+			needsSave = true;
+		}
+		
+		// Initialize missing fields
+		if (state.checkpoints === undefined) {
+			state.checkpoints = [];
+		}
+		if (state.cheapCyclesCompleted === undefined) {
+			state.cheapCyclesCompleted = 0;
+		}
+		if (state.expensiveCyclesCompleted === undefined) {
+			state.expensiveCyclesCompleted = 0;
+		}
+		
+		if (needsSave) {
+			try {
+				fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+			} catch {
+				// Ignore write errors
+			}
+		}
+		
+		return state;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Save implementation state
+ */
+export function saveImplState(cwd: string, state: ImplementationState): void {
+	const stateDir = getImplStateDir(cwd);
+	if (!fs.existsSync(stateDir)) {
+		fs.mkdirSync(stateDir, { recursive: true });
+	}
+	state.updatedAt = new Date().toISOString();
+	fs.writeFileSync(getImplStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+}
+
+/**
+ * List all implementation states
+ */
+export function listImplStates(cwd: string): ImplementationState[] {
+	const stateDir = getImplStateDir(cwd);
+	if (!fs.existsSync(stateDir)) {
+		return [];
+	}
+	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
+	const states: ImplementationState[] = [];
+	for (const file of files) {
+		const id = file.replace(/\.json$/, "");
+		const state = loadImplState(cwd, id);
+		if (state) {
+			states.push(state);
+		}
+	}
+	return states.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+/**
+ * Get the most recent active implementation pipeline
+ */
+export function getLatestActiveImplPipeline(cwd: string): ImplementationState | null {
+	const states = listImplStates(cwd);
 	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
 }
 
@@ -197,9 +285,9 @@ export function generatePipelineId(): string {
 }
 
 /**
- * Generate a spec timestamp in YYMMDDhhmm format
+ * Generate a timestamp in YYMMDDhhmm format
  */
-export function generateSpecTimestamp(): string {
+export function generateTimestamp(): string {
 	const now = new Date();
 	const yy = String(now.getFullYear()).slice(2);
 	const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -208,6 +296,9 @@ export function generateSpecTimestamp(): string {
 	const min = String(now.getMinutes()).padStart(2, "0");
 	return `${yy}${mm}${dd}${hh}${min}`;
 }
+
+// Keep old name as alias
+export const generateSpecTimestamp = generateTimestamp;
 
 /**
  * Create initial discovery state
@@ -219,7 +310,7 @@ export function createInitialDiscoveryState(maxRounds: number, skipped: boolean 
 		maxRounds,
 		qaHistory: [],
 		discoverySummary: "",
-		completed: skipped,  // If skipped, mark as completed
+		completed: skipped,
 	};
 }
 
@@ -248,21 +339,20 @@ export function generateDiscoverySummary(qaHistory: DiscoveryQA[]): string {
 }
 
 /**
- * Create initial pipeline state
+ * Create initial spec state
  */
-export function createInitialState(
+export function createInitialSpecState(
 	description: string,
 	specTimestamp: string,
 	shortName: string,
 	specsDir: string,
 	discoveryConfig: ProjectConfig["discovery"],
 	skipDiscovery: boolean = false
-): PipelineState {
+): SpecState {
 	const specFilename = `${specTimestamp}_spec_${shortName}.md`;
 	const specPath = path.join(specsDir, specFilename);
 	const now = new Date().toISOString();
 	
-	// Determine if we should skip discovery
 	const shouldSkip = skipDiscovery || !discoveryConfig.enabled;
 	
 	return {
@@ -272,7 +362,6 @@ export function createInitialState(
 		createdAt: now,
 		updatedAt: now,
 		
-		// Initialize discovery state
 		discovery: createInitialDiscoveryState(discoveryConfig.maxRounds, shouldSkip),
 		
 		specTimestamp,
@@ -282,6 +371,30 @@ export function createInitialState(
 		specApproved: false,
 		specIteration: 0,
 		
+		useAgentCommits: true,
+	};
+}
+
+/**
+ * Create initial implementation state
+ */
+export function createInitialImplState(
+	specPath: string,
+	specContent: string,
+	implTimestamp: string,
+	skipPlanGeneration: boolean = false
+): ImplementationState {
+	const now = new Date().toISOString();
+	
+	return {
+		id: generatePipelineId(),
+		implTimestamp,
+		specPath,
+		specContent,
+		stage: "plan_generation",
+		createdAt: now,
+		updatedAt: now,
+		
 		phases: [],
 		phasesGenerated: [],
 		currentPhaseIndex: 0,
@@ -289,10 +402,9 @@ export function createInitialState(
 		currentReviewCycle: 1,
 		previousReview: "",
 		
-		specCommitted: false,
 		phaseCommits: [],
 		
-		// New pipelines use agent commits instead of checkpoints (R11)
+		skipPlanGeneration,
 		useAgentCommits: true,
 	};
 }

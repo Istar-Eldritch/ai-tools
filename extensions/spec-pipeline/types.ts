@@ -1,5 +1,9 @@
 /**
  * Type definitions for the spec pipeline
+ * 
+ * Split into two separate state types:
+ * - SpecState: For spec creation (/spec command)
+ * - ImplementationState: For implementation (/implement command)
  */
 
 import { Type, type Static } from "@sinclair/typebox";
@@ -109,7 +113,7 @@ export interface NormalizedReviewCycles {
 }
 
 // ============================================
-// Metrics Types (for A/B testing plan generation)
+// Metrics Types
 // ============================================
 
 /**
@@ -129,35 +133,34 @@ export interface AgentCallMetrics {
 }
 
 /**
- * Aggregated metrics for the pipeline run
+ * Metrics for spec creation pipelines
  */
-export interface PipelineMetrics {
-	// Timing metrics
+export interface SpecMetrics {
 	pipelineStartTime: string;
 	pipelineEndTime?: string;
 	totalDurationMs?: number;
-	
-	// Phase timing breakdown
 	discoveryDurationMs?: number;
 	specDraftingDurationMs?: number;
+	agentCalls: AgentCallMetrics[];
+	specReviewCycles: { cheap: number; expensive: number };
+	specIterations: number;
+	discoverySkipped: boolean;
+}
+
+/**
+ * Metrics for implementation pipelines (for A/B testing plan generation)
+ */
+export interface ImplementationMetrics {
+	pipelineStartTime: string;
+	pipelineEndTime?: string;
+	totalDurationMs?: number;
 	planGenerationDurationMs?: number;
 	implementationDurationMs?: number;
-	
-	// Agent call tracking
 	agentCalls: AgentCallMetrics[];
-	
-	// Review cycle metrics
-	specReviewCycles: { cheap: number; expensive: number };
 	planReviewCycles: { cheap: number; expensive: number };
 	codeReviewCycles: { cheap: number; expensive: number };
-	
-	// Quality indicators
-	specIterations: number;           // How many spec drafts before approval
-	codeReviewFirstPassRate: number;  // % of phases approved on first review
-	
-	// Configuration for comparison
+	codeReviewFirstPassRate: number;
 	skipPlanGeneration: boolean;
-	discoverySkipped: boolean;
 }
 
 // ============================================
@@ -224,17 +227,14 @@ export interface ErrorDetails {
 }
 
 // ============================================
-// Pipeline State Types
+// Spec State Types
 // ============================================
 
-export type PipelineStage = 
+export type SpecStage = 
 	| "discovery"
 	| "spec_drafting"
 	| "spec_review"
 	| "user_approval"
-	| "plan_generation"
-	| "spec_commit"
-	| "implementation"
 	| "completed"
 	| "cancelled";
 
@@ -266,17 +266,21 @@ export interface DiscoveryState {
 	completed: boolean;
 }
 
-export interface PipelineState {
+/**
+ * State for spec creation pipelines (/spec command)
+ * Stored in .pi/spec-pipeline/specs/<id>/state.json
+ */
+export interface SpecState {
 	id: string;
 	description: string;
-	stage: PipelineStage;
+	stage: SpecStage;
 	createdAt: string;
 	updatedAt: string;
 	
 	// Stage before cancellation (for resume)
-	stageBeforeCancellation?: PipelineStage;
+	stageBeforeCancellation?: SpecStage;
 	
-	// Discovery state (optional for backward compatibility)
+	// Discovery state
 	discovery?: DiscoveryState;
 	
 	// Spec-related state
@@ -287,6 +291,46 @@ export interface PipelineState {
 	specApproved: boolean;
 	specIteration: number;
 	
+	// Git branch management
+	originalBranch?: string;     // Branch name before pipeline started
+	pipelineBranch?: string;     // e.g. "spec/2602071030-feature-name"
+	useAgentCommits?: boolean;   // If true, use agent commits instead of checkpoints
+	checkpoints?: string[];      // Array of checkpoint commit hashes
+	errorStash?: string;         // Stash reference if error occurred
+	
+	// Error tracking
+	lastError?: ErrorDetails | string;  // string for legacy compatibility
+	
+	// Metrics
+	metrics?: SpecMetrics;
+}
+
+// ============================================
+// Implementation State Types
+// ============================================
+
+export type ImplementationStage = 
+	| "plan_generation"
+	| "implementation"
+	| "completed"
+	| "cancelled";
+
+/**
+ * State for implementation pipelines (/implement command)
+ * Stored in .pi/spec-pipeline/implementations/<id>/state.json
+ */
+export interface ImplementationState {
+	id: string;
+	implTimestamp: string;        // YYMMDDhhmm format for this implementation
+	specPath: string;             // Path to the spec file being implemented
+	specContent: string;          // Cached spec content at start
+	stage: ImplementationStage;
+	createdAt: string;
+	updatedAt: string;
+	
+	// Stage before cancellation (for resume)
+	stageBeforeCancellation?: ImplementationStage;
+	
 	// Phases state
 	phases: string[];
 	phasesGenerated: boolean[];
@@ -296,33 +340,32 @@ export interface PipelineState {
 	currentReviewCycle: number;
 	previousReview: string;
 	
-	// Tiered review state (added in Phase 3)
-	currentReviewTier?: "cheap" | "expensive";  // Which tier we're currently in
-	cheapCyclesCompleted?: number;               // Cycles done in cheap tier
-	expensiveCyclesCompleted?: number;           // Cycles done in expensive tier
+	// Tiered review state
+	currentReviewTier?: "cheap" | "expensive";
+	cheapCyclesCompleted?: number;
+	expensiveCyclesCompleted?: number;
 	
-	// Resume tracking - helps skip already-completed steps when resuming
-	implementerCompletedForPhase?: boolean;      // True if implementer finished for current phase
+	// Resume tracking
+	implementerCompletedForPhase?: boolean;
 	
 	// Commit tracking
-	specCommitted: boolean;
 	phaseCommits: boolean[][];  // phaseCommits[phaseIdx][cycleIdx]
-	
-	// Error tracking
-	lastError?: ErrorDetails | string;  // string for legacy compatibility
 	
 	// Git branch management
 	originalBranch?: string;     // Branch name before pipeline started
-	pipelineBranch?: string;     // Generated branch name for this pipeline
-	checkpoints?: string[];      // Array of checkpoint commit hashes
-	errorStash?: string;         // Stash reference if error occurred
-	useAgentCommits?: boolean;   // If true, use agent commits instead of checkpoints (R11)
+	pipelineBranch?: string;     // e.g. "implement/2602071145-feature-name"
+	useAgentCommits?: boolean;
+	checkpoints?: string[];
+	errorStash?: string;
 	
-	// Metrics tracking (for A/B testing plan generation value)
-	metrics?: PipelineMetrics;
+	// Error tracking
+	lastError?: ErrorDetails | string;
 	
-	// Experimental flag: whether plan generation was skipped
+	// Flags
 	skipPlanGeneration?: boolean;
+	
+	// Metrics
+	metrics?: ImplementationMetrics;
 }
 
 // ============================================
@@ -412,6 +455,8 @@ export interface PipelineUIContext {
 // ============================================
 
 export const STATE_DIR = ".pi/spec-pipeline";
+export const SPEC_STATE_DIR = ".pi/spec-pipeline/specs";
+export const IMPL_STATE_DIR = ".pi/spec-pipeline/implementations";
 export const STATE_FILE = "state.json";
 export const MAX_SPEC_ITERATIONS = 5;
 export const PIPELINE_WIDGET_ID = "spec-pipeline-status";

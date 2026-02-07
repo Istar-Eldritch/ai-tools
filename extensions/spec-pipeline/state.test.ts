@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
 	generatePipelineId,
 	generateSpecTimestamp,
+	generateTimestamp,
 	generateDiscoverySummary,
 	createInitialDiscoveryState,
-	createInitialState,
+	createInitialSpecState,
+	createInitialImplState,
 } from "./state.ts";
 
 describe("generatePipelineId", () => {
@@ -159,7 +161,7 @@ describe("generateDiscoverySummary", () => {
 	});
 });
 
-describe("createInitialState", () => {
+describe("createInitialSpecState", () => {
 	const defaultDiscoveryConfig = {
 		enabled: true,
 		maxRounds: 5,
@@ -176,7 +178,7 @@ describe("createInitialState", () => {
 	});
 
 	it("creates state with correct description", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -187,7 +189,7 @@ describe("createInitialState", () => {
 	});
 
 	it("creates state with correct spec filename", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -198,7 +200,7 @@ describe("createInitialState", () => {
 	});
 
 	it("creates state with correct spec path", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -209,7 +211,7 @@ describe("createInitialState", () => {
 	});
 
 	it("starts in discovery stage when discovery enabled", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -221,7 +223,7 @@ describe("createInitialState", () => {
 	});
 
 	it("starts in spec_drafting stage when discovery disabled", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -232,7 +234,7 @@ describe("createInitialState", () => {
 	});
 
 	it("starts in spec_drafting stage when skipDiscovery is true", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -244,20 +246,8 @@ describe("createInitialState", () => {
 		expect(state.discovery?.skipped).toBe(true);
 	});
 
-	it("initializes empty phases array", () => {
-		const state = createInitialState(
-			"Build a feature",
-			"2602011200",
-			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
-		);
-		expect(state.phases).toEqual([]);
-		expect(state.phasesGenerated).toEqual([]);
-	});
-
 	it("initializes spec as not approved", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -268,31 +258,8 @@ describe("createInitialState", () => {
 		expect(state.specIteration).toBe(0);
 	});
 
-	it("initializes review cycle to 1", () => {
-		const state = createInitialState(
-			"Build a feature",
-			"2602011200",
-			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
-		);
-		expect(state.currentReviewCycle).toBe(1);
-	});
-
-	it("initializes commit tracking as false", () => {
-		const state = createInitialState(
-			"Build a feature",
-			"2602011200",
-			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
-		);
-		expect(state.specCommitted).toBe(false);
-		expect(state.phaseCommits).toEqual([]);
-	});
-
 	it("sets timestamps", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",
@@ -304,14 +271,14 @@ describe("createInitialState", () => {
 	});
 
 	it("generates unique ID", () => {
-		const state1 = createInitialState(
+		const state1 = createInitialSpecState(
 			"Feature 1",
 			"2602011200",
 			"f1",
 			"docs/specs",
 			defaultDiscoveryConfig
 		);
-		const state2 = createInitialState(
+		const state2 = createInitialSpecState(
 			"Feature 2",
 			"2602011201",
 			"f2",
@@ -322,7 +289,7 @@ describe("createInitialState", () => {
 	});
 
 	it("sets useAgentCommits flag to true for new pipelines (Phase 5 - R11)", () => {
-		const state = createInitialState(
+		const state = createInitialSpecState(
 			"Build a feature",
 			"2602011200",
 			"feature",

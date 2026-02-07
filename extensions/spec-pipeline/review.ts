@@ -7,13 +7,16 @@ import type {
 	TieredReviewResult,
 	TieredReviewerRole,
 	ProjectConfig,
-	PipelineState,
+	SpecState,
+	ImplementationState,
 	ModelConfig,
 } from "./types.ts";
 import { runAgentWithConfig } from "./agents.ts";
-import { saveState } from "./state.ts";
 import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
+
+// Union type for states that have review-related fields
+type ReviewableState = SpecState | ImplementationState;
 
 // ============================================
 // Verdict Parsing
@@ -109,7 +112,9 @@ export interface TieredReviewContext {
 		addressReview: string;
 	};
 	/** Pipeline state for checkpoints and error handling */
-	state: PipelineState;
+	state: ReviewableState;
+	/** Function to save state after modifications */
+	saveFn: () => void;
 	/** Phase index (1-indexed, for logging/checkpoints) */
 	phaseIndex?: number;
 	/** UI notification callback */
@@ -152,7 +157,7 @@ export async function runTieredReview(
 	ctx: TieredReviewContext,
 	operation: ReviewOperation
 ): Promise<TieredReviewResult> {
-	const { cwd, projectConfig, systemPrompts, state, phaseIndex, notify, onOutput, signal } = ctx;
+	const { cwd, projectConfig, systemPrompts, state, saveFn, phaseIndex, notify, onOutput, signal } = ctx;
 	const { role, reviewTask, fixTask, runAddressReviewOnSignificantIssues = false } = operation;
 	
 	const tieredConfig = projectConfig.models[role];
@@ -185,7 +190,7 @@ export async function runTieredReview(
 	state.currentReviewTier = cheapCycles > 0 ? "cheap" : "expensive";
 	state.cheapCyclesCompleted = 0;
 	state.expensiveCyclesCompleted = 0;
-	saveState(cwd, state);
+	saveFn();
 	
 	// Build phase context string for notifications
 	const phaseCtx = phaseIndex !== undefined ? ` [Phase ${phaseIndex}]` : "";
@@ -202,12 +207,12 @@ export async function runTieredReview(
 	for (let cycle = 1; cycle <= cheapCycles; cycle++) {
 		cheapCyclesCompleted = cycle;
 		state.cheapCyclesCompleted = cycle;
-		saveState(cwd, state);
+		saveFn();
 		
 		notify(`${phaseCtx} Cheap cycle ${cycle}/${cheapCycles}`, "info");
 		
 		// Create checkpoint before review
-		await createCheckpointAndSave(cwd, state, role, phaseIndex, cycle, notify);
+		await createCheckpointAndSave(cwd, state, role, saveFn, phaseIndex, cycle, notify);
 		
 		// Run cheap review
 		const reviewResult = await runAgentWithConfig(
@@ -230,7 +235,8 @@ export async function runTieredReview(
 				reviewTask,
 				phaseIndex,
 				cycle,
-				notify
+				notify,
+				saveFn
 			);
 			return {
 				verdict: "NEEDS_CHANGES",
@@ -275,7 +281,8 @@ export async function runTieredReview(
 					fixTask(lastReviewOutput),
 					phaseIndex,
 					cycle,
-					notify
+					notify,
+					saveFn
 				);
 				return {
 					verdict: "NEEDS_CHANGES",
@@ -299,6 +306,7 @@ export async function runTieredReview(
 					reviewFeedback: lastReviewOutput,
 				},
 				projectConfig.models.agentCommitMessageWriter,
+				saveFn,
 				notify
 			);
 			
@@ -349,20 +357,20 @@ export async function runTieredReview(
 	}
 	
 	state.currentReviewTier = "expensive";
-	saveState(cwd, state);
+	saveFn();
 	
 	notify(`${roleEmoji}${phaseCtx} Starting ${role} (expensive tier: ${tieredConfig.expensive.model}/${tieredConfig.expensive.thinking})`, "info");
 	
 	for (let cycle = 1; cycle <= expensiveCycles; cycle++) {
 		expensiveCyclesCompleted = cycle;
 		state.expensiveCyclesCompleted = cycle;
-		saveState(cwd, state);
+		saveFn();
 		
 		notify(`${phaseCtx} Expensive cycle ${cycle}/${expensiveCycles}`, "info");
 		
 		// Create checkpoint before expensive review
 		// Use offset cycle number to distinguish from cheap tier checkpoints
-		await createCheckpointAndSave(cwd, state, role, phaseIndex, cheapCycles + cycle, notify);
+		await createCheckpointAndSave(cwd, state, role, saveFn, phaseIndex, cheapCycles + cycle, notify);
 		
 		// Run expensive review - independent targeted review (R7)
 		// The expensive model does its own analysis, not just validating cheap model
@@ -388,7 +396,8 @@ export async function runTieredReview(
 				expensiveReviewTask,
 				phaseIndex,
 				cheapCycles + cycle,
-				notify
+				notify,
+				saveFn
 			);
 			return {
 				verdict: "NEEDS_CHANGES",
@@ -446,7 +455,8 @@ export async function runTieredReview(
 				fixTask(lastReviewOutput),
 				phaseIndex,
 				cheapCycles + cycle,
-				notify
+				notify,
+				saveFn
 			);
 			return {
 				verdict: "NEEDS_CHANGES",
@@ -470,6 +480,7 @@ export async function runTieredReview(
 				reviewFeedback: lastReviewOutput,
 			},
 			projectConfig.models.agentCommitMessageWriter,
+			saveFn,
 			notify
 		);
 		
@@ -519,11 +530,14 @@ export async function runTieredReview(
 /**
  * Retry a failed agent operation using stored error details
  * Returns true if retry succeeded, false if it failed (error already handled)
+ * 
+ * @param saveFn - Function to save state after modifications
  */
 export async function retryFailedOperation(
-	state: PipelineState,
+	state: ReviewableState,
 	cwd: string,
 	projectConfig: ProjectConfig,
+	saveFn: () => void,
 	ctx: {
 		ui: {
 			notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
@@ -554,6 +568,7 @@ export async function retryFailedOperation(
 			cwd,
 			state,
 			`retry_${error.role}`,
+			saveFn,
 			error.phase,
 			error.cycle,
 			ctx.ui.notify.bind(ctx.ui)
@@ -599,24 +614,23 @@ export async function retryFailedOperation(
 			cwd,
 			state,
 			result,
-			modelConfig.model,  // Use configured model
+			modelConfig.model,
 			error.role,
 			error.agentTask,
 			error.phase,
 			error.cycle,
-			ctx.ui.notify.bind(ctx.ui)
+			ctx.ui.notify.bind(ctx.ui),
+			saveFn
 		);
 		return false;
 	}
 	
 	// Retry succeeded - handle role-specific output capture
-	if (error.role === "codeReviewer") {
-		// Store review output for potential addressReview step
+	if (error.role === "codeReviewer" && "previousReview" in state) {
 		state.previousReview = result.output;
 	}
 	
-	// Drop the error stash if it exists (R12 compliance - defensive)
-	// Note: Phase 2 also drops stash before retry, but we ensure cleanup on success
+	// Drop the error stash if it exists
 	const { stashExists, dropStash } = await import("./git.ts");
 	if (state.errorStash) {
 		if (await stashExists(cwd, state.errorStash)) {
@@ -628,7 +642,7 @@ export async function retryFailedOperation(
 	
 	// Clear the error state
 	state.lastError = undefined;
-	saveState(cwd, state);
+	saveFn();
 	
 	// Show summary of retry output
 	const { formatAgentSummary } = await import("./formatting.ts");

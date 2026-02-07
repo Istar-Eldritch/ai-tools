@@ -3,14 +3,17 @@ import {
 	formatBox,
 	formatDivider,
 	formatKeyValue,
-	formatStage,
+	formatSpecStage,
+	formatImplStage,
 	formatModelConfig,
 	formatTieredConfig,
 	summarizeAgentOutput,
-	formatState,
-	updatePipelineWidget,
+	formatSpecState,
+	formatImplState,
+	updateSpecWidget,
+	updateImplWidget,
 } from "./formatting.ts";
-import type { PipelineState } from "./types.ts";
+import type { SpecState, ImplementationState } from "./types.ts";
 
 describe("formatDivider", () => {
 	it("creates divider of default width", () => {
@@ -93,41 +96,47 @@ describe("formatBox", () => {
 	});
 });
 
-describe("formatStage", () => {
+describe("formatSpecStage", () => {
 	it("formats discovery stage", () => {
-		expect(formatStage("discovery")).toBe("🔍 Discovery");
+		expect(formatSpecStage("discovery")).toBe("🔍 Discovery");
 	});
 
 	it("formats spec_drafting stage", () => {
-		expect(formatStage("spec_drafting")).toBe("📝 Spec Drafting");
+		expect(formatSpecStage("spec_drafting")).toBe("📝 Spec Drafting");
 	});
 
 	it("formats spec_review stage", () => {
-		expect(formatStage("spec_review")).toBe("🔍 Spec Review");
+		expect(formatSpecStage("spec_review")).toBe("🔍 Spec Review");
 	});
 
 	it("formats user_approval stage", () => {
-		expect(formatStage("user_approval")).toBe("👤 Awaiting User Approval");
-	});
-
-	it("formats plan_generation stage", () => {
-		expect(formatStage("plan_generation")).toBe("📋 Plan Generation");
-	});
-
-	it("formats spec_commit stage", () => {
-		expect(formatStage("spec_commit")).toBe("💾 Spec Commit");
-	});
-
-	it("formats implementation stage", () => {
-		expect(formatStage("implementation")).toBe("🚀 Implementation");
+		expect(formatSpecStage("user_approval")).toBe("👤 Awaiting User Approval");
 	});
 
 	it("formats completed stage", () => {
-		expect(formatStage("completed")).toBe("✅ Completed");
+		expect(formatSpecStage("completed")).toBe("✅ Completed");
 	});
 
 	it("formats cancelled stage", () => {
-		expect(formatStage("cancelled")).toBe("❌ Cancelled");
+		expect(formatSpecStage("cancelled")).toBe("❌ Cancelled");
+	});
+});
+
+describe("formatImplStage", () => {
+	it("formats plan_generation stage", () => {
+		expect(formatImplStage("plan_generation")).toBe("📋 Plan Generation");
+	});
+
+	it("formats implementation stage", () => {
+		expect(formatImplStage("implementation")).toBe("🚀 Implementation");
+	});
+
+	it("formats completed stage", () => {
+		expect(formatImplStage("completed")).toBe("✅ Completed");
+	});
+
+	it("formats cancelled stage", () => {
+		expect(formatImplStage("cancelled")).toBe("❌ Cancelled");
 	});
 });
 
@@ -215,9 +224,8 @@ describe("summarizeAgentOutput", () => {
 	});
 });
 
-describe("formatState", () => {
-	// Helper to create a minimal valid state
-	function createMinimalState(overrides: Partial<PipelineState> = {}): PipelineState {
+describe("formatSpecState", () => {
+	function createMinimalSpecState(overrides: Partial<SpecState> = {}): SpecState {
 		return {
 			id: "test-id-123",
 			description: "Test description",
@@ -230,86 +238,47 @@ describe("formatState", () => {
 			specDraft: "",
 			specApproved: false,
 			specIteration: 0,
-			phases: [],
-			phasesGenerated: [],
-			currentPhaseIndex: 0,
-			currentReviewCycle: 1,
-			previousReview: "",
-			specCommitted: false,
-			phaseCommits: [],
 			...overrides,
 		};
 	}
 
 	it("handles state with all fields defined", () => {
-		const state = createMinimalState({
+		const state = createMinimalSpecState({
 			description: "A complete test state",
-			phases: ["phase1.md", "phase2.md"],
-			phasesGenerated: [true, false],
 		});
 		
-		const result = formatState(state);
+		const result = formatSpecState(state);
 		expect(result).toContain("test-id-123");
 		expect(result).toContain("A complete test state");
-		expect(result).not.toThrow;
 	});
 
 	it("handles state with undefined description", () => {
-		const state = createMinimalState();
-		// Force undefined description to simulate corrupted state
+		const state = createMinimalSpecState();
 		(state as any).description = undefined;
 		
-		// Should not throw
-		expect(() => formatState(state)).not.toThrow();
-		const result = formatState(state);
+		expect(() => formatSpecState(state)).not.toThrow();
+		const result = formatSpecState(state);
 		expect(result).toContain("(no description)");
 	});
 
 	it("handles state with undefined id", () => {
-		const state = createMinimalState();
+		const state = createMinimalSpecState();
 		(state as any).id = undefined;
 		
-		expect(() => formatState(state)).not.toThrow();
-		const result = formatState(state);
+		expect(() => formatSpecState(state)).not.toThrow();
+		const result = formatSpecState(state);
 		expect(result).toContain("unknown");
 	});
 
-	it("handles state with undefined phases array", () => {
-		const state = createMinimalState();
-		(state as any).phases = undefined;
-		
-		expect(() => formatState(state)).not.toThrow();
-	});
-
-	it("handles state with undefined phasesGenerated array", () => {
-		const state = createMinimalState();
-		(state as any).phasesGenerated = undefined;
-		
-		expect(() => formatState(state)).not.toThrow();
-	});
-
-	it("handles state with phases containing undefined elements", () => {
-		const state = createMinimalState({
-			stage: "implementation",
-			phases: ["phase1.md", undefined as any, "phase3.md"],
-			phasesGenerated: [true, false, false],
-			currentPhaseIndex: 0,
-		});
-		
-		expect(() => formatState(state)).not.toThrow();
-		const result = formatState(state);
-		expect(result).toContain("(unnamed phase)");
-	});
-
 	it("handles state with undefined discovery", () => {
-		const state = createMinimalState();
+		const state = createMinimalSpecState();
 		(state as any).discovery = undefined;
 		
-		expect(() => formatState(state)).not.toThrow();
+		expect(() => formatSpecState(state)).not.toThrow();
 	});
 
 	it("handles state with discovery but undefined qaHistory", () => {
-		const state = createMinimalState({
+		const state = createMinimalSpecState({
 			stage: "discovery",
 			discovery: {
 				skipped: false,
@@ -321,66 +290,85 @@ describe("formatState", () => {
 			},
 		});
 		
-		expect(() => formatState(state)).not.toThrow();
-	});
-
-	it("handles state with lastError containing undefined phases reference", () => {
-		const state = createMinimalState({
-			lastError: {
-				timestamp: "2026-02-06T12:00:00.000Z",
-				agent: "opus" as const,
-				role: "implementer",
-				phase: 1,
-				cycle: 1,
-				exitCode: 1,
-				errorType: "UNKNOWN",
-				agentTask: "test task",
-			},
-		});
-		// Force phases to be undefined
-		(state as any).phases = undefined;
-		
-		expect(() => formatState(state)).not.toThrow();
-		const result = formatState(state);
-		// Should show "?" for unknown total phases
-		expect(result).toContain("?");
-	});
-
-	it("handles completely empty/corrupted state object", () => {
-		// Simulate a very corrupted state with minimal fields
-		const corruptedState = {
-			id: undefined,
-			description: undefined,
-			stage: "spec_drafting",
-			createdAt: "",
-			updatedAt: "",
-			specTimestamp: "",
-			specFilename: "",
-			specPath: "",
-			specDraft: undefined,
-			specApproved: false,
-			specIteration: 0,
-			phases: undefined,
-			phasesGenerated: undefined,
-			currentPhaseIndex: 0,
-			currentReviewCycle: 1,
-			previousReview: "",
-			specCommitted: false,
-			phaseCommits: [],
-		} as unknown as PipelineState;
-		
-		expect(() => formatState(corruptedState)).not.toThrow();
+		expect(() => formatSpecState(state)).not.toThrow();
 	});
 });
 
-describe("updatePipelineWidget", () => {
+describe("formatImplState", () => {
+	function createMinimalImplState(overrides: Partial<ImplementationState> = {}): ImplementationState {
+		return {
+			id: "test-impl-123",
+			implTimestamp: "2602061200",
+			specPath: "docs/test_spec.md",
+			specContent: "",
+			stage: "implementation",
+			createdAt: "2026-02-06T12:00:00.000Z",
+			updatedAt: "2026-02-06T12:00:00.000Z",
+			phases: ["phase1.md", "phase2.md"],
+			phasesGenerated: [true, true],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			phaseCommits: [],
+			...overrides,
+		};
+	}
+
+	it("handles state with all fields defined", () => {
+		const state = createMinimalImplState();
+		const result = formatImplState(state);
+		expect(result).toContain("test-impl-123");
+		expect(result).toContain("docs/test_spec.md");
+	});
+
+	it("handles state with phases containing undefined elements", () => {
+		const state = createMinimalImplState({
+			phases: ["phase1.md", undefined as any, "phase3.md"],
+			phasesGenerated: [true, false, false],
+		});
+		
+		expect(() => formatImplState(state)).not.toThrow();
+		const result = formatImplState(state);
+		expect(result).toContain("(unnamed phase)");
+	});
+
+	it("handles state with undefined phases array", () => {
+		const state = createMinimalImplState();
+		(state as any).phases = undefined;
+		
+		expect(() => formatImplState(state)).not.toThrow();
+	});
+});
+
+describe("updateSpecWidget", () => {
+	it("handles state with undefined id", () => {
+		const state = {
+			id: undefined,
+			stage: "spec_drafting" as const,
+		} as unknown as SpecState;
+		
+		let widgetContent: string[] | undefined;
+		const mockCtx = {
+			ui: {
+				setWidget: (_id: string, content: string[] | undefined) => {
+					widgetContent = content;
+				},
+			},
+		};
+		
+		expect(() => updateSpecWidget(mockCtx, state)).not.toThrow();
+		expect(widgetContent).toBeDefined();
+	});
+});
+
+describe("updateImplWidget", () => {
 	it("handles state with undefined phases", () => {
 		const state = {
 			id: "test-id",
 			stage: "implementation" as const,
 			phases: undefined,
 			currentPhaseIndex: 0,
-		} as unknown as PipelineState;
+		} as unknown as ImplementationState;
 		
 		let widgetContent: string[] | undefined;
 		const mockCtx = {
@@ -391,27 +379,7 @@ describe("updatePipelineWidget", () => {
 			},
 		};
 		
-		expect(() => updatePipelineWidget(mockCtx, state)).not.toThrow();
-		expect(widgetContent).toBeDefined();
-	});
-
-	it("handles state with undefined id", () => {
-		const state = {
-			id: undefined,
-			stage: "spec_drafting" as const,
-			phases: [],
-		} as unknown as PipelineState;
-		
-		let widgetContent: string[] | undefined;
-		const mockCtx = {
-			ui: {
-				setWidget: (_id: string, content: string[] | undefined) => {
-					widgetContent = content;
-				},
-			},
-		};
-		
-		expect(() => updatePipelineWidget(mockCtx, state)).not.toThrow();
+		expect(() => updateImplWidget(mockCtx, state)).not.toThrow();
 		expect(widgetContent).toBeDefined();
 	});
 });

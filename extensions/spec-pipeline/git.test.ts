@@ -645,7 +645,6 @@ describe("Git file tracking utilities", () => {
 
 		it("createCheckpointAndSave skips checkpoints for new pipelines with useAgentCommits", async () => {
 			const { createCheckpointAndSave } = await import("./git.ts");
-			const { saveState } = await import("./state.ts");
 			
 			// Mock state with useAgentCommits flag (new pipeline)
 			const state: any = {
@@ -655,12 +654,14 @@ describe("Git file tracking utilities", () => {
 				checkpoints: [],
 			};
 
+			const saveFn = () => {};
+
 			// Create a file modification
 			await writeFile(join(testDir, "test.txt"), "test content");
 			await execGit(testDir, ["add", "test.txt"]);
 
 			// Try to create checkpoint
-			const result = await createCheckpointAndSave(testDir, state, "testRole");
+			const result = await createCheckpointAndSave(testDir, state, "testRole", saveFn);
 			
 			// Should return true but not create a checkpoint
 			expect(result).toBe(true);
@@ -669,7 +670,6 @@ describe("Git file tracking utilities", () => {
 
 		it("createCheckpointAndSave creates checkpoints for old pipelines without useAgentCommits", async () => {
 			const { createCheckpointAndSave } = await import("./git.ts");
-			const { saveState } = await import("./state.ts");
 			
 			// Mock state without useAgentCommits flag (old pipeline)
 			const state: any = {
@@ -677,6 +677,8 @@ describe("Git file tracking utilities", () => {
 				pipelineBranch: "spec-pipeline/test",
 				checkpoints: [],
 			};
+
+			const saveFn = () => {};
 
 			// Create checkpoint branch
 			await execGit(testDir, ["checkout", "-b", "spec-pipeline/test"]);
@@ -686,7 +688,7 @@ describe("Git file tracking utilities", () => {
 			await execGit(testDir, ["add", "test.txt"]);
 
 			// Try to create checkpoint
-			const result = await createCheckpointAndSave(testDir, state, "testRole");
+			const result = await createCheckpointAndSave(testDir, state, "testRole", saveFn);
 			
 			// Should create a checkpoint
 			expect(result).toBe(true);
@@ -708,6 +710,8 @@ describe("Git file tracking utilities", () => {
 			await writeFile(join(testDir, "test.txt"), "test content");
 			await execGit(testDir, ["add", "test.txt"]);
 
+			const saveFn = () => {};
+
 			// Try to create agent commit
 			const result = await createAgentCommit(
 				testDir,
@@ -718,7 +722,8 @@ describe("Git file tracking utilities", () => {
 					phase: 1,
 					cycle: 1,
 				},
-				{ model: "haiku", thinking: "off" }
+				{ model: "haiku", thinking: "off" },
+				saveFn
 			);
 			
 			// Should skip commit for old pipeline
@@ -738,6 +743,8 @@ describe("Git file tracking utilities", () => {
 				checkpoints: [],
 			};
 
+			const saveFn = () => {};
+
 			// Create branch
 			await execGit(testDir, ["checkout", "-b", "spec-pipeline/test"]);
 
@@ -752,7 +759,8 @@ describe("Git file tracking utilities", () => {
 					phase: 1,
 					cycle: 1,
 				},
-				{ model: "haiku", thinking: "off" }
+				{ model: "haiku", thinking: "off" },
+				saveFn
 			);
 			
 			// Should return success=true because it passed the useAgentCommits check

@@ -3,8 +3,10 @@
  */
 
 import { spawn } from "node:child_process";
-import type { PipelineState } from "./types.ts";
-import { saveState } from "./state.ts";
+import type { SpecState, ImplementationState } from "./types.ts";
+
+// Union type for any state that has git fields
+type GitState = SpecState | ImplementationState;
 
 // ============================================
 // Git Command Execution
@@ -85,9 +87,12 @@ export async function branchExists(cwd: string, branchName: string): Promise<boo
  * Create a new branch and switch to it
  * If branch exists, appends -N suffix
  * Returns the actual branch name created
+ * 
+ * @param prefix - Branch prefix: "spec" for spec creation, "implement" for implementation
+ * @param name - Short name for the branch (e.g. "2602071030-feature-name")
  */
-export async function createPipelineBranch(cwd: string, pipelineId: string): Promise<{ success: boolean; branchName?: string; error?: string }> {
-	const baseName = `spec-pipeline/${pipelineId}`;
+export async function createPipelineBranch(cwd: string, prefix: string, name: string): Promise<{ success: boolean; branchName?: string; error?: string }> {
+	const baseName = `${prefix}/${name}`;
 	let branchName = baseName;
 	let suffix = 1;
 	
@@ -182,11 +187,14 @@ export async function createCheckpoint(
 /**
  * Create a checkpoint before a write operation and update state
  * Returns true if checkpoint was created (or not needed), false on error
+ * 
+ * @param saveFn - Function to save the state after updating checkpoints
  */
 export async function createCheckpointAndSave(
 	cwd: string,
-	state: PipelineState,
+	state: GitState,
 	role: string,
+	saveFn: () => void,
 	phase?: number,
 	cycle?: number,
 	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
@@ -207,7 +215,7 @@ export async function createCheckpointAndSave(
 			state.checkpoints = [];
 		}
 		state.checkpoints.push(commitHash);
-		saveState(cwd, state);
+		saveFn();
 		notify?.(`📍 Checkpoint created: ${commitHash.slice(0, 8)}`, "info");
 	}
 	// null means nothing to commit, which is fine
@@ -421,15 +429,16 @@ export function extractCommitMessage(output: string): string {
  * 5. Adds the commit hash to state.checkpoints[] for squash merge compatibility
  * 
  * @param cwd - Working directory
- * @param state - Pipeline state (will be modified to add commit hash to checkpoints)
+ * @param state - Pipeline state (SpecState or ImplementationState)
  * @param context - Context for commit message generation (role, model, phase, etc.)
  * @param agentConfig - Model configuration for the commit message writer
+ * @param saveFn - Function to save the state after updating checkpoints
  * @param notify - UI notification callback
  * @returns { success: boolean; commitHash?: string; usedFallback?: boolean }
  */
 export async function createAgentCommit(
 	cwd: string,
-	state: any, // PipelineState type
+	state: GitState,
 	context: {
 		role: string;
 		modelConfig: { model: string; thinking: string };
@@ -438,11 +447,11 @@ export async function createAgentCommit(
 		reviewFeedback?: string;
 	},
 	agentConfig: { model: string; thinking: string },
+	saveFn: () => void,
 	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
 ): Promise<{ success: boolean; commitHash?: string; usedFallback?: boolean }> {
 	// Import generateCommitMessage dynamically to avoid circular dependencies
 	const { generateCommitMessage } = await import("./commit-agent.ts");
-	const { saveState } = await import("./state.ts");
 	
 	// Only create commits for new pipelines with agent commits enabled (R11 - backward compatibility)
 	if (!state.useAgentCommits) {
@@ -517,7 +526,7 @@ export async function createAgentCommit(
 				state.checkpoints = [];
 			}
 			state.checkpoints.push(commitHash);
-			saveState(cwd, state);
+			saveFn();
 			notify?.(`📍 Agent commit created (fallback): ${commitHash.slice(0, 8)}`, "info");
 		}
 		
@@ -545,7 +554,7 @@ export async function createAgentCommit(
 		state.checkpoints = [];
 	}
 	state.checkpoints.push(commitHash);
-	saveState(cwd, state);
+	saveFn();
 	
 	notify?.(`✅ Agent commit created: ${commitHash.slice(0, 8)}`, "success");
 	

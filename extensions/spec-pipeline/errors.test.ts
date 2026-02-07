@@ -7,7 +7,7 @@ import {
 	formatErrorForRetry,
 	formatErrorBox,
 } from "./errors.ts";
-import type { PipelineState, ErrorDetails } from "./types.ts";
+import type { SpecState, ImplementationState, ErrorDetails } from "./types.ts";
 
 describe("classifyError", () => {
 	describe("RATE_LIMIT detection", () => {
@@ -152,19 +152,19 @@ describe("getErrorSuggestion", () => {
 	it("suggests waiting for RATE_LIMIT", () => {
 		const suggestion = getErrorSuggestion("RATE_LIMIT");
 		expect(suggestion).toContain("Wait");
-		expect(suggestion).toContain("/spec-resume");
+		expect(suggestion).toContain("resume");
 	});
 
 	it("suggests network check for TIMEOUT", () => {
 		const suggestion = getErrorSuggestion("TIMEOUT");
 		expect(suggestion).toContain("network");
-		expect(suggestion).toContain("/spec-resume");
+		expect(suggestion).toContain("resume");
 	});
 
 	it("suggests network check for NETWORK", () => {
 		const suggestion = getErrorSuggestion("NETWORK");
 		expect(suggestion).toContain("network");
-		expect(suggestion).toContain("/spec-resume");
+		expect(suggestion).toContain("resume");
 	});
 
 	it("suggests manual review for VALIDATION", () => {
@@ -175,7 +175,7 @@ describe("getErrorSuggestion", () => {
 	it("suggests log check for UNKNOWN", () => {
 		const suggestion = getErrorSuggestion("UNKNOWN");
 		expect(suggestion).toContain("log");
-		expect(suggestion).toContain("/spec-resume");
+		expect(suggestion).toContain("resume");
 	});
 });
 
@@ -208,25 +208,20 @@ describe("truncateString", () => {
 });
 
 describe("formatErrorForRetry", () => {
-	function createMinimalState(overrides: Partial<PipelineState> = {}): PipelineState {
+	function createMinimalState(overrides: Partial<ImplementationState> = {}): ImplementationState {
 		return {
 			id: "test-id-123",
-			description: "Test description",
+			implTimestamp: "2602061200",
+			specPath: "docs/test_spec.md",
+			specContent: "",
 			stage: "implementation",
 			createdAt: "2026-02-06T12:00:00.000Z",
 			updatedAt: "2026-02-06T12:00:00.000Z",
-			specTimestamp: "2602061200",
-			specFilename: "test_spec.md",
-			specPath: "docs/test_spec.md",
-			specDraft: "",
-			specApproved: true,
-			specIteration: 1,
 			phases: ["phase1.md", "phase2.md"],
 			phasesGenerated: [true, true],
 			currentPhaseIndex: 0,
 			currentReviewCycle: 1,
 			previousReview: "",
-			specCommitted: true,
 			phaseCommits: [],
 			...overrides,
 		};
@@ -290,25 +285,20 @@ describe("formatErrorForRetry", () => {
 });
 
 describe("formatErrorBox", () => {
-	function createMinimalState(overrides: Partial<PipelineState> = {}): PipelineState {
+	function createMinimalState(overrides: Partial<ImplementationState> = {}): ImplementationState {
 		return {
 			id: "test-id-123",
-			description: "Test description",
+			implTimestamp: "2602061200",
+			specPath: "docs/test_spec.md",
+			specContent: "",
 			stage: "implementation",
 			createdAt: "2026-02-06T12:00:00.000Z",
 			updatedAt: "2026-02-06T12:00:00.000Z",
-			specTimestamp: "2602061200",
-			specFilename: "test_spec.md",
-			specPath: "docs/test_spec.md",
-			specDraft: "",
-			specApproved: true,
-			specIteration: 1,
 			phases: ["phase1.md", "phase2.md"],
 			phasesGenerated: [true, true],
 			currentPhaseIndex: 0,
 			currentReviewCycle: 1,
 			previousReview: "",
-			specCommitted: true,
 			phaseCommits: [],
 			...overrides,
 		};

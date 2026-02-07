@@ -10,9 +10,13 @@ import type {
 	AgentName,
 	RoleName,
 	AgentResult,
-	PipelineState,
+	SpecState,
+	ImplementationState,
 } from "./types.ts";
-import { getStateDir, saveState } from "./state.ts";
+import { getStateDir } from "./state.ts";
+
+// Union type for states that have error-related fields
+type ErrorableState = SpecState | ImplementationState;
 import { stashChanges } from "./git.ts";
 import { formatBox, formatKeyValue, formatDivider } from "./formatting.ts";
 
@@ -98,16 +102,16 @@ export function getErrorEmoji(errorType: ErrorType): string {
 export function getErrorSuggestion(errorType: ErrorType): string {
 	switch (errorType) {
 		case "RATE_LIMIT":
-			return "Wait a few minutes for rate limits to reset, then run `/spec-resume` to retry";
+			return "Wait a few minutes for rate limits to reset, then resume to retry";
 		case "TIMEOUT":
-			return "Check your network connection, then run `/spec-resume` to retry";
+			return "Check your network connection, then resume to retry";
 		case "NETWORK":
-			return "Check your network connection, then run `/spec-resume` to retry";
+			return "Check your network connection, then resume to retry";
 		case "VALIDATION":
 			return "Review the error details above. You may need to manually fix issues before resuming.";
 		case "UNKNOWN":
 		default:
-			return "Check error details in the log file, then run `/spec-resume` to retry";
+			return "Check error details in the log file, then resume to retry";
 	}
 }
 
@@ -165,17 +169,20 @@ ${error.agentTask}
 /**
  * Handle agent error - save state, log error, notify user
  * Returns the ErrorDetails object for the caller to use
+ * 
+ * @param saveFn - Function to save the state after updating error fields
  */
 export async function handleAgentError(
 	cwd: string,
-	state: PipelineState,
+	state: ErrorableState,
 	result: AgentResult,
 	agent: AgentName,
 	role: RoleName,
 	task: string,
 	phase: number | undefined,
 	cycle: number | undefined,
-	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void
+	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void,
+	saveFn?: () => void
 ): Promise<ErrorDetails> {
 	const errorDetails: ErrorDetails = {
 		timestamp: new Date().toISOString(),
@@ -209,7 +216,7 @@ export async function handleAgentError(
 	
 	// Save to state
 	state.lastError = errorDetails;
-	saveState(cwd, state);
+	saveFn?.();
 	
 	// Append to error log
 	appendErrorLog(cwd, state.id, errorDetails);
@@ -254,7 +261,7 @@ export async function handleAgentError(
  * Format error details for display before retry
  * Returns formatted string for user notification
  */
-export function formatErrorForRetry(error: ErrorDetails, state: PipelineState): string {
+export function formatErrorForRetry(error: ErrorDetails, state: ErrorableState): string {
 	const emoji = getErrorEmoji(error.errorType);
 	const content: string[] = [];
 	
@@ -263,7 +270,7 @@ export function formatErrorForRetry(error: ErrorDetails, state: PipelineState): 
 	content.push(formatKeyValue("Role", error.role));
 	
 	if (error.phase !== undefined) {
-		const totalPhases = (state.phases || []).length || "?";
+		const totalPhases = ("phases" in state && Array.isArray((state as any).phases) ? (state as any).phases.length : 0) || "?";
 		const phaseInfo = `${error.phase} of ${totalPhases}`;
 		if (error.cycle !== undefined) {
 			content.push(formatKeyValue("Phase", phaseInfo));
@@ -294,7 +301,7 @@ export function formatErrorForRetry(error: ErrorDetails, state: PipelineState): 
  * Format error details as a visually appealing box for display
  * Used by /spec-status and /spec-error commands
  */
-export function formatErrorBox(error: ErrorDetails, state: PipelineState): string {
+export function formatErrorBox(error: ErrorDetails, state: ErrorableState): string {
 	const emoji = getErrorEmoji(error.errorType);
 	const content: string[] = [];
 	
@@ -302,7 +309,7 @@ export function formatErrorBox(error: ErrorDetails, state: PipelineState): strin
 	content.push(formatKeyValue("Agent", `${error.agent} (${error.role})`));
 	
 	if (error.phase !== undefined) {
-		const totalPhases = (state.phases || []).length || "?";
+		const totalPhases = ("phases" in state && Array.isArray((state as any).phases) ? (state as any).phases.length : 0) || "?";
 		let phaseInfo = `${error.phase} of ${totalPhases}`;
 		if (error.cycle !== undefined) {
 			phaseInfo += `, Cycle ${error.cycle} of 3`;
@@ -332,7 +339,7 @@ export function formatErrorBox(error: ErrorDetails, state: PipelineState): strin
 	content.push(formatKeyValue("Error Log", `.pi/spec-pipeline/${state.id}.error.log`));
 	
 	if (error.agentTask) {
-		content.push(formatKeyValue("Can Retry", "Yes (/spec-resume)"));
+		content.push(formatKeyValue("Can Retry", "Yes (use resume command)"));
 	} else {
 		content.push(formatKeyValue("Can Retry", "No (task not stored)"));
 	}

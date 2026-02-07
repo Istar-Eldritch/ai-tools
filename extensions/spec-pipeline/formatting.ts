@@ -3,8 +3,10 @@
  */
 
 import type {
-	PipelineStage,
-	PipelineState,
+	SpecStage,
+	ImplementationStage,
+	SpecState,
+	ImplementationState,
 	ModelConfig,
 	TieredModelConfig,
 	ProjectConfig,
@@ -129,7 +131,7 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 	const lines: string[] = [];
 	
 	lines.push(formatDivider(60));
-	lines.push(`  📋 Spec Pipeline Configuration${fromFile ? " (from .pi/spec-pipeline.json)" : " (defaults)"}`);
+	lines.push(`  📋 Configuration${fromFile ? " (from .pi/spec-pipeline.json)" : " (defaults)"}`);
 	lines.push(formatDivider(60));
 	lines.push("");
 	
@@ -167,16 +169,26 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 // ============================================
 
 /**
- * Format stage for display
+ * Format spec stage for display
  */
-export function formatStage(stage: PipelineStage): string {
-	const stageNames: Record<PipelineStage, string> = {
+export function formatSpecStage(stage: SpecStage): string {
+	const stageNames: Record<SpecStage, string> = {
 		discovery: "🔍 Discovery",
 		spec_drafting: "📝 Spec Drafting",
 		spec_review: "🔍 Spec Review",
 		user_approval: "👤 Awaiting User Approval",
+		completed: "✅ Completed",
+		cancelled: "❌ Cancelled",
+	};
+	return stageNames[stage] || stage;
+}
+
+/**
+ * Format implementation stage for display
+ */
+export function formatImplStage(stage: ImplementationStage): string {
+	const stageNames: Record<ImplementationStage, string> = {
 		plan_generation: "📋 Plan Generation",
-		spec_commit: "💾 Spec Commit",
 		implementation: "🚀 Implementation",
 		completed: "✅ Completed",
 		cancelled: "❌ Cancelled",
@@ -257,18 +269,18 @@ export function formatAgentSummary(
 }
 
 // ============================================
-// Pipeline State Formatting
+// Spec State Formatting
 // ============================================
 
 /**
- * Format state for display
+ * Format spec state for display
  */
-export function formatState(state: PipelineState): string {
+export function formatSpecState(state: SpecState): string {
 	const lines: string[] = [];
 	
 	// Header section
 	lines.push(formatDivider(50));
-	lines.push(`  Pipeline: ${state.id || "unknown"}`);
+	lines.push(`  Spec: ${state.id || "unknown"}`);
 	lines.push(formatDivider(50));
 	lines.push("");
 	
@@ -276,12 +288,12 @@ export function formatState(state: PipelineState): string {
 	lines.push("📋 Basic Information");
 	const description = state.description || "(no description)";
 	lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
-	lines.push(formatKeyValue("  Stage", formatStage(state.stage)));
+	lines.push(formatKeyValue("  Stage", formatSpecStage(state.stage)));
 	lines.push(formatKeyValue("  Created", state.createdAt));
 	lines.push(formatKeyValue("  Updated", state.updatedAt));
 	lines.push(formatKeyValue("  Spec", state.specFilename));
 	
-	// Git section (added by Phase 2)
+	// Git section
 	if (state.pipelineBranch || state.originalBranch) {
 		lines.push("");
 		lines.push("🔀 Git Branch");
@@ -333,6 +345,62 @@ export function formatState(state: PipelineState): string {
 		lines.push(formatKeyValue("  Approved", state.specApproved ? "Yes ✅" : "No"));
 	}
 	
+	// Error section
+	if (state.lastError) {
+		lines.push("");
+		formatErrorSection(lines, state.lastError);
+	}
+	
+	lines.push("");
+	lines.push(formatDivider(50));
+	
+	return lines.join("\n");
+}
+
+// ============================================
+// Implementation State Formatting
+// ============================================
+
+/**
+ * Format implementation state for display
+ */
+export function formatImplState(state: ImplementationState): string {
+	const lines: string[] = [];
+	
+	// Header section
+	lines.push(formatDivider(50));
+	lines.push(`  Implementation: ${state.id || "unknown"}`);
+	lines.push(formatDivider(50));
+	lines.push("");
+	
+	// Basic info section
+	lines.push("📋 Basic Information");
+	lines.push(formatKeyValue("  Spec Path", state.specPath));
+	lines.push(formatKeyValue("  Stage", formatImplStage(state.stage)));
+	lines.push(formatKeyValue("  Created", state.createdAt));
+	lines.push(formatKeyValue("  Updated", state.updatedAt));
+	if (state.skipPlanGeneration) {
+		lines.push(formatKeyValue("  Plan Gen", "Skipped (--no-plan)"));
+	}
+	
+	// Git section
+	if (state.pipelineBranch || state.originalBranch) {
+		lines.push("");
+		lines.push("🔀 Git Branch");
+		if (state.pipelineBranch) {
+			lines.push(formatKeyValue("  Branch", state.pipelineBranch));
+		}
+		if (state.originalBranch && state.pipelineBranch) {
+			lines.push(formatKeyValue("  Original", state.originalBranch));
+		}
+		if (state.checkpoints && state.checkpoints.length > 0) {
+			lines.push(formatKeyValue("  Checkpoints", String(state.checkpoints.length)));
+		}
+		if (state.errorStash) {
+			lines.push(formatKeyValue("  Error Stash", state.errorStash + " (will be dropped on resume)"));
+		}
+	}
+	
 	// Phases section
 	const phases = state.phases || [];
 	const phasesGenerated = state.phasesGenerated || [];
@@ -345,7 +413,6 @@ export function formatState(state: PipelineState): string {
 		
 		if (state.stage === "implementation") {
 			lines.push(formatKeyValue("  Current Phase", `${state.currentPhaseIndex + 1}/${phases.length}`));
-			// Show tiered review state if available
 			if (state.currentReviewTier) {
 				lines.push(formatKeyValue("  Review Tier", state.currentReviewTier));
 				lines.push(formatKeyValue("  Cheap Cycles", String(state.cheapCyclesCompleted || 0)));
@@ -357,7 +424,7 @@ export function formatState(state: PipelineState): string {
 			// Show phase names with progress indicators
 			lines.push("");
 			lines.push("  Phase Progress:");
-			for (let i = 0; i < phases.length && i < 5; i++) {  // Limit to 5 phases for display
+			for (let i = 0; i < phases.length && i < 5; i++) {
 				const phase = phases[i] || "(unnamed phase)";
 				const phaseName = phase.slice(0, 30) + (phase.length > 30 ? "..." : "");
 				let status = "  ⬜";  // Pending
@@ -374,50 +441,10 @@ export function formatState(state: PipelineState): string {
 		}
 	}
 	
-	// Error section - use enhanced display
+	// Error section
 	if (state.lastError) {
 		lines.push("");
-		if (typeof state.lastError === "string") {
-			// Legacy error format
-			lines.push("❌ Last Error (Legacy)");
-			lines.push(`  ${state.lastError.slice(0, 200)}${state.lastError.length > 200 ? "..." : ""}`);
-		} else {
-			// Structured ErrorDetails - use enhanced display
-			const emoji = getErrorEmoji(state.lastError.errorType);
-			const content: string[] = [];
-			
-			content.push(formatKeyValue("Timestamp", state.lastError.timestamp));
-			content.push(formatKeyValue("Agent", `${state.lastError.agent} (${state.lastError.role})`));
-			
-			if (state.lastError.phase !== undefined) {
-				const totalPhases = (state.phases || []).length || "?";
-				let phaseInfo = `${state.lastError.phase} of ${totalPhases}`;
-				if (state.lastError.cycle !== undefined) {
-					phaseInfo += `, Cycle ${state.lastError.cycle} of 3`;
-				}
-				content.push(formatKeyValue("Phase", phaseInfo));
-			}
-			
-			content.push(formatKeyValue("Error Type", `${emoji} ${state.lastError.errorType}`));
-			content.push(formatKeyValue("Exit Code", String(state.lastError.exitCode)));
-			
-			if (state.lastError.stderr) {
-				content.push("");
-				content.push("─── Error Message ───");
-				const preview = state.lastError.stderr.length > 400 
-					? state.lastError.stderr.slice(0, 400) + "..." 
-					: state.lastError.stderr;
-				for (const line of preview.split("\n").slice(0, 6)) {
-					content.push(`  ${line.trim()}`);
-				}
-			}
-			
-			content.push("");
-			content.push("─── Recovery ───");
-			content.push(`  ${getErrorSuggestion(state.lastError.errorType)}`);
-			
-			lines.push(formatBox(`${emoji} Error Details`, content));
-		}
+		formatErrorSection(lines, state.lastError);
 	}
 	
 	lines.push("");
@@ -426,39 +453,103 @@ export function formatState(state: PipelineState): string {
 	return lines.join("\n");
 }
 
+/**
+ * Helper: format error section for state display
+ */
+function formatErrorSection(lines: string[], lastError: SpecState["lastError"]): void {
+	if (typeof lastError === "string") {
+		lines.push("❌ Last Error (Legacy)");
+		lines.push(`  ${lastError.slice(0, 200)}${lastError.length > 200 ? "..." : ""}`);
+	} else if (lastError) {
+		const emoji = getErrorEmoji(lastError.errorType);
+		const content: string[] = [];
+		
+		content.push(formatKeyValue("Timestamp", lastError.timestamp));
+		content.push(formatKeyValue("Agent", `${lastError.agent} (${lastError.role})`));
+		
+		if (lastError.phase !== undefined) {
+			let phaseInfo = `Phase ${lastError.phase}`;
+			if (lastError.cycle !== undefined) {
+				phaseInfo += `, Cycle ${lastError.cycle}`;
+			}
+			content.push(formatKeyValue("Phase", phaseInfo));
+		}
+		
+		content.push(formatKeyValue("Error Type", `${emoji} ${lastError.errorType}`));
+		content.push(formatKeyValue("Exit Code", String(lastError.exitCode)));
+		
+		if (lastError.stderr) {
+			content.push("");
+			content.push("─── Error Message ───");
+			const preview = lastError.stderr.length > 400 
+				? lastError.stderr.slice(0, 400) + "..." 
+				: lastError.stderr;
+			for (const line of preview.split("\n").slice(0, 6)) {
+				content.push(`  ${line.trim()}`);
+			}
+		}
+		
+		content.push("");
+		content.push("─── Recovery ───");
+		content.push(`  ${getErrorSuggestion(lastError.errorType)}`);
+		
+		lines.push(formatBox(`${emoji} Error Details`, content));
+	}
+}
+
 // ============================================
 // Widget Management
 // ============================================
 
 /**
- * Update the persistent pipeline status widget
- * This widget stays visible during agent operations and survives terminal resize
+ * Update the persistent pipeline status widget for spec creation
  */
-export function updatePipelineWidget(
+export function updateSpecWidget(
 	ctx: WidgetUIContext,
-	state: PipelineState,
+	state: SpecState,
 	currentAction?: string
 ): void {
 	const lines: string[] = [];
 	
 	// Header
 	const stateId = state.id || "unknown";
-	lines.push(`📋 Pipeline: ${stateId.slice(0, 16)}...`);
+	lines.push(`📋 Spec: ${stateId.slice(0, 16)}...`);
 	lines.push(formatDivider(40));
 	
 	// Stage indicator
-	const stageEmoji: Record<PipelineStage, string> = {
-		discovery: "🔍",
-		spec_drafting: "📝",
-		spec_review: "🔍",
-		user_approval: "👤",
-		plan_generation: "📋",
-		spec_commit: "💾",
-		implementation: "🚀",
-		completed: "✅",
-		cancelled: "❌",
-	};
-	lines.push(`Stage: ${stageEmoji[state.stage] || "▶"} ${formatStage(state.stage)}`);
+	lines.push(`Stage: ${formatSpecStage(state.stage)}`);
+	
+	// Discovery progress if in discovery
+	if (state.discovery && state.stage === "discovery" && !state.discovery.completed) {
+		lines.push(`Discovery: Round ${state.discovery.currentRound}/${state.discovery.maxRounds}`);
+	}
+	
+	// Current action
+	if (currentAction) {
+		lines.push(formatDivider(40));
+		lines.push(`⏳ ${currentAction}`);
+	}
+	
+	ctx.ui.setWidget(PIPELINE_WIDGET_ID, lines);
+}
+
+/**
+ * Update the persistent pipeline status widget for implementation
+ */
+export function updateImplWidget(
+	ctx: WidgetUIContext,
+	state: ImplementationState,
+	currentAction?: string
+): void {
+	const lines: string[] = [];
+	
+	// Header
+	const stateId = state.id || "unknown";
+	lines.push(`🚀 Implement: ${stateId.slice(0, 16)}...`);
+	lines.push(formatDivider(40));
+	
+	// Stage indicator
+	lines.push(`Stage: ${formatImplStage(state.stage)}`);
 	
 	// Phase progress if in implementation
 	const widgetPhases = state.phases || [];
@@ -467,11 +558,6 @@ export function updatePipelineWidget(
 		const total = widgetPhases.length;
 		const progressBar = "█".repeat(completed) + "░".repeat(total - completed);
 		lines.push(`Phases: [${progressBar}] ${completed + 1}/${total}`);
-	}
-	
-	// Discovery progress if in discovery
-	if (state.discovery && state.stage === "discovery" && !state.discovery.completed) {
-		lines.push(`Discovery: Round ${state.discovery.currentRound}/${state.discovery.maxRounds}`);
 	}
 	
 	// Current action
