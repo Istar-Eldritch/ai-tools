@@ -276,16 +276,6 @@ export type SpecStage =
 	| "cancelled";
 
 /**
- * Represents a single Q&A exchange in discovery
- */
-export interface DiscoveryQA {
-	round: number;
-	questions: string;   // Formatted questions from agent
-	answers: string;     // User's responses
-	timestamp: string;   // ISO timestamp
-}
-
-/**
  * A single exchange in conversational discovery (user message + assistant response)
  */
 export interface ConversationalExchange {
@@ -300,28 +290,18 @@ export interface ConversationalExchange {
 export interface DiscoveryState {
 	/** Whether discovery was skipped via --quick flag */
 	skipped: boolean;
-	/** Current question round (1-indexed) */
-	currentRound: number;
-	/** Maximum rounds allowed (from config) */
-	maxRounds: number;
-	/** All Q&A exchanges (legacy subprocess mode) */
-	qaHistory: DiscoveryQA[];
-	/** Accumulated discovery summary (synthesized from Q&A) */
+	/** Accumulated discovery summary (synthesized from conversation) */
 	discoverySummary: string;
 	/** Whether discovery is complete (user chose to proceed) */
 	completed: boolean;
-	/** Conversational discovery exchanges (new interactive mode) */
+	/** Conversational discovery exchanges */
 	conversationHistory?: ConversationalExchange[];
-	/** Whether using conversational mode (vs legacy subprocess mode) */
-	conversational?: boolean;
 }
 
 /**
  * Drafting stage state (for conversational spec drafting)
  */
 export interface DraftingState {
-	/** Whether using conversational mode (vs legacy subprocess mode) */
-	conversational: boolean;
 	/** Conversation history for drafting phase */
 	conversationHistory: ConversationalExchange[];
 	/** Whether drafting is complete (user typed /spec-draft-done) */
@@ -352,6 +332,17 @@ export interface ScopingState {
 	conversationHistory: ConversationalExchange[];
 	/** Recommended level parsed from agent output */
 	recommendedLevel?: HierarchyLevel;
+}
+
+/**
+ * Common interface for any pipeline state that supports conversational modes.
+ * Both SpecState and HierarchyState (RoadmapState, EpicState) implement this.
+ */
+export interface ConversationalPipelineState {
+	id: string;
+	description: string;
+	discovery?: DiscoveryState;
+	drafting?: DraftingState;
 }
 
 /**

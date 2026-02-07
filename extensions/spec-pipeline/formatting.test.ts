@@ -277,16 +277,14 @@ describe("formatSpecState", () => {
 		expect(() => formatSpecState(state)).not.toThrow();
 	});
 
-	it("handles state with discovery but undefined qaHistory", () => {
+	it("handles state with discovery but undefined conversationHistory", () => {
 		const state = createMinimalSpecState({
 			stage: "discovery",
 			discovery: {
 				skipped: false,
-				currentRound: 1,
-				maxRounds: 5,
-				qaHistory: undefined as any,
 				discoverySummary: "",
 				completed: false,
+				conversationHistory: undefined as any,
 			},
 		});
 		

@@ -29,7 +29,6 @@ import {
 	saveRoadmapState,
 	saveEpicState,
 	extractChildItems,
-	generateDiscoverySummary,
 } from "./state.ts";
 import { createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
@@ -207,178 +206,12 @@ export async function runHierarchyPipeline(
 	}
 
 	// ============================================
-	// DISCOVERY PHASE
+	// DISCOVERY → DRAFTING TRANSITION
 	// ============================================
-	if (state.stage === "discovery" && state.discovery?.conversational && state.discovery.completed) {
-		ctx.ui.notify(`✅ Discovery completed via conversation (${state.discovery.conversationHistory?.length ?? 0} exchanges)`, "success");
-		state.stage = "drafting";
-		save();
-	}
-
-	if (state.stage === "discovery" && state.discovery && !state.discovery.completed) {
-		ctx.ui.notify(formatStepBanner(
-			`${levelLabel.toUpperCase()} DISCOVERY`,
-			"Gathering requirements through interactive Q&A",
-			"🔍"
-		), "info");
-
-		updateHierarchyWidget(ctx, state, "Starting discovery...");
-
-		if (!state.discovery.qaHistory) {
-			state.discovery.qaHistory = [];
-		}
-
-		while (
-			state.discovery.currentRound < state.discovery.maxRounds &&
-			!state.discovery.completed
-		) {
-			state.discovery.currentRound++;
-			save();
-
-			updateHierarchyWidget(ctx, state, `Generating questions for round ${state.discovery.currentRound}`);
-
-			ctx.ui.notify(formatStepBanner(
-				`Discovery Round ${state.discovery.currentRound}/${state.discovery.maxRounds}`,
-				"Agent is analyzing requirements and generating questions",
-				"📍"
-			), "info");
-
-			let discoveryContext = `${levelLabel} request: ${state.description}\n\n`;
-
-			if (parentContext) {
-				discoveryContext += `Parent context:\n${parentContext}\n\n`;
-			}
-
-			if (state.discovery.qaHistory.length > 0) {
-				discoveryContext += "Previous discovery exchanges:\n\n";
-				for (const qa of state.discovery.qaHistory) {
-					discoveryContext += `Round ${qa.round}:\nQuestions:\n${qa.questions}\nAnswers:\n${qa.answers}\n\n`;
-				}
-			}
-
-			const discoveryConfig = projectConfig.models.discoveryAgent;
-			ctx.ui.notify(`🔍 ${discoveryConfig.model} generating questions...`, "info");
-
-			const questionTask = state.discovery.currentRound === 1
-				? `You are starting a discovery session for this ${level}:
-
-${state.description}
-${parentContext ? `\nParent context:\n${parentContext}\n` : ""}
-Explore the codebase first to understand existing patterns and architecture.
-Then generate ${projectConfig.discovery.questionsPerRound} clarifying questions (Round 1).
-
-Focus on understanding:
-- The scope of the initiative
-- Key deliverables and their boundaries
-- Dependencies between workstreams
-- Critical constraints or limitations`
-				: `Continue the discovery session for this ${level}:
-
-${discoveryContext}
-
-Generate ${projectConfig.discovery.questionsPerRound} follow-up questions (Round ${state.discovery.currentRound}).
-
-Focus on:
-- Gaps still remaining
-- Decomposition boundaries
-- Integration and dependency details
-- Non-functional requirements`;
-
-			const questionStartTime = new Date();
-			const questionResult = await runAgentWithConfig(
-				discoveryConfig,
-				questionTask,
-				cwd,
-				SYSTEM_PROMPTS.discoveryAgent,
-				undefined,
-				undefined,
-				"discoveryAgent"
-			);
-			recordAgentCall(metrics, "discoveryAgent", discoveryConfig.model, discoveryConfig.thinking, questionStartTime, questionResult.exitCode);
-
-			if (questionResult.exitCode !== 0) {
-				await handleAgentError(
-					cwd, state, questionResult,
-					discoveryConfig.model, "discoveryAgent", questionTask,
-					undefined, undefined,
-					ctx.ui.notify.bind(ctx.ui), save
-				);
-				clearPipelineWidget(ctx);
-				return;
-			}
-
-			const questions = questionResult.output;
-
-			updateHierarchyWidget(ctx, state, "Waiting for your answers...");
-
-			ctx.ui.notify(formatStepBanner(
-				`Questions for Round ${state.discovery.currentRound}`,
-				"Please answer in the editor that will open",
-				"❓"
-			), "info");
-
-			const displayQuestions = questions.length > 3000
-				? questions.slice(0, 3000) + "\n\n[... truncated for display ...]"
-				: questions;
-			ctx.ui.notify(displayQuestions, "info");
-
-			const answerChoices = [
-				"Answer questions",
-				`Proceed to ${level} drafting (enough context)`,
-				"Cancel pipeline",
-			];
-			const answerChoiceLabel = await ctx.ui.select(
-				`Round ${state.discovery.currentRound}: How would you like to proceed?`,
-				answerChoices
-			);
-
-			const answerChoice = answerChoiceLabel === answerChoices[0] ? "answer"
-				: answerChoiceLabel === answerChoices[1] ? "proceed"
-				: "cancel";
-
-			if (answerChoice === "cancel") {
-				state.stage = "cancelled";
-				save();
-				clearPipelineWidget(ctx);
-				ctx.ui.notify("Pipeline cancelled", "info");
-				return;
-			}
-
-			if (answerChoice === "proceed") {
-				state.discovery.completed = true;
-				save();
-				break;
-			}
-
-			const answers = await ctx.ui.editor(
-				`Answers for Round ${state.discovery.currentRound}`,
-				`# Round ${state.discovery.currentRound} Answers\n\nPlease answer the questions below:\n\n${questions}\n\n---\n\n# Your Answers:\n\n`
-			);
-
-			if (answers === undefined) {
-				state.stage = "cancelled";
-				save();
-				clearPipelineWidget(ctx);
-				ctx.ui.notify("Pipeline cancelled", "info");
-				return;
-			}
-
-			state.discovery.qaHistory.push({
-				round: state.discovery.currentRound,
-				questions,
-				answers: answers.trim(),
-				timestamp: new Date().toISOString(),
-			});
-			save();
-
-			ctx.ui.notify(`✅ Round ${state.discovery.currentRound} recorded`, "success");
-		}
-
-		if (state.discovery.qaHistory.length > 0) {
-			state.discovery.discoverySummary = generateDiscoverySummary(state.discovery.qaHistory);
-		}
-
-		state.discovery.completed = true;
+	// Discovery is handled conversationally in index.ts.
+	// By the time runHierarchyPipeline is called, discovery is either completed or skipped.
+	if (state.stage === "discovery" && state.discovery?.completed) {
+		ctx.ui.notify(`✅ Discovery completed (${state.discovery.conversationHistory?.length ?? 0} exchanges)`, "success");
 		state.stage = "drafting";
 		save();
 

@@ -67,7 +67,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 // Import types
-import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState, ScopingState } from "./types.ts";
+import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState, ScopingState, ConversationalPipelineState } from "./types.ts";
 
 // Import config
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
@@ -196,11 +196,23 @@ export default function (pi: ExtensionAPI) {
 	// UNIFIED CONVERSATIONAL MODE STATE
 	// ============================================
 
-	/** Current pipeline mode: idle, discovery, or drafting */
+	/** Current pipeline mode: idle, scoping, discovery, or drafting */
 	let pipelineMode: PipelineMode = "idle";
 
-	/** The spec state for the active conversational session */
-	let activeSpecState: SpecState | null = null;
+	/** The pipeline state for the active conversational session (spec or hierarchy) */
+	let activePipelineState: ConversationalPipelineState | null = null;
+
+	/** Which kind of pipeline is active: "spec" or "hierarchy" */
+	let activePipelineKind: "spec" | "hierarchy" | null = null;
+
+	/** Hierarchy level when activePipelineKind === "hierarchy" */
+	let activeHierarchyLevel: HierarchyLevel | null = null;
+
+	/** Parent context string for hierarchy pipelines (roadmap context, scoping context, etc.) */
+	let activeParentContext: string | undefined = undefined;
+
+	/** Function to persist the active pipeline state */
+	let activeStateSaveFn: (() => void) | null = null;
 
 	/** The cwd for the active conversational session */
 	let activeCwd: string = "";
@@ -217,34 +229,92 @@ export default function (pi: ExtensionAPI) {
 	/** Number of conversation exchanges in current mode */
 	let exchangeCount = 0;
 
+	/** Helper to get the active state as SpecState (only valid when activePipelineKind === "spec") */
+	function getActiveSpecState(): SpecState | null {
+		return activePipelineKind === "spec" ? activePipelineState as SpecState : null;
+	}
+
+	/** Helper to get the active state as HierarchyState (only valid when activePipelineKind === "hierarchy") */
+	function getActiveHierarchyState(): HierarchyState | null {
+		return activePipelineKind === "hierarchy" ? activePipelineState as HierarchyState : null;
+	}
+
 	/**
-	 * Enter a conversational pipeline mode (discovery, drafting, or scoping)
+	 * Enter scoping mode (no pipeline state, just ephemeral scoping)
 	 */
-	function enterMode(mode: "discovery" | "drafting", state: SpecState, cwd: string, projectConfig: ProjectConfig): void;
-	function enterMode(mode: "scoping", state: null, cwd: string, projectConfig: ProjectConfig, scopingState: ScopingState): void;
-	function enterMode(mode: "discovery" | "drafting" | "scoping", state: SpecState | null, cwd: string, projectConfig: ProjectConfig, scopingState?: ScopingState): void {
-		pipelineMode = mode;
-		activeSpecState = state;
+	function enterScopingMode(cwd: string, projectConfig: ProjectConfig, scopingState: ScopingState): void {
+		pipelineMode = "scoping";
+		activePipelineState = null;
+		activePipelineKind = null;
+		activeHierarchyLevel = null;
+		activeParentContext = undefined;
+		activeStateSaveFn = null;
 		activeCwd = cwd;
 		activeProjectConfig = projectConfig;
+		activeScopingState = scopingState;
 		lastUserMessage = "";
-		if (mode === "scoping" && scopingState) {
-			activeScopingState = scopingState;
-			exchangeCount = scopingState.conversationHistory.length;
-		} else if (mode === "discovery") {
-			exchangeCount = state?.discovery?.conversationHistory?.length ?? 0;
-		} else {
-			exchangeCount = state?.drafting?.conversationHistory?.length ?? 0;
-		}
+		exchangeCount = scopingState.conversationHistory.length;
+	}
+
+	/**
+	 * Enter discovery or drafting mode for a spec pipeline
+	 */
+	function enterSpecMode(mode: "discovery" | "drafting", state: SpecState, cwd: string, projectConfig: ProjectConfig): void {
+		pipelineMode = mode;
+		activePipelineState = state;
+		activePipelineKind = "spec";
+		activeHierarchyLevel = null;
+		activeParentContext = undefined;
+		activeStateSaveFn = () => saveSpecState(cwd, state);
+		activeCwd = cwd;
+		activeProjectConfig = projectConfig;
+		activeScopingState = null;
+		lastUserMessage = "";
+		exchangeCount = mode === "discovery"
+			? state.discovery?.conversationHistory?.length ?? 0
+			: state.drafting?.conversationHistory?.length ?? 0;
+	}
+
+	/**
+	 * Enter discovery or drafting mode for a hierarchy pipeline (roadmap/epic)
+	 */
+	function enterHierarchyMode(
+		mode: "discovery" | "drafting",
+		state: HierarchyState,
+		level: HierarchyLevel,
+		cwd: string,
+		projectConfig: ProjectConfig,
+		parentContext?: string
+	): void {
+		pipelineMode = mode;
+		activePipelineState = state;
+		activePipelineKind = "hierarchy";
+		activeHierarchyLevel = level;
+		activeParentContext = parentContext;
+		activeStateSaveFn = () => {
+			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+		};
+		activeCwd = cwd;
+		activeProjectConfig = projectConfig;
+		activeScopingState = null;
+		lastUserMessage = "";
+		exchangeCount = mode === "discovery"
+			? state.discovery?.conversationHistory?.length ?? 0
+			: state.drafting?.conversationHistory?.length ?? 0;
 	}
 
 	/**
 	 * Exit any conversational mode and return to idle
 	 */
-	function exitMode(): { exchangeCount: number; state: SpecState | null; cwd: string; projectConfig: ProjectConfig | null; scopingState: ScopingState | null } {
-		const result = { exchangeCount, state: activeSpecState, cwd: activeCwd, projectConfig: activeProjectConfig, scopingState: activeScopingState };
+	function exitMode(): { exchangeCount: number } {
+		const result = { exchangeCount };
 		pipelineMode = "idle";
-		activeSpecState = null;
+		activePipelineState = null;
+		activePipelineKind = null;
+		activeHierarchyLevel = null;
+		activeParentContext = undefined;
+		activeStateSaveFn = null;
 		activeScopingState = null;
 		activeCwd = "";
 		activeProjectConfig = null;
@@ -434,6 +504,62 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 	}
 
 	/**
+	 * Build the discovery system prompt injection for hierarchy pipelines (roadmap/epic).
+	 * Similar to spec discovery but adapted for hierarchy-level exploration.
+	 */
+	function buildHierarchyDiscoveryPromptInjection(
+		state: HierarchyState,
+		level: HierarchyLevel,
+		projectConfig: ProjectConfig,
+		parentContext?: string
+	): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+		const discoveryPrompt = SYSTEM_PROMPTS.discoveryAgent;
+
+		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+
+		let conversationContext = "";
+		if (state.discovery?.conversationHistory && state.discovery.conversationHistory.length > 0) {
+			conversationContext = "\n\n## Previous Discovery Exchanges\n\n";
+			for (const exchange of state.discovery.conversationHistory) {
+				conversationContext += `**User**: ${exchange.userMessage}\n\n`;
+				conversationContext += `**You**: ${exchange.assistantResponse}\n\n---\n\n`;
+			}
+		}
+
+		const parentSection = parentContext
+			? `\n\n## Parent Context\n\n${parentContext}\n`
+			: "";
+
+		return `
+${discoveryPrompt}
+
+## Active ${levelLabel} Discovery Session
+
+You are conducting a discovery session for this ${level}:
+
+${state.description}
+${parentSection}${conversationContext}
+
+## Instructions
+
+- Ask clarifying questions to understand the scope and requirements
+- You have access to the codebase via read, bash, grep, find, ls tools — USE THEM to explore the project
+- Reference specific files and patterns you find
+- Keep questions focused and actionable (${projectConfig.discovery.questionsPerRound} questions at a time)
+- Focus on understanding:
+  - The scope of the initiative and its boundaries
+  - Key deliverables and how they decompose
+  - Dependencies between workstreams
+  - Critical constraints or limitations
+- The user will answer naturally — adapt your follow-up questions based on their responses
+- When you feel you have enough context, tell the user they can type /discovery-done to proceed
+
+IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. Only ask questions and explore the codebase.
+`;
+	}
+
+	/**
 	 * Get the spec file size for widget display
 	 */
 	function getSpecFileInfo(cwd: string, specPath: string): string {
@@ -464,32 +590,43 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 			return;
 		}
 
-		if (!activeSpecState) return;
+		if (!activePipelineState) return;
+
+		const doneCmd = activePipelineKind === "spec" ? "/spec-done" : "/discovery-done";
+		const draftDoneCmd = activePipelineKind === "spec" ? "/spec-draft-done" : "/draft-done";
+		const kindLabel = activePipelineKind === "hierarchy" && activeHierarchyLevel
+			? activeHierarchyLevel.charAt(0).toUpperCase() + activeHierarchyLevel.slice(1)
+			: "Spec";
 
 		if (pipelineMode === "discovery") {
 			ctx.ui.setWidget("spec-pipeline-status", [
-				"🔍 Discovery Mode",
+				`🔍 ${kindLabel} Discovery Mode`,
 				"────────────────────────────────────",
 				`Exchanges: ${exchangeCount}`,
 				"",
 				"Chat naturally to refine requirements.",
-				"Type /spec-done when ready to draft spec.",
+				`Type ${doneCmd} when ready to proceed.`,
 			]);
 		} else if (pipelineMode === "drafting") {
-			const specInfo = getSpecFileInfo(activeCwd, activeSpecState.specPath);
-			const iteration = activeSpecState.specIteration + 1;
-			const lines = [
-				"📝 Drafting Mode",
-				"────────────────────────────────────",
-				`Spec file: ${specInfo}`,
-				`Iteration: ${iteration}`,
-				`Exchanges: ${exchangeCount}`,
-			];
-			if (activeSpecState.drafting?.lastReviewFeedback) {
-				lines.push("", "⚠️  Addressing review feedback");
+			const specState = getActiveSpecState();
+			if (specState) {
+				const specInfo = getSpecFileInfo(activeCwd, specState.specPath);
+				const iteration = specState.specIteration + 1;
+				const lines = [
+					"📝 Drafting Mode",
+					"────────────────────────────────────",
+					`Spec file: ${specInfo}`,
+					`Iteration: ${iteration}`,
+					`Exchanges: ${exchangeCount}`,
+				];
+				if (specState.drafting?.lastReviewFeedback) {
+					lines.push("", "⚠️  Addressing review feedback");
+				}
+				lines.push("", `Type ${draftDoneCmd} when ready for review.`);
+				ctx.ui.setWidget("spec-pipeline-status", lines);
+			} else {
+				// hierarchy drafting — handled by runHierarchyPipeline, not conversational
 			}
-			lines.push("", "Type /spec-draft-done when ready for review.");
-			ctx.ui.setWidget("spec-pipeline-status", lines);
 		}
 	}
 
@@ -497,19 +634,19 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 	 * End discovery mode and proceed to spec drafting mode
 	 */
 	async function endDiscoveryAndStartDrafting(ctx: any): Promise<void> {
-		if (pipelineMode !== "discovery" || !activeSpecState || !activeCwd || !activeProjectConfig) {
+		const specState = getActiveSpecState();
+		if (pipelineMode !== "discovery" || !specState || !activeCwd || !activeProjectConfig) {
 			ctx.ui.notify("No active discovery session.", "error");
 			return;
 		}
 
-		const state = activeSpecState;
+		const state = specState;
 		const cwd = activeCwd;
 		const projectConfig = activeProjectConfig;
 
 		// Build the discovery summary from conversation history
 		if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
 			state.discovery.discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
-			state.discovery.currentRound = state.discovery.conversationHistory.length;
 		}
 
 		state.discovery!.completed = true;
@@ -521,19 +658,16 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 			"✅"
 		), "success");
 
-		// Transition to drafting mode (reuse same active state variables — just switch mode)
-		pipelineMode = "drafting";
-		lastUserMessage = "";
-		exchangeCount = 0;
-
 		// Initialize drafting state
 		state.drafting = {
-			conversational: true,
 			conversationHistory: [],
 			completed: false,
 		};
 		state.stage = "spec_drafting";
 		saveSpecState(cwd, state);
+
+		// Transition to drafting mode
+		enterSpecMode("drafting", state, cwd, projectConfig);
 
 		// Update widget
 		updateModeWidget(ctx);
@@ -567,7 +701,6 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 		// Initialize drafting state if needed
 		if (!state.drafting) {
 			state.drafting = {
-				conversational: true,
 				conversationHistory: [],
 				completed: false,
 			};
@@ -577,7 +710,7 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 		state.stage = "spec_drafting";
 		saveSpecState(cwd, state);
 
-		enterMode("drafting", state, cwd, projectConfig);
+		enterSpecMode("drafting", state, cwd, projectConfig);
 		updateModeWidget(ctx);
 	}
 
@@ -585,12 +718,13 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 	 * Handle end of spec drafting: commit, run review, present options
 	 */
 	async function endDraftingAndReview(ctx: any): Promise<void> {
-		if (pipelineMode !== "drafting" || !activeSpecState || !activeCwd || !activeProjectConfig) {
+		const specState = getActiveSpecState();
+		if (pipelineMode !== "drafting" || !specState || !activeCwd || !activeProjectConfig) {
 			ctx.ui.notify("No active drafting session.", "error");
 			return;
 		}
 
-		const state = activeSpecState;
+		const state = specState;
 		const cwd = activeCwd;
 		const projectConfig = activeProjectConfig;
 		const fullSpecPath = path.join(cwd, state.specPath);
@@ -811,14 +945,23 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			injection = buildScopingPromptInjection(activeScopingState, activeProjectConfig);
 			customType = "spec-scoping-context";
 			contextLabel = `[SCOPING MODE ACTIVE - Assessing scope for: ${activeScopingState.description}]`;
-		} else if (pipelineMode === "discovery" && activeSpecState) {
-			injection = buildDiscoveryPromptInjection(activeSpecState, activeProjectConfig);
+		} else if (pipelineMode === "discovery" && activePipelineState) {
+			if (activePipelineKind === "spec") {
+				injection = buildDiscoveryPromptInjection(activePipelineState as SpecState, activeProjectConfig);
+			} else {
+				injection = buildHierarchyDiscoveryPromptInjection(
+					activePipelineState as HierarchyState,
+					activeHierarchyLevel!,
+					activeProjectConfig,
+					activeParentContext
+				);
+			}
 			customType = "spec-discovery-context";
-			contextLabel = `[DISCOVERY MODE ACTIVE - Exploring requirements for: ${activeSpecState.description}]`;
-		} else if (pipelineMode === "drafting" && activeSpecState) {
-			injection = buildDraftingPromptInjection(activeSpecState, activeProjectConfig);
+			contextLabel = `[DISCOVERY MODE ACTIVE - Exploring requirements for: ${activePipelineState.description}]`;
+		} else if (pipelineMode === "drafting" && activePipelineState && activePipelineKind === "spec") {
+			injection = buildDraftingPromptInjection(activePipelineState as SpecState, activeProjectConfig);
 			customType = "spec-drafting-context";
-			contextLabel = `[DRAFTING MODE ACTIVE - Creating spec for: ${activeSpecState.description}]`;
+			contextLabel = `[DRAFTING MODE ACTIVE - Creating spec for: ${activePipelineState.description}]`;
 		} else {
 			return undefined;
 		}
@@ -888,20 +1031,20 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				activeScopingState.conversationHistory.push(exchange);
 				exchangeCount = activeScopingState.conversationHistory.length;
 				// No need to persist — scoping state is ephemeral
-			} else if (pipelineMode === "discovery" && activeSpecState) {
-				if (!activeSpecState.discovery!.conversationHistory) {
-					activeSpecState.discovery!.conversationHistory = [];
+			} else if (pipelineMode === "discovery" && activePipelineState) {
+				if (!activePipelineState.discovery!.conversationHistory) {
+					activePipelineState.discovery!.conversationHistory = [];
 				}
-				activeSpecState.discovery!.conversationHistory.push(exchange);
-				exchangeCount = activeSpecState.discovery!.conversationHistory.length;
-				saveSpecState(activeCwd, activeSpecState);
-			} else if (pipelineMode === "drafting" && activeSpecState) {
-				if (!activeSpecState.drafting!.conversationHistory) {
-					activeSpecState.drafting!.conversationHistory = [];
+				activePipelineState.discovery!.conversationHistory.push(exchange);
+				exchangeCount = activePipelineState.discovery!.conversationHistory.length;
+				activeStateSaveFn?.();
+			} else if (pipelineMode === "drafting" && activePipelineState) {
+				if (!activePipelineState.drafting!.conversationHistory) {
+					activePipelineState.drafting!.conversationHistory = [];
 				}
-				activeSpecState.drafting!.conversationHistory.push(exchange);
-				exchangeCount = activeSpecState.drafting!.conversationHistory.length;
-				saveSpecState(activeCwd, activeSpecState);
+				activePipelineState.drafting!.conversationHistory.push(exchange);
+				exchangeCount = activePipelineState.drafting!.conversationHistory.length;
+				activeStateSaveFn?.();
 			}
 
 			updateModeWidget(ctx);
@@ -938,10 +1081,10 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 	// ============================================
 
 	pi.registerCommand("spec-done", {
-		description: "End discovery and proceed to spec drafting",
+		description: "End spec discovery and proceed to spec drafting",
 		handler: async (_args, ctx) => {
-			if (pipelineMode !== "discovery") {
-				ctx.ui.notify("No active discovery session. Use /spec to start one.", "error");
+			if (pipelineMode !== "discovery" || activePipelineKind !== "spec") {
+				ctx.ui.notify("No active spec discovery session. Use /spec to start one.", "error");
 				return;
 			}
 
@@ -966,6 +1109,61 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			}
 
 			await endDraftingAndReview(ctx);
+		},
+	});
+
+	pi.registerCommand("discovery-done", {
+		description: "End hierarchy discovery and proceed to drafting",
+		handler: async (_args, ctx) => {
+			if (pipelineMode !== "discovery" || activePipelineKind !== "hierarchy") {
+				ctx.ui.notify("No active hierarchy discovery session. Use /roadmap or /epic to start one.", "error");
+				return;
+			}
+
+			const state = getActiveHierarchyState();
+			if (!state || !activeCwd || !activeProjectConfig) {
+				ctx.ui.notify("No active hierarchy discovery session.", "error");
+				return;
+			}
+
+			if (exchangeCount === 0) {
+				const proceed = await ctx.ui.confirm(
+					"No Discovery Exchanges",
+					"No conversation exchanges recorded yet. Proceed anyway?"
+				);
+				if (!proceed) return;
+			}
+
+			// Build the discovery summary from conversation history
+			if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
+				state.discovery.discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+			}
+
+			state.discovery!.completed = true;
+			const discoveryExchanges = exchangeCount;
+
+			const level = activeHierarchyLevel!;
+			const cwd = activeCwd;
+			const projectConfig = activeProjectConfig;
+			const parentContext = activeParentContext;
+
+			// Save state before exiting mode
+			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+
+			// Exit discovery mode
+			exitMode();
+			clearPipelineWidget(ctx);
+
+			const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+			ctx.ui.notify(formatStepBanner(
+				"DISCOVERY COMPLETE",
+				`${discoveryExchanges} exchanges recorded. Proceeding to ${level} drafting...`,
+				"✅"
+			), "success");
+
+			// Continue with the hierarchy pipeline (which will pick up at drafting stage)
+			await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
 		},
 	});
 
@@ -1089,12 +1287,11 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 
 			if (shouldDiscover) {
 				// Initialize conversational discovery state
-				state.discovery!.conversational = true;
 				state.discovery!.conversationHistory = [];
 				saveSpecState(cwd, state);
 
 				// Enter discovery mode
-				enterMode("discovery", state, cwd, projectConfig);
+				enterSpecMode("discovery", state, cwd, projectConfig);
 
 				// Show discovery widget
 				updateModeWidget(ctx);
@@ -1295,8 +1492,8 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			}
 
 			// If resuming in conversational discovery mode, re-enter discovery mode
-			if (state.stage === "discovery" && state.discovery?.conversational && !state.discovery.completed) {
-				enterMode("discovery", state, cwd, projectConfig);
+			if (state.stage === "discovery" && !state.discovery?.completed) {
+				enterSpecMode("discovery", state, cwd, projectConfig);
 				updateModeWidget(ctx);
 
 				ctx.ui.notify(formatStepBanner(
@@ -1312,8 +1509,8 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			}
 
 			// If resuming in conversational drafting mode, re-enter drafting mode
-			if (state.stage === "spec_drafting" && state.drafting?.conversational && !state.drafting.completed) {
-				enterMode("drafting", state, cwd, projectConfig);
+			if (state.stage === "spec_drafting" && state.drafting && !state.drafting.completed) {
+				enterSpecMode("drafting", state, cwd, projectConfig);
 				updateModeWidget(ctx);
 
 				ctx.ui.notify(formatStepBanner(
@@ -1463,7 +1660,7 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				saveSpecState(cwd, state);
 				
 				// Clean up conversational mode if active
-				if (pipelineMode !== "idle" && activeSpecState?.id === state.id) {
+				if (pipelineMode !== "idle" && activePipelineState?.id === state.id) {
 					exitMode();
 				}
 				
@@ -2171,7 +2368,39 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			parentContext = (parentContext ? parentContext + "\n\n" : "") + scopingSummary;
 		}
 
-		await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
+		// If discovery is enabled (not --quick), enter conversational discovery mode
+		const shouldDiscover = !isQuick && projectConfig.discovery.enabled && state.stage === "discovery";
+
+		if (shouldDiscover) {
+			// Initialize conversational discovery state
+			state.discovery!.conversationHistory = [];
+			if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+
+			// Enter hierarchy discovery mode
+			enterHierarchyMode("discovery", state, level, cwd, projectConfig, parentContext);
+
+			// Show discovery widget
+			updateModeWidget(ctx);
+
+			ctx.ui.notify(formatStepBanner(
+				`${levelLabel.toUpperCase()} DISCOVERY MODE`,
+				"Chat naturally to explore requirements. The LLM will ask clarifying questions.",
+				"🔍"
+			), "info");
+			ctx.ui.notify("Just type your answers below. The LLM has access to your codebase and will ask questions to understand the scope.", "info");
+			ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed.", "info");
+
+			// Send the initial discovery message
+			const parentNote = parentContext ? "\n\nRelevant parent context has been provided." : "";
+			pi.sendUserMessage(
+				`I want to create a ${level} for the following: ${description}${parentNote}\n\n` +
+				`Please explore the codebase and ask me clarifying questions to understand the requirements and scope better.`
+			);
+		} else {
+			// --quick mode or discovery disabled: go straight to drafting via runHierarchyPipeline
+			await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
+		}
 	}
 
 	/**
@@ -2288,8 +2517,25 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			ctx.ui.notify(configResult.error, "error");
 			return;
 		}
+		const projectConfig = configResult.config;
 
-		await runHierarchyPipeline(state, cwd, configResult.config, ctx);
+		// If resuming in conversational discovery mode, re-enter discovery mode
+		if (state.stage === "discovery" && state.discovery && !state.discovery.completed) {
+			enterHierarchyMode("discovery", state, level, cwd, projectConfig);
+			updateModeWidget(ctx);
+
+			ctx.ui.notify(formatStepBanner(
+				`${levelLabel.toUpperCase()} DISCOVERY MODE RESUMED`,
+				`${exchangeCount} previous exchanges. Continue chatting to refine requirements.`,
+				"🔍"
+			), "info");
+			ctx.ui.notify("Type /discovery-done when ready to proceed.", "info");
+
+			pi.sendUserMessage(`I'm resuming the discovery session for this ${level}: ${state.description}\n\nPlease review what we've discussed so far and continue asking clarifying questions.`);
+			return;
+		}
+
+		await runHierarchyPipeline(state, cwd, projectConfig, ctx);
 	}
 
 	// ---- /plan command ----
@@ -2360,7 +2606,7 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			};
 
 			// Enter scoping mode
-			enterMode("scoping", null, cwd, projectConfig, scopingState);
+			enterScopingMode(cwd, projectConfig, scopingState);
 
 			// Show scoping widget
 			updateModeWidget(ctx);

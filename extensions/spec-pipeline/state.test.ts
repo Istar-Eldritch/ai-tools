@@ -3,7 +3,6 @@ import {
 	generatePipelineId,
 	generateSpecTimestamp,
 	generateTimestamp,
-	generateDiscoverySummary,
 	createInitialDiscoveryState,
 	createInitialSpecState,
 	createInitialImplState,
@@ -76,91 +75,26 @@ describe("generateSpecTimestamp", () => {
 });
 
 describe("createInitialDiscoveryState", () => {
-	it("creates state with given maxRounds", () => {
-		const state = createInitialDiscoveryState(10);
-		expect(state.maxRounds).toBe(10);
-	});
-
 	it("creates non-skipped state by default", () => {
-		const state = createInitialDiscoveryState(5);
+		const state = createInitialDiscoveryState();
 		expect(state.skipped).toBe(false);
 		expect(state.completed).toBe(false);
 	});
 
 	it("creates skipped state when requested", () => {
-		const state = createInitialDiscoveryState(5, true);
+		const state = createInitialDiscoveryState(true);
 		expect(state.skipped).toBe(true);
 		expect(state.completed).toBe(true);
 	});
 
-	it("initializes with empty qaHistory", () => {
-		const state = createInitialDiscoveryState(5);
-		expect(state.qaHistory).toEqual([]);
-	});
-
-	it("initializes currentRound to 0", () => {
-		const state = createInitialDiscoveryState(5);
-		expect(state.currentRound).toBe(0);
+	it("initializes with empty conversationHistory", () => {
+		const state = createInitialDiscoveryState();
+		expect(state.conversationHistory).toEqual([]);
 	});
 
 	it("initializes with empty discoverySummary", () => {
-		const state = createInitialDiscoveryState(5);
+		const state = createInitialDiscoveryState();
 		expect(state.discoverySummary).toBe("");
-	});
-});
-
-describe("generateDiscoverySummary", () => {
-	it("returns empty string for empty qaHistory", () => {
-		expect(generateDiscoverySummary([])).toBe("");
-	});
-
-	it("includes discovery summary header", () => {
-		const qaHistory = [
-			{
-				round: 1,
-				questions: "What is the goal?",
-				answers: "Build a CLI tool",
-				timestamp: "2026-02-01T12:00:00Z",
-			},
-		];
-		const summary = generateDiscoverySummary(qaHistory);
-		expect(summary).toContain("## Discovery Summary");
-	});
-
-	it("includes round headers", () => {
-		const qaHistory = [
-			{
-				round: 1,
-				questions: "Q1",
-				answers: "A1",
-				timestamp: "2026-02-01T12:00:00Z",
-			},
-			{
-				round: 2,
-				questions: "Q2",
-				answers: "A2",
-				timestamp: "2026-02-01T12:05:00Z",
-			},
-		];
-		const summary = generateDiscoverySummary(qaHistory);
-		expect(summary).toContain("### Round 1");
-		expect(summary).toContain("### Round 2");
-	});
-
-	it("includes questions and answers", () => {
-		const qaHistory = [
-			{
-				round: 1,
-				questions: "What language?",
-				answers: "TypeScript",
-				timestamp: "2026-02-01T12:00:00Z",
-			},
-		];
-		const summary = generateDiscoverySummary(qaHistory);
-		expect(summary).toContain("What language?");
-		expect(summary).toContain("TypeScript");
-		expect(summary).toContain("Questions Asked");
-		expect(summary).toContain("User Responses");
 	});
 });
 

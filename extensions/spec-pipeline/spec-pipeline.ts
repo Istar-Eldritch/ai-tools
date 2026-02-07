@@ -1,14 +1,15 @@
 /**
  * Spec creation pipeline execution logic
  * 
- * Handles: Discovery → Spec Drafting → Spec Review → User Approval → Commit
+ * Handles: Spec Drafting → Spec Review → User Approval → Commit
+ * 
+ * Note: Discovery is handled conversationally in index.ts before this is called.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
 	SpecState,
-	DiscoveryQA,
 	ProjectConfig,
 	PipelineUIContext,
 	SpecMetrics,
@@ -16,13 +17,12 @@ import type {
 	RoleName,
 } from "./types.ts";
 import { MAX_SPEC_ITERATIONS } from "./types.ts";
-import { saveSpecState, generateDiscoverySummary } from "./state.ts";
+import { saveSpecState } from "./state.ts";
 import { createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 import {
 	formatStepBanner,
 	formatAgentSummary,
-	formatSpecState,
 	updateSpecWidget,
 	clearPipelineWidget,
 	formatDivider,
@@ -108,254 +108,14 @@ export async function runSpecPipeline(
 	}
 
 	// ============================================
-	// DISCOVERY PHASE (if not skipped)
+	// DISCOVERY → SPEC DRAFTING TRANSITION
 	// ============================================
-	// Skip discovery if it was handled via conversational mode (already completed before runSpecPipeline is called)
-	if (state.stage === "discovery" && state.discovery?.conversational && state.discovery.completed) {
-		ctx.ui.notify(`✅ Discovery completed via conversation (${state.discovery.conversationHistory?.length ?? 0} exchanges)`, "success");
+	// Discovery is handled conversationally in index.ts.
+	// By the time runSpecPipeline is called, discovery is either completed or skipped.
+	if (state.stage === "discovery" && state.discovery?.completed) {
+		ctx.ui.notify(`✅ Discovery completed (${state.discovery.conversationHistory?.length ?? 0} exchanges)`, "success");
 		state.stage = "spec_drafting";
 		save();
-	}
-
-	if (state.stage === "discovery" && state.discovery && !state.discovery.completed) {
-		ctx.ui.notify(formatStepBanner(
-			"DISCOVERY PHASE",
-			"Gathering requirements through interactive Q&A",
-			"🔍"
-		), "info");
-		
-		if (state.discovery.currentRound > 0 && state.discovery.qaHistory.length > 0) {
-			ctx.ui.notify(`🔄 Resuming discovery from round ${state.discovery.currentRound}`, "info");
-			ctx.ui.notify(`Previous exchanges: ${state.discovery.qaHistory.length}`, "info");
-		}
-		ctx.ui.notify(`Maximum ${state.discovery.maxRounds} question rounds (you can proceed early)`, "info");
-		
-		updateSpecWidget(ctx, state, "Starting discovery...");
-
-		if (!state.discovery.qaHistory) {
-			state.discovery.qaHistory = [];
-		}
-
-		while (
-			state.discovery.currentRound < state.discovery.maxRounds &&
-			!state.discovery.completed
-		) {
-			state.discovery.currentRound++;
-			save();
-
-			updateSpecWidget(ctx, state, `Generating questions for round ${state.discovery.currentRound}`);
-			
-			ctx.ui.notify(formatStepBanner(
-				`Discovery Round ${state.discovery.currentRound}/${state.discovery.maxRounds}`,
-				"Agent is analyzing requirements and generating questions",
-				"📍"
-			), "info");
-
-			let discoveryContext = `Feature request: ${state.description}\n\n`;
-			
-			if (state.discovery.qaHistory.length > 0) {
-				discoveryContext += "Previous discovery exchanges:\n\n";
-				for (const qa of state.discovery.qaHistory) {
-					discoveryContext += `Round ${qa.round}:\n`;
-					discoveryContext += `Questions:\n${qa.questions}\n`;
-					discoveryContext += `Answers:\n${qa.answers}\n\n`;
-				}
-			}
-
-			const discoveryConfig = projectConfig.models.discoveryAgent;
-			ctx.ui.notify(`🔍 ${discoveryConfig.model} generating questions...`, "info");
-			
-			const questionTask = state.discovery.currentRound === 1
-				? `You are starting a discovery session for this feature:
-
-${state.description}
-
-Explore the codebase first to understand existing patterns and architecture.
-Then generate ${projectConfig.discovery.questionsPerRound} clarifying questions (Round 1).
-
-Focus on understanding:
-- Core functionality requirements
-- Key user workflows
-- Critical constraints or limitations`
-				: `Continue the discovery session for this feature:
-
-${discoveryContext}
-
-Based on the previous exchanges, generate ${projectConfig.discovery.questionsPerRound} follow-up questions (Round ${state.discovery.currentRound}).
-
-Focus on:
-- Gaps still remaining
-- Edge cases not yet covered
-- Integration details
-- Non-functional requirements`;
-
-			const questionStartTime = new Date();
-			const questionResult = await runAgentWithConfig(
-				discoveryConfig,
-				questionTask,
-				cwd,
-				SYSTEM_PROMPTS.discoveryAgent,
-				undefined,
-				undefined,
-				"discoveryAgent"
-			);
-			recordAgentCall(metrics, "discoveryAgent", discoveryConfig.model, discoveryConfig.thinking, questionStartTime, questionResult.exitCode);
-
-			if (questionResult.exitCode !== 0) {
-				await handleAgentError(
-					cwd, state, questionResult,
-					discoveryConfig.model, "discoveryAgent", questionTask,
-					undefined, undefined,
-					ctx.ui.notify.bind(ctx.ui), save
-				);
-				clearPipelineWidget(ctx);
-				return;
-			}
-
-			const questions = questionResult.output;
-			
-			updateSpecWidget(ctx, state, "Waiting for your answers...");
-			
-			ctx.ui.notify(formatStepBanner(
-				`Questions for Round ${state.discovery.currentRound}`,
-				"Please answer in the editor that will open",
-				"❓"
-			), "info");
-
-			const displayQuestions = questions.length > 3000
-				? questions.slice(0, 3000) + "\n\n[... truncated for display ...]"
-				: questions;
-			ctx.ui.notify(displayQuestions, "info");
-			
-			const answerChoices = [
-				"Answer questions",
-				"Proceed to spec drafting (enough context)",
-				"Cancel pipeline",
-			];
-			const answerChoiceLabel = await ctx.ui.select(
-				`Round ${state.discovery.currentRound}: How would you like to proceed?`,
-				answerChoices
-			);
-			
-			const answerChoice = answerChoiceLabel === answerChoices[0] ? "answer"
-				: answerChoiceLabel === answerChoices[1] ? "proceed"
-				: "cancel";
-
-			if (answerChoice === "cancel") {
-				state.stage = "cancelled";
-				save();
-				clearPipelineWidget(ctx);
-				ctx.ui.notify("Pipeline cancelled", "info");
-				return;
-			}
-
-			if (answerChoice === "proceed") {
-				state.discovery.completed = true;
-				save();
-				break;
-			}
-
-			const answers = await ctx.ui.editor(
-				`Answers for Round ${state.discovery.currentRound}`,
-				`# Round ${state.discovery.currentRound} Answers\n\nPlease answer the questions below:\n\n${questions}\n\n---\n\n# Your Answers:\n\n`
-			);
-
-			if (answers === undefined) {
-				state.stage = "cancelled";
-				save();
-				clearPipelineWidget(ctx);
-				ctx.ui.notify("Pipeline cancelled", "info");
-				return;
-			}
-
-			const qaEntry: DiscoveryQA = {
-				round: state.discovery.currentRound,
-				questions,
-				answers: answers.trim(),
-				timestamp: new Date().toISOString(),
-			};
-			state.discovery.qaHistory.push(qaEntry);
-			save();
-
-			ctx.ui.notify(`✅ Round ${state.discovery.currentRound} recorded`, "success");
-
-			if (state.discovery.currentRound >= state.discovery.maxRounds) {
-				ctx.ui.notify(`\nMaximum rounds (${state.discovery.maxRounds}) reached.`, "info");
-				
-				const continueMore = await ctx.ui.confirm(
-					"Continue Discovery?",
-					"You've reached the maximum rounds. Would you like to extend by 2 more rounds?"
-				);
-				
-				if (continueMore) {
-					state.discovery.maxRounds += 2;
-					save();
-					ctx.ui.notify("Extended discovery by 2 rounds", "info");
-				} else {
-					state.discovery.completed = true;
-					save();
-				}
-			}
-		}
-
-		if (state.discovery.qaHistory.length > 0) {
-			state.discovery.discoverySummary = generateDiscoverySummary(state.discovery.qaHistory);
-			
-			ctx.ui.notify("\n📋 Discovery Summary Preview:", "info");
-			ctx.ui.notify("─────────────────────────────────────────", "info");
-			
-			const discoverySummary = state.discovery.discoverySummary || "";
-			const summaryPreview = discoverySummary.length > 2000
-				? discoverySummary.slice(0, 2000) + "\n\n[... truncated for preview ...]"
-				: discoverySummary;
-			
-			ctx.ui.notify(summaryPreview, "info");
-			ctx.ui.notify("─────────────────────────────────────────", "info");
-			
-			const proceedToSpec = await ctx.ui.confirm(
-				"Proceed to Spec Drafting?",
-				`Discovery gathered ${state.discovery.qaHistory.length} Q&A exchanges.\n\nProceed to spec drafting with this context?`
-			);
-			
-			if (!proceedToSpec) {
-				ctx.ui.notify("Options: Add additional context, or leave empty to cancel.", "info");
-				
-				const additionalContext = await ctx.ui.editor(
-					"Add any additional context or requirements (or leave empty to cancel)",
-					""
-				);
-				
-				if (additionalContext === undefined || additionalContext.trim() === "") {
-					state.stage = "cancelled";
-					save();
-					clearPipelineWidget(ctx);
-					ctx.ui.notify("Pipeline cancelled", "info");
-					return;
-				}
-				
-				const additionalQA: DiscoveryQA = {
-					round: state.discovery.currentRound + 1,
-					questions: "User provided additional context:",
-					answers: additionalContext,
-					timestamp: new Date().toISOString(),
-				};
-				state.discovery.qaHistory.push(additionalQA);
-				state.discovery.discoverySummary = generateDiscoverySummary(state.discovery.qaHistory);
-				save();
-				
-				ctx.ui.notify("Additional context added", "success");
-			}
-			
-			ctx.ui.notify(`\n✅ Discovery complete - ${state.discovery.qaHistory.length} Q&A exchanges recorded`, "success");
-		} else {
-			ctx.ui.notify("\n✅ Discovery complete (no Q&A recorded)", "success");
-		}
-
-		state.discovery.completed = true;
-		state.stage = "spec_drafting";
-		save();
-		
-		updateSpecWidget(ctx, state, "Moving to spec drafting...");
 	}
 
 	// ============================================

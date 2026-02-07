@@ -354,21 +354,16 @@ export function formatSpecState(state: SpecState): string {
 	
 	// Discovery progress section
 	if (state.discovery) {
-		const qaHistory = state.discovery.qaHistory || [];
+		const exchanges = state.discovery.conversationHistory || [];
 		lines.push("");
 		lines.push("🔍 Discovery");
 		if (state.discovery.skipped) {
 			lines.push("  Skipped (--quick mode)");
 		} else if (state.stage === "discovery") {
-			lines.push(formatKeyValue("  Round", `${state.discovery.currentRound}/${state.discovery.maxRounds}`));
-			lines.push(formatKeyValue("  Q&A Exchanges", String(qaHistory.length)));
-			if (qaHistory.length > 0) {
-				const lastExchange = qaHistory[qaHistory.length - 1];
-				const lastTime = new Date(lastExchange.timestamp).toISOString().slice(11, 19);
-				lines.push(formatKeyValue("  Last Exchange", `Round ${lastExchange.round} at ${lastTime} UTC`));
-			}
-		} else if (state.discovery.completed && qaHistory.length > 0) {
-			lines.push(formatKeyValue("  Status", `Completed (${qaHistory.length} exchanges)`));
+			lines.push(formatKeyValue("  Exchanges", String(exchanges.length)));
+			lines.push("  In progress...");
+		} else if (state.discovery.completed && exchanges.length > 0) {
+			lines.push(formatKeyValue("  Status", `Completed (${exchanges.length} exchanges)`));
 			const summaryLength = state.discovery.discoverySummary?.length || 0;
 			if (summaryLength > 0) {
 				lines.push(formatKeyValue("  Summary", `${Math.round(summaryLength / 1000)}KB`));
@@ -679,7 +674,8 @@ export function updateSpecWidget(
 	
 	// Discovery progress if in discovery
 	if (state.discovery && state.stage === "discovery" && !state.discovery.completed) {
-		lines.push(`Discovery: Round ${state.discovery.currentRound}/${state.discovery.maxRounds}`);
+		const exchanges = state.discovery.conversationHistory?.length ?? 0;
+		lines.push(`Discovery: ${exchanges} exchanges`);
 	}
 	
 	// Current action
