@@ -110,6 +110,13 @@ export async function runSpecPipeline(
 	// ============================================
 	// DISCOVERY PHASE (if not skipped)
 	// ============================================
+	// Skip discovery if it was handled via conversational mode (already completed before runSpecPipeline is called)
+	if (state.stage === "discovery" && state.discovery?.conversational && state.discovery.completed) {
+		ctx.ui.notify(`✅ Discovery completed via conversation (${state.discovery.conversationHistory?.length ?? 0} exchanges)`, "success");
+		state.stage = "spec_drafting";
+		save();
+	}
+
 	if (state.stage === "discovery" && state.discovery && !state.discovery.completed) {
 		ctx.ui.notify(formatStepBanner(
 			"DISCOVERY PHASE",

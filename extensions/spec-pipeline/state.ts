@@ -9,6 +9,7 @@ import {
 	type ImplementationState,
 	type DiscoveryState,
 	type DiscoveryQA,
+	type ConversationalExchange,
 	type ProjectConfig,
 	SPEC_STATE_DIR,
 	IMPL_STATE_DIR,
@@ -332,6 +333,31 @@ export function generateDiscoverySummary(qaHistory: DiscoveryQA[]): string {
 		sections.push(qa.questions);
 		sections.push("\n**User Responses:**\n");
 		sections.push(qa.answers);
+		sections.push("\n---\n");
+	}
+
+	return sections.join("\n");
+}
+
+/**
+ * Generate a discovery summary from conversational exchanges
+ */
+export function generateConversationalDiscoverySummary(exchanges: ConversationalExchange[]): string {
+	if (exchanges.length === 0) {
+		return "";
+	}
+
+	const sections: string[] = [];
+	sections.push("## Discovery Summary\n");
+	sections.push("The following information was gathered during an interactive discovery conversation:\n");
+
+	for (let i = 0; i < exchanges.length; i++) {
+		const exchange = exchanges[i];
+		sections.push(`### Exchange ${i + 1}\n`);
+		sections.push("**User:**\n");
+		sections.push(exchange.userMessage);
+		sections.push("\n**Discovery Agent:**\n");
+		sections.push(exchange.assistantResponse);
 		sections.push("\n---\n");
 	}
 

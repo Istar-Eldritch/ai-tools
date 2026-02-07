@@ -249,6 +249,15 @@ export interface DiscoveryQA {
 }
 
 /**
+ * A single exchange in conversational discovery (user message + assistant response)
+ */
+export interface ConversationalExchange {
+	userMessage: string;
+	assistantResponse: string;
+	timestamp: string;
+}
+
+/**
  * Discovery stage state
  */
 export interface DiscoveryState {
@@ -258,13 +267,39 @@ export interface DiscoveryState {
 	currentRound: number;
 	/** Maximum rounds allowed (from config) */
 	maxRounds: number;
-	/** All Q&A exchanges */
+	/** All Q&A exchanges (legacy subprocess mode) */
 	qaHistory: DiscoveryQA[];
 	/** Accumulated discovery summary (synthesized from Q&A) */
 	discoverySummary: string;
 	/** Whether discovery is complete (user chose to proceed) */
 	completed: boolean;
+	/** Conversational discovery exchanges (new interactive mode) */
+	conversationHistory?: ConversationalExchange[];
+	/** Whether using conversational mode (vs legacy subprocess mode) */
+	conversational?: boolean;
 }
+
+/**
+ * Drafting stage state (for conversational spec drafting)
+ */
+export interface DraftingState {
+	/** Whether using conversational mode (vs legacy subprocess mode) */
+	conversational: boolean;
+	/** Conversation history for drafting phase */
+	conversationHistory: ConversationalExchange[];
+	/** Whether drafting is complete (user typed /spec-draft-done) */
+	completed: boolean;
+	/** Last review feedback (injected into drafting context for revisions) */
+	lastReviewFeedback?: string;
+}
+
+/**
+ * Pipeline mode for the conversational extension state machine.
+ * - idle: No active conversational mode
+ * - discovery: Host LLM is acting as discovery agent
+ * - drafting: Host LLM is acting as spec drafter
+ */
+export type PipelineMode = "idle" | "discovery" | "drafting";
 
 /**
  * State for spec creation pipelines (/spec command)
@@ -282,6 +317,9 @@ export interface SpecState {
 	
 	// Discovery state
 	discovery?: DiscoveryState;
+	
+	// Drafting state (conversational mode)
+	drafting?: DraftingState;
 	
 	// Spec-related state
 	specTimestamp: string;  // YYMMDDhhmm format

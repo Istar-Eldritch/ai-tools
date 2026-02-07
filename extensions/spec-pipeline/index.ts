@@ -45,7 +45,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 // Import types
-import type { SpecState, ImplementationState, TieredReviewerRole } from "./types.ts";
+import type { SpecState, ImplementationState, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState } from "./types.ts";
 
 // Import config
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
@@ -67,6 +67,7 @@ import {
 	getStateDir,
 	getSpecStateDir,
 	getImplStateDir,
+	generateConversationalDiscoverySummary,
 } from "./state.ts";
 
 // Import git operations
@@ -79,6 +80,7 @@ import {
 	switchToBranch,
 	stashExists,
 	dropStash,
+	createAgentCommit,
 } from "./git.ts";
 
 // Import error handling
@@ -109,7 +111,7 @@ import {
 import { runAgent } from "./agents.ts";
 
 // Import review
-import { retryFailedOperation } from "./review.ts";
+import { retryFailedOperation, runTieredReview } from "./review.ts";
 
 // Import pipelines
 import { runSpecPipeline } from "./spec-pipeline.ts";
@@ -155,8 +157,661 @@ function generateBranchShortName(text: string): string {
 export default function (pi: ExtensionAPI) {
 
 	// ============================================
+	// UNIFIED CONVERSATIONAL MODE STATE
+	// ============================================
+
+	/** Current pipeline mode: idle, discovery, or drafting */
+	let pipelineMode: PipelineMode = "idle";
+
+	/** The spec state for the active conversational session */
+	let activeSpecState: SpecState | null = null;
+
+	/** The cwd for the active conversational session */
+	let activeCwd: string = "";
+
+	/** The project config for the active conversational session */
+	let activeProjectConfig: ProjectConfig | null = null;
+
+	/** Tracks the last user message for pairing with assistant response */
+	let lastUserMessage: string = "";
+
+	/** Number of conversation exchanges in current mode */
+	let exchangeCount = 0;
+
+	/**
+	 * Enter a conversational pipeline mode (discovery or drafting)
+	 */
+	function enterMode(mode: "discovery" | "drafting", state: SpecState, cwd: string, projectConfig: ProjectConfig): void {
+		pipelineMode = mode;
+		activeSpecState = state;
+		activeCwd = cwd;
+		activeProjectConfig = projectConfig;
+		lastUserMessage = "";
+		// Set exchange count from existing history when resuming
+		if (mode === "discovery") {
+			exchangeCount = state.discovery?.conversationHistory?.length ?? 0;
+		} else {
+			exchangeCount = state.drafting?.conversationHistory?.length ?? 0;
+		}
+	}
+
+	/**
+	 * Exit any conversational mode and return to idle
+	 */
+	function exitMode(): { exchangeCount: number; state: SpecState | null; cwd: string; projectConfig: ProjectConfig | null } {
+		const result = { exchangeCount, state: activeSpecState, cwd: activeCwd, projectConfig: activeProjectConfig };
+		pipelineMode = "idle";
+		activeSpecState = null;
+		activeCwd = "";
+		activeProjectConfig = null;
+		lastUserMessage = "";
+		exchangeCount = 0;
+		return result;
+	}
+
+	/**
+	 * Build the discovery system prompt injection for before_agent_start.
+	 * This turns the host LLM into a discovery agent.
+	 */
+	function buildDiscoveryPromptInjection(state: SpecState, projectConfig: ProjectConfig): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+		const discoveryPrompt = SYSTEM_PROMPTS.discoveryAgent;
+
+		let conversationContext = "";
+		if (state.discovery?.conversationHistory && state.discovery.conversationHistory.length > 0) {
+			conversationContext = "\n\n## Previous Discovery Exchanges\n\n";
+			for (const exchange of state.discovery.conversationHistory) {
+				conversationContext += `**User**: ${exchange.userMessage}\n\n`;
+				conversationContext += `**You**: ${exchange.assistantResponse}\n\n---\n\n`;
+			}
+		}
+
+		return `
+${discoveryPrompt}
+
+## Active Discovery Session
+
+You are currently conducting a discovery session for this feature:
+
+${state.description}
+
+${conversationContext}
+
+## Instructions
+
+- Ask clarifying questions to understand requirements better
+- You have access to the codebase via read, bash, grep, find, ls tools — USE THEM to explore the project
+- Reference specific files and patterns you find
+- Keep questions focused and actionable (${projectConfig.discovery.questionsPerRound} questions at a time)
+- The user will answer naturally — adapt your follow-up questions based on their responses
+- When you feel you have enough context, tell the user they can type /spec-done to proceed to spec drafting
+
+IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only ask questions and explore the codebase.
+`;
+	}
+
+	/**
+	 * Build the spec drafting system prompt injection for before_agent_start.
+	 * This turns the host LLM into a spec drafter.
+	 */
+	function buildDraftingPromptInjection(state: SpecState, projectConfig: ProjectConfig): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+		const specDrafterPrompt = SYSTEM_PROMPTS.specDrafter;
+
+		const fullSpecPath = path.join(activeCwd, state.specPath);
+
+		const discoveryContext = state.discovery?.discoverySummary
+			? `\n\n## Discovery Context\n\nThe following requirements were gathered during discovery:\n\n${state.discovery.discoverySummary}\n`
+			: "";
+
+		let reviewFeedback = "";
+		if (state.drafting?.lastReviewFeedback) {
+			reviewFeedback = `\n\n## Review Feedback to Address\n\nThe spec was reviewed and received the following feedback. Please address these issues:\n\n${state.drafting.lastReviewFeedback}\n`;
+		}
+
+		let draftingHistory = "";
+		if (state.drafting?.conversationHistory && state.drafting.conversationHistory.length > 0) {
+			// Only include a brief summary to avoid bloating the prompt
+			draftingHistory = `\n\n## Drafting Progress\n\nYou have had ${state.drafting.conversationHistory.length} exchanges with the user while drafting this spec.\n`;
+		}
+
+		return `
+${specDrafterPrompt}
+
+## Active Spec Drafting Session
+
+You are drafting a technical specification for this feature:
+
+${state.description}
+${discoveryContext}${reviewFeedback}${draftingHistory}
+
+## Spec File Details
+
+- **Spec timestamp**: ${state.specTimestamp}
+- **Spec file path**: ${fullSpecPath}
+- **Iteration**: ${state.specIteration + 1}
+
+## Instructions
+
+- You have FULL tool access: read, bash, edit, write, grep, find, ls
+- Explore the codebase to understand existing patterns and conventions
+- Write the spec to the EXACT path above using the write tool
+- The user will guide you conversationally — follow their instructions
+- If the user asks you to focus on specific areas, adjust the spec accordingly
+- When the user is satisfied, they will type /spec-draft-done to proceed to review
+
+${state.specIteration > 0 ? `This is iteration ${state.specIteration + 1}. Read the existing spec file and revise it based on the conversation.` : "This is the first draft. Create the spec from scratch."}
+
+IMPORTANT: You are in SPEC DRAFTING MODE. Focus on creating/refining the specification. Do NOT implement code.
+`;
+	}
+
+	/**
+	 * Get the spec file size for widget display
+	 */
+	function getSpecFileInfo(cwd: string, specPath: string): string {
+		const fullPath = path.join(cwd, specPath);
+		if (!fs.existsSync(fullPath)) {
+			return "not yet created";
+		}
+		const stats = fs.statSync(fullPath);
+		const kb = (stats.size / 1024).toFixed(1);
+		return `${kb} KB`;
+	}
+
+	/**
+	 * Update the widget for the current mode
+	 */
+	function updateModeWidget(ctx: any): void {
+		if (pipelineMode === "idle" || !activeSpecState) return;
+
+		if (pipelineMode === "discovery") {
+			ctx.ui.setWidget("spec-pipeline-status", [
+				"🔍 Discovery Mode",
+				"────────────────────────────────────",
+				`Exchanges: ${exchangeCount}`,
+				"",
+				"Chat naturally to refine requirements.",
+				"Type /spec-done when ready to draft spec.",
+			]);
+		} else if (pipelineMode === "drafting") {
+			const specInfo = getSpecFileInfo(activeCwd, activeSpecState.specPath);
+			const iteration = activeSpecState.specIteration + 1;
+			const lines = [
+				"📝 Drafting Mode",
+				"────────────────────────────────────",
+				`Spec file: ${specInfo}`,
+				`Iteration: ${iteration}`,
+				`Exchanges: ${exchangeCount}`,
+			];
+			if (activeSpecState.drafting?.lastReviewFeedback) {
+				lines.push("", "⚠️  Addressing review feedback");
+			}
+			lines.push("", "Type /spec-draft-done when ready for review.");
+			ctx.ui.setWidget("spec-pipeline-status", lines);
+		}
+	}
+
+	/**
+	 * End discovery mode and proceed to spec drafting mode
+	 */
+	async function endDiscoveryAndStartDrafting(ctx: any): Promise<void> {
+		if (pipelineMode !== "discovery" || !activeSpecState || !activeCwd || !activeProjectConfig) {
+			ctx.ui.notify("No active discovery session.", "error");
+			return;
+		}
+
+		const state = activeSpecState;
+		const cwd = activeCwd;
+		const projectConfig = activeProjectConfig;
+
+		// Build the discovery summary from conversation history
+		if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
+			state.discovery.discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+			state.discovery.currentRound = state.discovery.conversationHistory.length;
+		}
+
+		state.discovery!.completed = true;
+		const discoveryExchanges = exchangeCount;
+
+		ctx.ui.notify(formatStepBanner(
+			"DISCOVERY COMPLETE",
+			`${discoveryExchanges} exchanges recorded. Entering spec drafting mode...`,
+			"✅"
+		), "success");
+
+		// Transition to drafting mode (reuse same active state variables — just switch mode)
+		pipelineMode = "drafting";
+		lastUserMessage = "";
+		exchangeCount = 0;
+
+		// Initialize drafting state
+		state.drafting = {
+			conversational: true,
+			conversationHistory: [],
+			completed: false,
+		};
+		state.stage = "spec_drafting";
+		saveSpecState(cwd, state);
+
+		// Update widget
+		updateModeWidget(ctx);
+
+		ctx.ui.notify(formatStepBanner(
+			"SPEC DRAFTING MODE",
+			"The LLM will now draft the specification. Guide it conversationally.",
+			"📝"
+		), "info");
+		ctx.ui.notify(`Spec file will be written to: ${state.specPath}`, "info");
+		ctx.ui.notify("When satisfied, type /spec-draft-done to proceed to review.", "info");
+
+		// Build the kickoff message
+		const fullSpecPath = path.join(cwd, state.specPath);
+		const discoveryContext = state.discovery?.discoverySummary
+			? `\n\nHere is the context gathered during discovery:\n\n${state.discovery.discoverySummary}`
+			: "";
+
+		pi.sendUserMessage(
+			`Please create a technical specification for: ${state.description}${discoveryContext}\n\n` +
+			`Write the spec to this exact path: ${fullSpecPath}\n` +
+			`Use spec timestamp: ${state.specTimestamp}\n\n` +
+			`Explore the codebase first to understand existing patterns, then create a comprehensive spec.`
+		);
+	}
+
+	/**
+	 * Enter drafting mode directly (for --quick or after review revisions)
+	 */
+	function enterDraftingMode(state: SpecState, cwd: string, projectConfig: ProjectConfig, ctx: any): void {
+		// Initialize drafting state if needed
+		if (!state.drafting) {
+			state.drafting = {
+				conversational: true,
+				conversationHistory: [],
+				completed: false,
+			};
+		} else {
+			state.drafting.completed = false;
+		}
+		state.stage = "spec_drafting";
+		saveSpecState(cwd, state);
+
+		enterMode("drafting", state, cwd, projectConfig);
+		updateModeWidget(ctx);
+	}
+
+	/**
+	 * Handle end of spec drafting: commit, run review, present options
+	 */
+	async function endDraftingAndReview(ctx: any): Promise<void> {
+		if (pipelineMode !== "drafting" || !activeSpecState || !activeCwd || !activeProjectConfig) {
+			ctx.ui.notify("No active drafting session.", "error");
+			return;
+		}
+
+		const state = activeSpecState;
+		const cwd = activeCwd;
+		const projectConfig = activeProjectConfig;
+		const fullSpecPath = path.join(cwd, state.specPath);
+
+		// Validate spec file exists
+		if (!fs.existsSync(fullSpecPath)) {
+			ctx.ui.notify(`Spec file not found at: ${state.specPath}\n\nThe LLM needs to write the spec file first. Continue chatting to guide it.`, "error");
+			return;
+		}
+
+		// Read the spec content
+		state.specDraft = fs.readFileSync(fullSpecPath, "utf-8");
+		if (!state.specDraft.trim()) {
+			ctx.ui.notify("Spec file is empty. Continue chatting to guide the LLM.", "error");
+			return;
+		}
+
+		// Mark drafting as complete
+		state.drafting!.completed = true;
+		state.specIteration++;
+		state.stage = "spec_review";
+		saveSpecState(cwd, state);
+
+		// Exit drafting mode for the review phase
+		const { exchangeCount: draftExchanges } = exitMode();
+
+		ctx.ui.notify(formatStepBanner(
+			"SPEC DRAFTING COMPLETE",
+			`${draftExchanges} exchanges. Creating commit and running review...`,
+			"✅"
+		), "success");
+
+		// Create git commit for the spec draft
+		const specDrafterConfig = projectConfig.models.specDrafter;
+		const commitResult = await createAgentCommit(
+			cwd, state,
+			{ role: "specDrafter", modelConfig: specDrafterConfig },
+			projectConfig.models.agentCommitMessageWriter,
+			() => saveSpecState(cwd, state),
+			ctx.ui.notify.bind(ctx.ui)
+		);
+
+		if (!commitResult.success) {
+			ctx.ui.notify("Warning: Failed to create commit for spec draft", "warning");
+		}
+
+		// Update widget for review phase
+		ctx.ui.setWidget("spec-pipeline-status", [
+			"🔍 Spec Review in Progress",
+			"────────────────────────────────────",
+			`Iteration: ${state.specIteration}`,
+			"",
+			"Running tiered review (cheap → expensive)...",
+		]);
+
+		const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+
+		// Run tiered spec review (subprocess-based for isolated judgment)
+		ctx.ui.notify(formatStepBanner(
+			"Spec Review",
+			"Running tiered review (cheap → expensive)",
+			"🔍"
+		), "info");
+
+		const specReviewResult = await runTieredReview(
+			{
+				cwd,
+				projectConfig,
+				systemPrompts: SYSTEM_PROMPTS,
+				state,
+				saveFn: () => saveSpecState(cwd, state),
+				phaseIndex: undefined,
+				notify: ctx.ui.notify.bind(ctx.ui),
+			},
+			{
+				role: "specReviewer",
+				reviewTask: `Review this spec draft:\n\n${state.specDraft}`,
+				fixTask: (reviewOutput) => `Revise the spec to address review feedback.
+
+Current spec at: ${fullSpecPath}
+
+Review feedback:
+${reviewOutput}
+
+Read the current spec, apply fixes, and write the updated version back to the same path.`,
+			}
+		);
+
+		if (specReviewResult.hadError) {
+			clearPipelineWidget(ctx);
+			ctx.ui.notify("Review encountered an error. Use /spec-resume to retry.", "error");
+			return;
+		}
+
+		// Re-read spec after review fixes
+		if (fs.existsSync(fullSpecPath)) {
+			state.specDraft = fs.readFileSync(fullSpecPath, "utf-8");
+		}
+
+		const verdict = specReviewResult.verdict;
+		const reviewOutput = specReviewResult.lastReviewOutput;
+
+		// Update widget with review result
+		ctx.ui.setWidget("spec-pipeline-status", [
+			verdict === "APPROVED" ? "✅ Spec Review: APPROVED" : "🔄 Spec Review: NEEDS_CHANGES",
+			"────────────────────────────────────",
+			`Iteration: ${state.specIteration}`,
+			`Review cycles: cheap=${specReviewResult.cheapCyclesCompleted}, expensive=${specReviewResult.expensiveCyclesCompleted}`,
+		]);
+
+		// Show review summary
+		const reviewPreview = reviewOutput.length > 2000
+			? reviewOutput.slice(0, 2000) + "\n\n[... truncated ...]"
+			: reviewOutput;
+		ctx.ui.notify(formatStepBanner(
+			`Review Result: ${verdict}`,
+			`Cheap: ${specReviewResult.cheapCyclesCompleted}, Expensive: ${specReviewResult.expensiveCyclesCompleted}`,
+			verdict === "APPROVED" ? "✅" : "🔄"
+		), "info");
+		ctx.ui.notify(reviewPreview, "info");
+
+		// Present options to user
+		if (verdict === "APPROVED") {
+			const approve = await ctx.ui.confirm(
+				"Spec Approved by Reviewer",
+				"The spec was approved by the reviewer. Do you approve it too?"
+			);
+
+			if (approve) {
+				state.specApproved = true;
+				state.stage = "completed";
+				saveSpecState(cwd, state);
+				clearPipelineWidget(ctx);
+
+				ctx.ui.notify(formatStepBanner(
+					"🎉 Spec Creation Complete!",
+					`Spec: ${state.specPath}`,
+					"✅"
+				), "success");
+				ctx.ui.notify(`Next: /implement ${state.specPath}`, "info");
+				return;
+			}
+		}
+
+		// User wants to revise (or reviewer said NEEDS_CHANGES)
+		const choices = [
+			"Revise spec conversationally (recommended)",
+			"Approve spec as-is",
+			"Cancel pipeline",
+		];
+		const choice = await ctx.ui.select(
+			"How would you like to proceed?",
+			choices
+		);
+
+		if (choice === choices[1]) {
+			// Approve anyway
+			state.specApproved = true;
+			state.stage = "completed";
+			saveSpecState(cwd, state);
+			clearPipelineWidget(ctx);
+
+			ctx.ui.notify(formatStepBanner(
+				"🎉 Spec Creation Complete!",
+				`Spec: ${state.specPath}`,
+				"✅"
+			), "success");
+			ctx.ui.notify(`Next: /implement ${state.specPath}`, "info");
+			return;
+		}
+
+		if (choice === choices[2]) {
+			// Cancel
+			state.stage = "cancelled";
+			saveSpecState(cwd, state);
+			clearPipelineWidget(ctx);
+			ctx.ui.notify("Pipeline cancelled.", "info");
+			return;
+		}
+
+		// Re-enter drafting mode with review feedback
+		state.drafting!.lastReviewFeedback = reviewOutput;
+		state.drafting!.completed = false;
+		enterDraftingMode(state, cwd, projectConfig, ctx);
+
+		ctx.ui.notify(formatStepBanner(
+			"REVISION MODE",
+			"Guide the LLM to address the review feedback.",
+			"📝"
+		), "info");
+		ctx.ui.notify("The review feedback has been injected into the LLM's context.", "info");
+		ctx.ui.notify("Type /spec-draft-done when ready for another review cycle.", "info");
+
+		// Kick off revision
+		pi.sendUserMessage(
+			`The spec at ${fullSpecPath} received review feedback. Please read the current spec and the review feedback, then revise accordingly.\n\n` +
+			`Key issues from reviewer:\n${reviewOutput.slice(0, 3000)}`
+		);
+	}
+
+	// ============================================
+	// EVENT HANDLERS FOR CONVERSATIONAL MODES
+	// ============================================
+
+	/**
+	 * Inject system prompt when in a conversational mode (discovery or drafting)
+	 */
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (pipelineMode === "idle" || !activeSpecState || !activeProjectConfig) {
+			return undefined;
+		}
+
+		let injection: string;
+		let customType: string;
+		let contextLabel: string;
+
+		if (pipelineMode === "discovery") {
+			injection = buildDiscoveryPromptInjection(activeSpecState, activeProjectConfig);
+			customType = "spec-discovery-context";
+			contextLabel = `[DISCOVERY MODE ACTIVE - Exploring requirements for: ${activeSpecState.description}]`;
+		} else {
+			injection = buildDraftingPromptInjection(activeSpecState, activeProjectConfig);
+			customType = "spec-drafting-context";
+			contextLabel = `[DRAFTING MODE ACTIVE - Creating spec for: ${activeSpecState.description}]`;
+		}
+
+		return {
+			systemPrompt: event.systemPrompt + "\n\n" + injection,
+			message: {
+				customType,
+				content: contextLabel,
+				display: false,
+			},
+		};
+	});
+
+	/**
+	 * Capture user input during any conversational mode to track conversation
+	 */
+	pi.on("input", async (event, ctx) => {
+		if (pipelineMode === "idle") {
+			return { action: "continue" as const };
+		}
+
+		// Don't intercept extension-injected messages
+		if (event.source === "extension") {
+			return { action: "continue" as const };
+		}
+
+		// Store the user message for pairing with assistant response
+		lastUserMessage = event.text;
+
+		return { action: "continue" as const };
+	});
+
+	/**
+	 * After each agent turn, capture the assistant response
+	 * and pair it with the user message to build conversation history
+	 */
+	pi.on("agent_end", async (event, ctx) => {
+		if (pipelineMode === "idle" || !activeSpecState || !activeCwd) {
+			return;
+		}
+
+		// Extract the last assistant text from the messages
+		let assistantText = "";
+		const messages = event.messages || [];
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i] as any;
+			if (msg.role === "assistant" && Array.isArray(msg.content)) {
+				const textParts = msg.content
+					.filter((c: any) => c.type === "text")
+					.map((c: any) => c.text);
+				if (textParts.length > 0) {
+					assistantText = textParts.join("\n");
+					break;
+				}
+			}
+		}
+
+		if (assistantText && lastUserMessage) {
+			const exchange: ConversationalExchange = {
+				userMessage: lastUserMessage,
+				assistantResponse: assistantText,
+				timestamp: new Date().toISOString(),
+			};
+
+			if (pipelineMode === "discovery") {
+				if (!activeSpecState.discovery!.conversationHistory) {
+					activeSpecState.discovery!.conversationHistory = [];
+				}
+				activeSpecState.discovery!.conversationHistory.push(exchange);
+				exchangeCount = activeSpecState.discovery!.conversationHistory.length;
+			} else if (pipelineMode === "drafting") {
+				if (!activeSpecState.drafting!.conversationHistory) {
+					activeSpecState.drafting!.conversationHistory = [];
+				}
+				activeSpecState.drafting!.conversationHistory.push(exchange);
+				exchangeCount = activeSpecState.drafting!.conversationHistory.length;
+			}
+
+			saveSpecState(activeCwd, activeSpecState);
+			updateModeWidget(ctx);
+			lastUserMessage = "";
+		}
+	});
+
+	/**
+	 * Filter out pipeline context messages that don't belong to the current mode.
+	 * - In idle: filter out all pipeline context messages
+	 * - In discovery: filter out drafting context messages
+	 * - In drafting: filter out discovery context messages
+	 */
+	pi.on("context", async (event) => {
+		return {
+			messages: event.messages.filter((m: any) => {
+				if (m.customType === "spec-discovery-context") {
+					return pipelineMode === "discovery";
+				}
+				if (m.customType === "spec-drafting-context") {
+					return pipelineMode === "drafting";
+				}
+				return true;
+			}),
+		};
+	});
+
+	// ============================================
 	// SPEC CREATION COMMANDS
 	// ============================================
+
+	pi.registerCommand("spec-done", {
+		description: "End discovery and proceed to spec drafting",
+		handler: async (_args, ctx) => {
+			if (pipelineMode !== "discovery") {
+				ctx.ui.notify("No active discovery session. Use /spec to start one.", "error");
+				return;
+			}
+
+			if (exchangeCount === 0) {
+				const proceed = await ctx.ui.confirm(
+					"No Discovery Exchanges",
+					"No conversation exchanges recorded yet. Proceed to spec drafting anyway?"
+				);
+				if (!proceed) return;
+			}
+
+			await endDiscoveryAndStartDrafting(ctx);
+		},
+	});
+
+	pi.registerCommand("spec-draft-done", {
+		description: "End spec drafting and proceed to review",
+		handler: async (_args, ctx) => {
+			if (pipelineMode !== "drafting") {
+				ctx.ui.notify("No active drafting session. Use /spec to start one.", "error");
+				return;
+			}
+
+			await endDraftingAndReview(ctx);
+		},
+	});
 
 	pi.registerCommand("spec", {
 		description: "Start spec creation. Use --quick to skip discovery.",
@@ -272,7 +927,52 @@ export default function (pi: ExtensionAPI) {
 			
 			updateSpecWidget(ctx, state, "Initializing...");
 
-			await runSpecPipeline(state, cwd, projectConfig, ctx);
+			// If discovery is enabled (not --quick), enter conversational discovery mode
+			const shouldDiscover = !isQuick && projectConfig.discovery.enabled && state.stage === "discovery";
+
+			if (shouldDiscover) {
+				// Initialize conversational discovery state
+				state.discovery!.conversational = true;
+				state.discovery!.conversationHistory = [];
+				saveSpecState(cwd, state);
+
+				// Enter discovery mode
+				enterMode("discovery", state, cwd, projectConfig);
+
+				// Show discovery widget
+				updateModeWidget(ctx);
+
+				ctx.ui.notify(formatStepBanner(
+					"DISCOVERY MODE",
+					"Chat naturally to explore requirements. The LLM will ask clarifying questions.",
+					"🔍"
+				), "info");
+				ctx.ui.notify("Just type your answers in the editor below. The LLM has access to your codebase and will ask questions to understand your requirements.", "info");
+				ctx.ui.notify("When you're satisfied with the discovery, type /spec-done to proceed to spec drafting.", "info");
+
+				// Send the initial discovery message to kick off the conversation
+				pi.sendUserMessage(`I want to build the following feature: ${description}\n\nPlease explore the codebase and ask me clarifying questions to understand the requirements better.`);
+			} else {
+				// --quick mode: enter conversational drafting directly
+				enterDraftingMode(state, cwd, projectConfig, ctx);
+
+				ctx.ui.notify(formatStepBanner(
+					"SPEC DRAFTING MODE",
+					"The LLM will draft the specification. Guide it conversationally.",
+					"📝"
+				), "info");
+				ctx.ui.notify(`Spec file will be written to: ${state.specPath}`, "info");
+				ctx.ui.notify("When satisfied, type /spec-draft-done to proceed to review.", "info");
+
+				// Send the kickoff message
+				const fullSpecPath = path.join(cwd, state.specPath);
+				pi.sendUserMessage(
+					`Please create a technical specification for: ${description}\n\n` +
+					`Write the spec to this exact path: ${fullSpecPath}\n` +
+					`Use spec timestamp: ${state.specTimestamp}\n\n` +
+					`Explore the codebase first to understand existing patterns, then create a comprehensive spec.`
+				);
+			}
 		},
 	});
 
@@ -437,6 +1137,46 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
+			// If resuming in conversational discovery mode, re-enter discovery mode
+			if (state.stage === "discovery" && state.discovery?.conversational && !state.discovery.completed) {
+				enterMode("discovery", state, cwd, projectConfig);
+				updateModeWidget(ctx);
+
+				ctx.ui.notify(formatStepBanner(
+					"DISCOVERY MODE RESUMED",
+					`${exchangeCount} previous exchanges. Continue chatting to refine requirements.`,
+					"🔍"
+				), "info");
+				ctx.ui.notify("Type /spec-done when ready to proceed to spec drafting.", "info");
+
+				// Send a resume message to kick off the conversation
+				pi.sendUserMessage(`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue asking clarifying questions.`);
+				return;
+			}
+
+			// If resuming in conversational drafting mode, re-enter drafting mode
+			if (state.stage === "spec_drafting" && state.drafting?.conversational && !state.drafting.completed) {
+				enterMode("drafting", state, cwd, projectConfig);
+				updateModeWidget(ctx);
+
+				ctx.ui.notify(formatStepBanner(
+					"DRAFTING MODE RESUMED",
+					`${exchangeCount} previous exchanges. Continue guiding the spec.`,
+					"📝"
+				), "info");
+				ctx.ui.notify(`Spec file: ${state.specPath}`, "info");
+				ctx.ui.notify("Type /spec-draft-done when ready for review.", "info");
+
+				// Send a resume message
+				const fullSpecPath = path.join(cwd, state.specPath);
+				pi.sendUserMessage(
+					`I'm resuming the spec drafting session for: ${state.description}\n\n` +
+					`Spec file path: ${fullSpecPath}\n\n` +
+					`Please review the current state and continue drafting.`
+				);
+				return;
+			}
+
 			await runSpecPipeline(state, cwd, projectConfig, ctx);
 		},
 	});
@@ -564,6 +1304,11 @@ export default function (pi: ExtensionAPI) {
 				}
 				state.stage = "cancelled";
 				saveSpecState(cwd, state);
+				
+				// Clean up conversational mode if active
+				if (pipelineMode !== "idle" && activeSpecState?.id === state.id) {
+					exitMode();
+				}
 				
 				clearPipelineWidget(ctx);
 				
