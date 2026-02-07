@@ -7,6 +7,9 @@ import {
 	createInitialDiscoveryState,
 	createInitialSpecState,
 	createInitialImplState,
+	createInitialRoadmapState,
+	createInitialEpicState,
+	extractChildItems,
 } from "./state.ts";
 
 describe("generatePipelineId", () => {
@@ -297,5 +300,164 @@ describe("createInitialSpecState", () => {
 			defaultDiscoveryConfig
 		);
 		expect(state.useAgentCommits).toBe(true);
+	});
+});
+
+// ============================================
+// Hierarchy State Tests
+// ============================================
+
+describe("createInitialRoadmapState", () => {
+	const defaultDiscoveryConfig = {
+		enabled: true,
+		maxRounds: 5,
+		questionsPerRound: 4,
+	};
+
+	it("creates state with correct level and defaults", () => {
+		const state = createInitialRoadmapState(
+			"Warm machine pools initiative",
+			"2602071200",
+			"warm_pools",
+			"docs",
+			defaultDiscoveryConfig
+		);
+		expect(state.level).toBe("roadmap");
+		expect(state.description).toBe("Warm machine pools initiative");
+		expect(state.stage).toBe("discovery");
+		expect(state.docFilename).toBe("2602071200_roadmap_warm_pools.md");
+		expect(state.docPath).toBe("docs/2602071200_roadmap_warm_pools.md");
+		expect(state.children).toEqual([]);
+		expect(state.docApproved).toBe(false);
+		expect(state.useAgentCommits).toBe(true);
+	});
+
+	it("skips discovery when flag is set", () => {
+		const state = createInitialRoadmapState(
+			"Quick roadmap",
+			"2602071200",
+			"quick",
+			"docs",
+			defaultDiscoveryConfig,
+			true
+		);
+		expect(state.stage).toBe("drafting");
+		expect(state.discovery?.skipped).toBe(true);
+	});
+});
+
+describe("createInitialEpicState", () => {
+	const defaultDiscoveryConfig = {
+		enabled: true,
+		maxRounds: 5,
+		questionsPerRound: 4,
+	};
+
+	it("creates state with correct level and defaults", () => {
+		const state = createInitialEpicState(
+			"Pool configuration",
+			"2602071200",
+			"pool_config",
+			"docs",
+			defaultDiscoveryConfig
+		);
+		expect(state.level).toBe("epic");
+		expect(state.description).toBe("Pool configuration");
+		expect(state.docFilename).toBe("2602071200_epic_pool_config.md");
+		expect(state.children).toEqual([]);
+	});
+
+	it("stores parent reference when provided", () => {
+		const state = createInitialEpicState(
+			"Pool configuration",
+			"2602071200",
+			"pool_config",
+			"docs",
+			defaultDiscoveryConfig,
+			false,
+			"md",
+			"parent123",
+			"roadmap"
+		);
+		expect(state.parentId).toBe("parent123");
+		expect(state.parentType).toBe("roadmap");
+	});
+});
+
+describe("extractChildItems", () => {
+	it("extracts items from a standard child items table", () => {
+		const doc = `# Warm Machine Pools Roadmap
+
+## Child Items
+
+| # | Item | Description | Priority | Dependencies |
+|---|------|-------------|----------|--------------|
+| 1 | Pool configuration | API and UI for warm pool settings | High | - |
+| 2 | Provisioning engine | Background provisioning with retries | High | 1 |
+| 3 | Billing integration | Track warm machine hours | Medium | 1 |
+| 4 | Monitoring dashboard | Metrics and alerts | Low | 1, 2 |
+`;
+		const items = extractChildItems(doc);
+		expect(items).toHaveLength(4);
+
+		expect(items[0].number).toBe(1);
+		expect(items[0].name).toBe("Pool configuration");
+		expect(items[0].description).toBe("API and UI for warm pool settings");
+		expect(items[0].priority).toBe("High");
+		expect(items[0].dependencies).toEqual([]);
+
+		expect(items[1].number).toBe(2);
+		expect(items[1].dependencies).toEqual([1]);
+
+		expect(items[2].priority).toBe("Medium");
+
+		expect(items[3].number).toBe(4);
+		expect(items[3].priority).toBe("Low");
+		expect(items[3].dependencies).toEqual([1, 2]);
+	});
+
+	it("returns empty array when no child items table found", () => {
+		const doc = `# Just a regular document
+
+## Some Section
+
+No child items here.
+`;
+		const items = extractChildItems(doc);
+		expect(items).toHaveLength(0);
+	});
+
+	it("handles dependencies with 'None' keyword", () => {
+		const doc = `| # | Item | Description | Priority | Dependencies |
+|---|------|-------------|----------|--------------|
+| 1 | First item | Desc | High | None |
+`;
+		const items = extractChildItems(doc);
+		expect(items).toHaveLength(1);
+		expect(items[0].dependencies).toEqual([]);
+	});
+
+	it("handles extra whitespace in cells", () => {
+		const doc = `| # | Item | Description | Priority | Dependencies |
+|---|------|-------------|----------|--------------|
+|  1  |  Pool config  |  Some description  |  high  |  -  |
+`;
+		const items = extractChildItems(doc);
+		expect(items).toHaveLength(1);
+		expect(items[0].name).toBe("Pool config");
+		expect(items[0].priority).toBe("High");
+	});
+
+	it("stops parsing at end of table", () => {
+		const doc = `| # | Item | Description | Priority | Dependencies |
+|---|------|-------------|----------|--------------|
+| 1 | Item one | Desc one | High | - |
+
+## Next Section
+
+Some other content.
+`;
+		const items = extractChildItems(doc);
+		expect(items).toHaveLength(1);
 	});
 });

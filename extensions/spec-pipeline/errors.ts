@@ -12,11 +12,12 @@ import type {
 	AgentResult,
 	SpecState,
 	ImplementationState,
+	HierarchyState,
 } from "./types.ts";
 import { getStateDir } from "./state.ts";
 
 // Union type for states that have error-related fields
-type ErrorableState = SpecState | ImplementationState;
+type ErrorableState = SpecState | ImplementationState | HierarchyState;
 import { stashChanges } from "./git.ts";
 import { formatBox, formatKeyValue, formatDivider } from "./formatting.ts";
 

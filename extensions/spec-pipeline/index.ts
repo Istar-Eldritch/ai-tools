@@ -20,6 +20,26 @@
  *   4. Stays on implement branch for user to review and merge
  *
  * Usage:
+ *   /plan <description>                             # Scoping assessment → routes to roadmap/epic/spec
+ *   /plan --roadmap <description>                   # Skip scoping, create roadmap
+ *   /plan --epic <description>                      # Skip scoping, create epic
+ *   /plan --feature <description>                   # Skip scoping, create feature spec
+ *
+ *   /roadmap <description>                          # Create a roadmap (→ epics)
+ *   /roadmap-resume                                 # Resume roadmap pipeline
+ *   /roadmap-status                                 # Show roadmap status
+ *   /roadmap-list                                   # List roadmaps
+ *   /roadmap-cancel                                 # Cancel roadmap pipeline
+ *
+ *   /epic <description>                             # Create an epic (→ feature specs)
+ *   /epic --roadmap <id> <description>              # Create epic linked to roadmap
+ *   /epic-resume                                    # Resume epic pipeline
+ *   /epic-status                                    # Show epic status
+ *   /epic-list                                      # List epics
+ *   /epic-cancel                                    # Cancel epic pipeline
+ *
+ *   /plan-overview [id]                             # Show full hierarchy tree
+ *
  *   /spec <description>                             # Start spec creation
  *   /spec --quick <description>                     # Skip discovery phase
  *   /spec-resume                                    # Resume spec creation
@@ -45,7 +65,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 // Import types
-import type { SpecState, ImplementationState, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState } from "./types.ts";
+import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState } from "./types.ts";
 
 // Import config
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
@@ -60,6 +80,16 @@ import {
 	saveImplState,
 	listImplStates,
 	getLatestActiveImplPipeline,
+	loadRoadmapState,
+	saveRoadmapState,
+	listRoadmapStates,
+	getLatestActiveRoadmapPipeline,
+	loadEpicState,
+	saveEpicState,
+	listEpicStates,
+	getLatestActiveEpicPipeline,
+	createInitialRoadmapState,
+	createInitialEpicState,
 	generateTimestamp,
 	generatePipelineId,
 	createInitialSpecState,
@@ -98,8 +128,11 @@ import {
 	formatEffectiveConfig,
 	formatSpecStage,
 	formatImplStage,
+	formatHierarchyStage,
 	formatSpecState,
 	formatImplState,
+	formatRoadmapState,
+	formatEpicState,
 	formatDivider,
 	formatKeyValue,
 	updateSpecWidget,
@@ -116,6 +149,7 @@ import { retryFailedOperation, runTieredReview } from "./review.ts";
 // Import pipelines
 import { runSpecPipeline } from "./spec-pipeline.ts";
 import { runImplementPipeline } from "./implement-pipeline.ts";
+import { runHierarchyPipeline } from "./hierarchy-pipeline.ts";
 
 // Import system prompts
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
@@ -1891,6 +1925,919 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 	});
 
 	// ============================================
+	// HIERARCHY COMMANDS (Roadmaps & Epics)
+	// ============================================
+
+	/**
+	 * Shared helper: start a hierarchy pipeline (roadmap or epic)
+	 */
+	async function startHierarchyPipeline(
+		level: HierarchyLevel,
+		description: string,
+		isQuick: boolean,
+		ctx: any,
+		parentId?: string,
+		parentType?: "roadmap"
+	): Promise<void> {
+		const cwd = ctx.cwd;
+
+		// Git validation
+		const gitValidation = await validateGitRepo(cwd);
+		if (!gitValidation.valid) {
+			ctx.ui.notify(gitValidation.error!, "error");
+			return;
+		}
+
+		const gitClean = await checkGitClean(cwd);
+		if (!gitClean.clean) {
+			ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
+			if (gitClean.status) {
+				ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
+			}
+			return;
+		}
+
+		const originalBranch = await getCurrentBranch(cwd);
+		if (!originalBranch) {
+			ctx.ui.notify("Failed to determine current branch", "error");
+			return;
+		}
+
+		// Load config
+		const configResult = loadPipelineConfig(cwd);
+		if (!configResult.success) {
+			ctx.ui.notify(configResult.error, "error");
+			return;
+		}
+		const projectConfig = configResult.config;
+
+		ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+		ctx.ui.notify(`Starting ${level} creation...`, "info");
+
+		// Generate names and timestamps
+		const docTimestamp = generateTimestamp();
+		const shortName = generateShortName(description);
+		const branchShortName = generateBranchShortName(description);
+
+		// Create initial state
+		let state: HierarchyState;
+		if (level === "roadmap") {
+			state = createInitialRoadmapState(
+				description, docTimestamp, shortName,
+				projectConfig.specsDir, projectConfig.discovery,
+				isQuick, projectConfig.specFormat
+			);
+		} else {
+			state = createInitialEpicState(
+				description, docTimestamp, shortName,
+				projectConfig.specsDir, projectConfig.discovery,
+				isQuick, projectConfig.specFormat,
+				parentId, parentType
+			);
+		}
+
+		state.originalBranch = originalBranch;
+		state.checkpoints = [];
+
+		if (level === "roadmap") {
+			saveRoadmapState(cwd, state as RoadmapState);
+		} else {
+			saveEpicState(cwd, state as EpicState);
+		}
+
+		// Create branch
+		const branchPrefix = level === "roadmap" ? "roadmap" : "epic";
+		const branchResult = await createPipelineBranch(cwd, branchPrefix, `${docTimestamp}-${branchShortName}`);
+		if (!branchResult.success) {
+			ctx.ui.notify(`Failed to create ${level} branch: ${branchResult.error}`, "error");
+			state.stage = "cancelled";
+			if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+			return;
+		}
+		state.pipelineBranch = branchResult.branchName;
+		if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+		else saveEpicState(cwd, state as EpicState);
+
+		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+		ctx.ui.notify(formatStepBanner(
+			`${levelLabel.toUpperCase()} CREATION STARTED`,
+			`ID: ${state.id}`,
+			level === "roadmap" ? "🗺️" : "📋"
+		), "info");
+		ctx.ui.notify(`Branch: ${branchResult.branchName}`, "info");
+
+		if (isQuick) {
+			ctx.ui.notify("Skipping discovery phase (--quick mode)", "info");
+		}
+
+		// Build parent context if this is an epic under a roadmap
+		let parentContext: string | undefined;
+		if (parentId && parentType === "roadmap") {
+			const parentState = loadRoadmapState(cwd, parentId);
+			if (parentState?.docContent) {
+				parentContext = `## Parent Roadmap\n\n${parentState.docContent}`;
+				if (parentState.discovery?.discoverySummary) {
+					parentContext += `\n\n## Roadmap Discovery Context\n\n${parentState.discovery.discoverySummary}`;
+				}
+			}
+		}
+
+		await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
+	}
+
+	/**
+	 * Shared helper: resume a hierarchy pipeline (roadmap or epic)
+	 */
+	async function resumeHierarchyPipeline(
+		level: HierarchyLevel,
+		pipelineId: string | undefined,
+		ctx: any
+	): Promise<void> {
+		const cwd = ctx.cwd;
+		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+
+		let state: HierarchyState | null;
+		if (pipelineId) {
+			state = level === "roadmap" ? loadRoadmapState(cwd, pipelineId) : loadEpicState(cwd, pipelineId);
+			if (!state) {
+				ctx.ui.notify(`${levelLabel} pipeline not found: ${pipelineId}`, "error");
+				return;
+			}
+		} else {
+			state = level === "roadmap" ? getLatestActiveRoadmapPipeline(cwd) : getLatestActiveEpicPipeline(cwd);
+			if (!state) {
+				ctx.ui.notify(`No active ${level} pipeline found. Use /${level} to start one.`, "error");
+				return;
+			}
+		}
+
+		if (state.stage === "completed") {
+			ctx.ui.notify(`This ${level} pipeline is already completed.`, "info");
+			return;
+		}
+
+		if (state.stage === "cancelled") {
+			const restart = await ctx.ui.confirm(
+				`${levelLabel} Cancelled`,
+				`This ${level} was cancelled. Restart from where it left off?`
+			);
+			if (!restart) return;
+
+			if (state.stageBeforeCancellation && state.stageBeforeCancellation !== "cancelled") {
+				ctx.ui.notify(`Resuming from saved stage: ${formatHierarchyStage(state.stageBeforeCancellation)}`, "info");
+				state.stage = state.stageBeforeCancellation;
+				state.stageBeforeCancellation = undefined;
+			} else {
+				if (state.discovery && !state.discovery.completed) {
+					state.stage = "discovery";
+				} else if (!state.docApproved) {
+					const fullDocPath = path.join(cwd, state.docPath);
+					if (fs.existsSync(fullDocPath) && state.docIteration > 0) {
+						state.stage = "review";
+					} else {
+						state.stage = "drafting";
+					}
+				} else {
+					state.stage = "approved";
+				}
+			}
+			if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+		}
+
+		// Git validation
+		const gitValidation = await validateGitRepo(cwd);
+		if (!gitValidation.valid) {
+			ctx.ui.notify(gitValidation.error!, "error");
+			return;
+		}
+
+		const gitClean = await checkGitClean(cwd);
+		if (!gitClean.clean) {
+			ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
+			return;
+		}
+
+		// Switch to pipeline branch
+		if (state.pipelineBranch) {
+			const currentBranch = await getCurrentBranch(cwd);
+			const pipelineBranchExistsResult = await branchExists(cwd, state.pipelineBranch);
+			if (!pipelineBranchExistsResult) {
+				ctx.ui.notify(`Pipeline branch '${state.pipelineBranch}' no longer exists.`, "error");
+				return;
+			}
+			if (currentBranch !== state.pipelineBranch) {
+				ctx.ui.notify(`Switching to pipeline branch: ${state.pipelineBranch}`, "info");
+				const switchResult = await switchToBranch(cwd, state.pipelineBranch);
+				if (!switchResult.success) {
+					ctx.ui.notify(`Failed to switch to pipeline branch: ${switchResult.error}`, "error");
+					return;
+				}
+			}
+
+			if (state.errorStash) {
+				const stashStillExists = await stashExists(cwd, state.errorStash);
+				if (stashStillExists) {
+					ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+					await dropStash(cwd, state.errorStash);
+				}
+				state.errorStash = undefined;
+				if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+				else saveEpicState(cwd, state as EpicState);
+			}
+		}
+
+		ctx.ui.notify(formatStepBanner(
+			`RESUMING ${levelLabel.toUpperCase()}`,
+			`ID: ${state.id}`,
+			"🔄"
+		), "info");
+		ctx.ui.notify(`Current stage: ${formatHierarchyStage(state.stage)}`, "info");
+
+		const configResult = loadPipelineConfig(cwd);
+		if (!configResult.success) {
+			ctx.ui.notify(configResult.error, "error");
+			return;
+		}
+
+		await runHierarchyPipeline(state, cwd, configResult.config, ctx);
+	}
+
+	// ---- /plan command ----
+
+	pi.registerCommand("plan", {
+		description: "Unified entry point for planning. Assesses scope and recommends roadmap/epic/feature level. Flags: --quick, --roadmap, --epic, --feature",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const argsStr = args || "";
+			const isQuick = argsStr.includes("--quick");
+			const forceRoadmap = argsStr.includes("--roadmap");
+			const forceEpic = argsStr.includes("--epic");
+			const forceFeature = argsStr.includes("--feature");
+
+			const description = argsStr
+				.replace("--quick", "")
+				.replace("--roadmap", "")
+				.replace("--epic", "")
+				.replace("--feature", "")
+				.replace(/\s+/g, " ")
+				.trim();
+
+			if (!description) {
+				ctx.ui.notify("Usage: /plan [--quick] [--roadmap|--epic|--feature] <description>", "error");
+				return;
+			}
+
+			// If a level was explicitly specified, route directly
+			if (forceRoadmap) {
+				await startHierarchyPipeline("roadmap", description, isQuick, ctx);
+				return;
+			}
+			if (forceEpic) {
+				await startHierarchyPipeline("epic", description, isQuick, ctx);
+				return;
+			}
+			if (forceFeature) {
+				// Delegate to existing /spec command — notify user to run it
+				ctx.ui.notify(`Recommendation: Feature level. Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`, "info");
+				return;
+			}
+
+			// No level specified — run scoping assessment
+			ctx.ui.notify(formatStepBanner(
+				"SCOPING ASSESSMENT",
+				"Evaluating the right planning level for your request",
+				"🔎"
+			), "info");
+
+			const levelChoices = [
+				"Roadmap (large initiative → multiple epics, months of work)",
+				"Epic (medium effort → multiple feature specs, weeks of work)",
+				"Feature (single spec → direct implementation, days of work)",
+			];
+
+			const choice = await ctx.ui.select(
+				`What level of planning does "${description.slice(0, 60)}${description.length > 60 ? '...' : ''}" need?`,
+				levelChoices
+			);
+
+			if (choice === levelChoices[0]) {
+				await startHierarchyPipeline("roadmap", description, isQuick, ctx);
+			} else if (choice === levelChoices[1]) {
+				await startHierarchyPipeline("epic", description, isQuick, ctx);
+			} else {
+				ctx.ui.notify(`Selected: Feature level. Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`, "info");
+			}
+		},
+	});
+
+	// ---- /roadmap commands ----
+
+	pi.registerCommand("roadmap", {
+		description: "Create a roadmap (high-level initiative → epics). Use --quick to skip discovery.",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const argsStr = args || "";
+			const isQuick = argsStr.includes("--quick");
+			const description = argsStr.replace("--quick", "").replace(/\s+/g, " ").trim();
+
+			if (!description) {
+				ctx.ui.notify("Usage: /roadmap [--quick] <description>", "error");
+				return;
+			}
+
+			// Check for existing active roadmap
+			const cwd = ctx.cwd;
+			const existingPipeline = getLatestActiveRoadmapPipeline(cwd);
+			if (existingPipeline) {
+				const resume = await ctx.ui.confirm(
+					"Active Roadmap Found",
+					`There's an active roadmap:\n${formatRoadmapState(existingPipeline)}\n\nStart a NEW roadmap? (No = cancel)`
+				);
+				if (!resume) {
+					ctx.ui.notify("Use /roadmap-resume to continue the existing roadmap", "info");
+					return;
+				}
+			}
+
+			await startHierarchyPipeline("roadmap", description, isQuick, ctx);
+		},
+	});
+
+	pi.registerCommand("roadmap-resume", {
+		description: "Resume an active roadmap pipeline",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+			await resumeHierarchyPipeline("roadmap", (args || "").trim() || undefined, ctx);
+		},
+	});
+
+	pi.registerCommand("roadmap-status", {
+		description: "Show roadmap status with hierarchical progress",
+		handler: async (args, ctx) => {
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: RoadmapState | null;
+			if (pipelineId) {
+				state = loadRoadmapState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Roadmap not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveRoadmapPipeline(cwd);
+				if (!state) {
+					const states = listRoadmapStates(cwd);
+					if (states.length === 0) {
+						ctx.ui.notify("No roadmaps found. Use /roadmap to start one.", "info");
+						return;
+					}
+					state = states[0];
+				}
+			}
+
+			ctx.ui.notify(formatRoadmapState(state), "info");
+
+			// Show child epic statuses
+			if (state.children.length > 0) {
+				for (const child of state.children) {
+					if (child.childPipelineId) {
+						const epicState = loadEpicState(cwd, child.childPipelineId);
+						if (epicState) {
+							child.childStatus = epicState.stage === "completed" ? "completed"
+								: epicState.stage === "cancelled" ? "cancelled"
+								: "in_progress";
+						}
+					}
+				}
+				// Re-display with updated statuses
+				saveRoadmapState(cwd, state);
+			}
+		},
+	});
+
+	pi.registerCommand("roadmap-list", {
+		description: "List all roadmaps",
+		handler: async (_args, ctx) => {
+			const cwd = ctx.cwd;
+			const states = listRoadmapStates(cwd);
+
+			if (states.length === 0) {
+				ctx.ui.notify("No roadmaps found. Use /roadmap to start one.", "info");
+				return;
+			}
+
+			const lines: string[] = [];
+			lines.push(formatDivider(60));
+			lines.push(`  🗺️ Roadmaps (${states.length} total)`);
+			lines.push(formatDivider(60));
+			lines.push("");
+
+			for (const state of states) {
+				let statusIcon = "  ";
+				if (state.stage === "completed") statusIcon = "✅";
+				else if (state.stage === "cancelled") statusIcon = "🚫";
+				else if (state.lastError) statusIcon = "❌";
+				else statusIcon = "▶️";
+
+				lines.push(`${statusIcon} ${state.id || "unknown"}`);
+				const desc = state.description || "(no description)";
+				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
+				lines.push(`   Stage: ${formatHierarchyStage(state.stage)}`);
+				if (state.children.length > 0) {
+					const completed = state.children.filter(c => c.childStatus === "completed").length;
+					lines.push(`   Children: ${completed}/${state.children.length} completed`);
+				}
+				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
+				lines.push(`   Updated: ${state.updatedAt}`);
+				lines.push("");
+			}
+
+			lines.push(formatDivider(60));
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
+
+	pi.registerCommand("roadmap-cancel", {
+		description: "Cancel an active roadmap pipeline",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: RoadmapState | null;
+			if (pipelineId) {
+				state = loadRoadmapState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Roadmap not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveRoadmapPipeline(cwd);
+				if (!state) {
+					ctx.ui.notify("No active roadmap to cancel.", "info");
+					return;
+				}
+			}
+
+			if (state.stage === "completed" || state.stage === "cancelled") {
+				ctx.ui.notify("Roadmap is already finished.", "info");
+				return;
+			}
+
+			const confirm = await ctx.ui.confirm(
+				"Cancel Roadmap?",
+				`Cancel roadmap ${state.id}?\n\nYou can resume later with /roadmap-resume.`
+			);
+
+			if (confirm) {
+				if (state.stage !== "cancelled") {
+					state.stageBeforeCancellation = state.stage;
+				}
+				state.stage = "cancelled";
+				saveRoadmapState(cwd, state);
+
+				clearPipelineWidget(ctx);
+
+				if (state.pipelineBranch) {
+					ctx.ui.notify(`Roadmap cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
+					if (state.originalBranch) {
+						const switchResult = await switchToBranch(cwd, state.originalBranch);
+						if (switchResult.success) {
+							ctx.ui.notify(`Switched back to '${state.originalBranch}'`, "info");
+						}
+					}
+				} else {
+					ctx.ui.notify("Roadmap cancelled. Resume with /roadmap-resume", "info");
+				}
+			}
+		},
+	});
+
+	// ---- /epic commands ----
+
+	pi.registerCommand("epic", {
+		description: "Create an epic (medium effort → feature specs). Use --quick to skip discovery, --roadmap <id> to link to a roadmap.",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const argsStr = args || "";
+			const isQuick = argsStr.includes("--quick");
+
+			// Extract --roadmap <id> flag
+			let parentId: string | undefined;
+			const roadmapMatch = argsStr.match(/--roadmap\s+(\S+)/);
+			if (roadmapMatch) {
+				parentId = roadmapMatch[1];
+			}
+
+			const description = argsStr
+				.replace("--quick", "")
+				.replace(/--roadmap\s+\S+/, "")
+				.replace(/\s+/g, " ")
+				.trim();
+
+			if (!description) {
+				ctx.ui.notify("Usage: /epic [--quick] [--roadmap <id>] <description>", "error");
+				return;
+			}
+
+			// Check for existing active epic
+			const cwd = ctx.cwd;
+			const existingPipeline = getLatestActiveEpicPipeline(cwd);
+			if (existingPipeline) {
+				const resume = await ctx.ui.confirm(
+					"Active Epic Found",
+					`There's an active epic:\n${formatEpicState(existingPipeline)}\n\nStart a NEW epic? (No = cancel)`
+				);
+				if (!resume) {
+					ctx.ui.notify("Use /epic-resume to continue the existing epic", "info");
+					return;
+				}
+			}
+
+			// Validate parent if specified
+			if (parentId) {
+				const parentState = loadRoadmapState(cwd, parentId);
+				if (!parentState) {
+					ctx.ui.notify(`Parent roadmap not found: ${parentId}`, "error");
+					return;
+				}
+				if (!parentState.docApproved) {
+					ctx.ui.notify("Parent roadmap has not been approved yet.", "error");
+					return;
+				}
+			}
+
+			await startHierarchyPipeline("epic", description, isQuick, ctx, parentId, parentId ? "roadmap" : undefined);
+		},
+	});
+
+	pi.registerCommand("epic-resume", {
+		description: "Resume an active epic pipeline",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+			await resumeHierarchyPipeline("epic", (args || "").trim() || undefined, ctx);
+		},
+	});
+
+	pi.registerCommand("epic-status", {
+		description: "Show epic status with hierarchical progress",
+		handler: async (args, ctx) => {
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: EpicState | null;
+			if (pipelineId) {
+				state = loadEpicState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Epic not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveEpicPipeline(cwd);
+				if (!state) {
+					const states = listEpicStates(cwd);
+					if (states.length === 0) {
+						ctx.ui.notify("No epics found. Use /epic to start one.", "info");
+						return;
+					}
+					state = states[0];
+				}
+			}
+
+			ctx.ui.notify(formatEpicState(state), "info");
+
+			// Show child spec statuses
+			if (state.children.length > 0) {
+				for (const child of state.children) {
+					if (child.childPipelineId) {
+						const specState = loadSpecState(cwd, child.childPipelineId);
+						if (specState) {
+							child.childStatus = specState.stage === "completed" ? "completed"
+								: specState.stage === "cancelled" ? "cancelled"
+								: "in_progress";
+						}
+					}
+				}
+				saveEpicState(cwd, state);
+			}
+		},
+	});
+
+	pi.registerCommand("epic-list", {
+		description: "List all epics",
+		handler: async (_args, ctx) => {
+			const cwd = ctx.cwd;
+			const states = listEpicStates(cwd);
+
+			if (states.length === 0) {
+				ctx.ui.notify("No epics found. Use /epic to start one.", "info");
+				return;
+			}
+
+			const lines: string[] = [];
+			lines.push(formatDivider(60));
+			lines.push(`  📋 Epics (${states.length} total)`);
+			lines.push(formatDivider(60));
+			lines.push("");
+
+			for (const state of states) {
+				let statusIcon = "  ";
+				if (state.stage === "completed") statusIcon = "✅";
+				else if (state.stage === "cancelled") statusIcon = "🚫";
+				else if (state.lastError) statusIcon = "❌";
+				else statusIcon = "▶️";
+
+				lines.push(`${statusIcon} ${state.id || "unknown"}`);
+				const desc = state.description || "(no description)";
+				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
+				lines.push(`   Stage: ${formatHierarchyStage(state.stage)}`);
+				if (state.parentId) lines.push(`   Parent: ${state.parentType}:${state.parentId}`);
+				if (state.children.length > 0) {
+					const completed = state.children.filter(c => c.childStatus === "completed").length;
+					lines.push(`   Children: ${completed}/${state.children.length} completed`);
+				}
+				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
+				lines.push(`   Updated: ${state.updatedAt}`);
+				lines.push("");
+			}
+
+			lines.push(formatDivider(60));
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
+
+	pi.registerCommand("epic-cancel", {
+		description: "Cancel an active epic pipeline",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: EpicState | null;
+			if (pipelineId) {
+				state = loadEpicState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Epic not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveEpicPipeline(cwd);
+				if (!state) {
+					ctx.ui.notify("No active epic to cancel.", "info");
+					return;
+				}
+			}
+
+			if (state.stage === "completed" || state.stage === "cancelled") {
+				ctx.ui.notify("Epic is already finished.", "info");
+				return;
+			}
+
+			const confirm = await ctx.ui.confirm(
+				"Cancel Epic?",
+				`Cancel epic ${state.id}?\n\nYou can resume later with /epic-resume.`
+			);
+
+			if (confirm) {
+				if (state.stage !== "cancelled") {
+					state.stageBeforeCancellation = state.stage;
+				}
+				state.stage = "cancelled";
+				saveEpicState(cwd, state);
+
+				clearPipelineWidget(ctx);
+
+				if (state.pipelineBranch) {
+					ctx.ui.notify(`Epic cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
+					if (state.originalBranch) {
+						const switchResult = await switchToBranch(cwd, state.originalBranch);
+						if (switchResult.success) {
+							ctx.ui.notify(`Switched back to '${state.originalBranch}'`, "info");
+						}
+					}
+				} else {
+					ctx.ui.notify("Epic cancelled. Resume with /epic-resume", "info");
+				}
+			}
+		},
+	});
+
+	// ---- /plan-overview command ----
+
+	pi.registerCommand("plan-overview", {
+		description: "Show full hierarchy tree from any level. Usage: /plan-overview [id]",
+		handler: async (args, ctx) => {
+			const cwd = ctx.cwd;
+			const targetId = (args || "").trim();
+
+			const lines: string[] = [];
+			lines.push(formatDivider(65));
+			lines.push("  🌳 Plan Overview — Hierarchical Work Tree");
+			lines.push(formatDivider(65));
+			lines.push("");
+
+			const roadmaps = listRoadmapStates(cwd);
+			const epics = listEpicStates(cwd);
+			const specs = listSpecStates(cwd);
+
+			// If a specific ID was given, find it and show its tree
+			if (targetId) {
+				// Check if it's a roadmap
+				const roadmap = loadRoadmapState(cwd, targetId);
+				if (roadmap) {
+					renderRoadmapTree(lines, roadmap, cwd);
+					lines.push("");
+					lines.push(formatDivider(65));
+					ctx.ui.notify(lines.join("\n"), "info");
+					return;
+				}
+
+				// Check if it's an epic
+				const epic = loadEpicState(cwd, targetId);
+				if (epic) {
+					// If epic has a parent roadmap, show from there
+					if (epic.parentId) {
+						const parentRoadmap = loadRoadmapState(cwd, epic.parentId);
+						if (parentRoadmap) {
+							renderRoadmapTree(lines, parentRoadmap, cwd);
+							lines.push("");
+							lines.push(formatDivider(65));
+							ctx.ui.notify(lines.join("\n"), "info");
+							return;
+						}
+					}
+					// Show standalone epic tree
+					renderEpicTree(lines, epic, cwd, "");
+					lines.push("");
+					lines.push(formatDivider(65));
+					ctx.ui.notify(lines.join("\n"), "info");
+					return;
+				}
+
+				// Check if it's a spec
+				const spec = loadSpecState(cwd, targetId);
+				if (spec) {
+					lines.push(`  📄 Feature: ${spec.description?.slice(0, 50) || "(no description)"}`);
+					lines.push(`     Stage: ${formatSpecStage(spec.stage)}`);
+					lines.push(`     Spec: ${spec.specPath}`);
+					lines.push("");
+					lines.push(formatDivider(65));
+					ctx.ui.notify(lines.join("\n"), "info");
+					return;
+				}
+
+				ctx.ui.notify(`No pipeline found with ID: ${targetId}`, "error");
+				return;
+			}
+
+			// No ID specified — show all hierarchies
+			if (roadmaps.length === 0 && epics.length === 0 && specs.length === 0) {
+				ctx.ui.notify("No pipelines found. Use /plan, /roadmap, /epic, or /spec to get started.", "info");
+				return;
+			}
+
+			// Show roadmaps and their children
+			for (const roadmap of roadmaps) {
+				renderRoadmapTree(lines, roadmap, cwd);
+				lines.push("");
+			}
+
+			// Show standalone epics (not under a roadmap)
+			const standaloneEpics = epics.filter(e => !e.parentId);
+			for (const epic of standaloneEpics) {
+				renderEpicTree(lines, epic, cwd, "");
+				lines.push("");
+			}
+
+			// Show standalone specs (not under an epic)
+			const epicChildSpecIds = new Set<string>();
+			for (const epic of epics) {
+				for (const child of epic.children) {
+					if (child.childPipelineId) epicChildSpecIds.add(child.childPipelineId);
+				}
+			}
+			const standaloneSpecs = specs.filter(s => !epicChildSpecIds.has(s.id));
+			if (standaloneSpecs.length > 0) {
+				lines.push("  📄 Standalone Features:");
+				for (const spec of standaloneSpecs.slice(0, 10)) {
+					const stageIcon = spec.stage === "completed" ? "✅" : spec.stage === "cancelled" ? "🚫" : "▶️";
+					lines.push(`     ${stageIcon} ${spec.description?.slice(0, 45) || spec.id} (${formatSpecStage(spec.stage)})`);
+				}
+				if (standaloneSpecs.length > 10) {
+					lines.push(`     ... and ${standaloneSpecs.length - 10} more`);
+				}
+				lines.push("");
+			}
+
+			lines.push(formatDivider(65));
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
+
+	/** Helper: render a roadmap tree into lines */
+	function renderRoadmapTree(lines: string[], roadmap: RoadmapState, cwd: string): void {
+		const stageIcon = roadmap.stage === "completed" ? "✅" : roadmap.stage === "cancelled" ? "🚫" : "▶️";
+		lines.push(`  ${stageIcon} 🗺️ Roadmap: ${roadmap.description?.slice(0, 45) || roadmap.id}`);
+		lines.push(`     Stage: ${formatHierarchyStage(roadmap.stage)} | ID: ${roadmap.id}`);
+
+		if (roadmap.children.length > 0) {
+			for (let i = 0; i < roadmap.children.length; i++) {
+				const child = roadmap.children[i];
+				const isLast = i === roadmap.children.length - 1;
+				const prefix = isLast ? "  └── " : "  ├── ";
+				const childPrefix = isLast ? "      " : "  │   ";
+
+				if (child.childPipelineId) {
+					const epicState = loadEpicState(cwd, child.childPipelineId);
+					if (epicState) {
+						// Update status
+						child.childStatus = epicState.stage === "completed" ? "completed"
+							: epicState.stage === "cancelled" ? "cancelled"
+							: (epicState.stage !== "approved" && epicState.stage !== "in_progress") ? "pending" : "in_progress";
+
+						const epicIcon = child.childStatus === "completed" ? "✅"
+							: child.childStatus === "in_progress" ? "🔄"
+							: child.childStatus === "cancelled" ? "🚫"
+							: "⬜";
+						lines.push(`${prefix}${epicIcon} ${child.number}. ${child.name} [${child.priority}]`);
+						renderEpicTree(lines, epicState, cwd, childPrefix);
+						continue;
+					}
+				}
+
+				// Child not yet created
+				const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
+				lines.push(`${prefix}⬜ ${child.number}. ${child.name} [${child.priority}]${deps} — not started`);
+			}
+		}
+	}
+
+	/** Helper: render an epic tree into lines */
+	function renderEpicTree(lines: string[], epic: EpicState, cwd: string, indent: string): void {
+		if (!indent) {
+			const stageIcon = epic.stage === "completed" ? "✅" : epic.stage === "cancelled" ? "🚫" : "▶️";
+			lines.push(`  ${stageIcon} 📋 Epic: ${epic.description?.slice(0, 45) || epic.id}`);
+			lines.push(`     Stage: ${formatHierarchyStage(epic.stage)} | ID: ${epic.id}`);
+			indent = "  ";
+		}
+
+		if (epic.children.length > 0) {
+			for (let i = 0; i < epic.children.length; i++) {
+				const child = epic.children[i];
+				const isLast = i === epic.children.length - 1;
+				const prefix = `${indent}${isLast ? "└── " : "├── "}`;
+
+				if (child.childPipelineId) {
+					const specState = loadSpecState(cwd, child.childPipelineId);
+					if (specState) {
+						child.childStatus = specState.stage === "completed" ? "completed"
+							: specState.stage === "cancelled" ? "cancelled"
+							: "in_progress";
+						const specIcon = child.childStatus === "completed" ? "✅"
+							: child.childStatus === "in_progress" ? "🔄"
+							: child.childStatus === "cancelled" ? "🚫"
+							: "⬜";
+						lines.push(`${prefix}${specIcon} ${child.number}. ${child.name} [${child.priority}]`);
+						continue;
+					}
+				}
+
+				const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
+				lines.push(`${prefix}⬜ ${child.number}. ${child.name} [${child.priority}]${deps} — not started`);
+			}
+		}
+	}
+
+	// ============================================
 	// SHARED TOOL (programmatic access)
 	// ============================================
 
@@ -1917,6 +2864,11 @@ You MUST include ALL relevant context in the task.`,
 					Type.Literal("codeReviewer"),
 					Type.Literal("commitMessageWriter"),
 					Type.Literal("addressReview"),
+					Type.Literal("scopingAgent"),
+					Type.Literal("roadmapDrafter"),
+					Type.Literal("roadmapReviewer"),
+					Type.Literal("epicDrafter"),
+					Type.Literal("epicReviewer"),
 				],
 				{ description: "Role/system prompt to use" }
 			),

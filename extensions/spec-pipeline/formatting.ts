@@ -5,8 +5,12 @@
 import type {
 	SpecStage,
 	ImplementationStage,
+	HierarchyStage,
 	SpecState,
 	ImplementationState,
+	RoadmapState,
+	EpicState,
+	HierarchyState,
 	ModelConfig,
 	TieredModelConfig,
 	ProjectConfig,
@@ -146,6 +150,11 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 	lines.push(`    codeReviewer      : ${formatTieredConfig(config.models.codeReviewer)}`);
 	lines.push(`    addressReview     : ${formatModelConfig(config.models.addressReview)}`);
 	lines.push(`    commitMessageWriter: haiku/off (fixed)`);
+	lines.push(`    scopingAgent      : ${formatModelConfig(config.models.scopingAgent)}`);
+	lines.push(`    roadmapDrafter    : ${formatModelConfig(config.models.roadmapDrafter)}`);
+	lines.push(`    roadmapReviewer   : ${formatTieredConfig(config.models.roadmapReviewer)}`);
+	lines.push(`    epicDrafter       : ${formatModelConfig(config.models.epicDrafter)}`);
+	lines.push(`    epicReviewer      : ${formatTieredConfig(config.models.epicReviewer)}`);
 	lines.push("");
 	
 	// Review cycles (per reviewer)
@@ -157,6 +166,8 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 	lines.push(`    specReviewer: ${formatCycles(config.reviewCycles.specReviewer)}`);
 	lines.push(`    planReviewer: ${formatCycles(config.reviewCycles.planReviewer)}`);
 	lines.push(`    codeReviewer: ${formatCycles(config.reviewCycles.codeReviewer)}`);
+	lines.push(`    roadmapReviewer: ${formatCycles(config.reviewCycles.roadmapReviewer)}`);
+	lines.push(`    epicReviewer: ${formatCycles(config.reviewCycles.epicReviewer)}`);
 	lines.push("");
 	
 	// Spec template & conventions
@@ -202,6 +213,24 @@ export function formatImplStage(stage: ImplementationStage): string {
 	const stageNames: Record<ImplementationStage, string> = {
 		plan_generation: "📋 Plan Generation",
 		implementation: "🚀 Implementation",
+		completed: "✅ Completed",
+		cancelled: "❌ Cancelled",
+	};
+	return stageNames[stage] || stage;
+}
+
+/**
+ * Format hierarchy stage (roadmap/epic) for display
+ */
+export function formatHierarchyStage(stage: HierarchyStage): string {
+	const stageNames: Record<HierarchyStage, string> = {
+		scoping: "🔎 Scoping",
+		discovery: "🔍 Discovery",
+		drafting: "📝 Drafting",
+		review: "🔍 Review",
+		user_approval: "👤 Awaiting Approval",
+		approved: "✅ Approved",
+		in_progress: "🚀 In Progress",
 		completed: "✅ Completed",
 		cancelled: "❌ Cancelled",
 	};
@@ -462,6 +491,123 @@ export function formatImplState(state: ImplementationState): string {
 	lines.push("");
 	lines.push(formatDivider(50));
 	
+	return lines.join("\n");
+}
+
+// ============================================
+// Hierarchy State Formatting
+// ============================================
+
+/**
+ * Format roadmap state for display
+ */
+export function formatRoadmapState(state: RoadmapState): string {
+	const lines: string[] = [];
+
+	lines.push(formatDivider(50));
+	lines.push(`  Roadmap: ${state.id || "unknown"}`);
+	lines.push(formatDivider(50));
+	lines.push("");
+
+	lines.push("📋 Basic Information");
+	const description = state.description || "(no description)";
+	lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
+	lines.push(formatKeyValue("  Stage", formatHierarchyStage(state.stage)));
+	lines.push(formatKeyValue("  Created", state.createdAt));
+	lines.push(formatKeyValue("  Updated", state.updatedAt));
+	lines.push(formatKeyValue("  Document", state.docFilename));
+
+	if (state.pipelineBranch || state.originalBranch) {
+		lines.push("");
+		lines.push("🔀 Git Branch");
+		if (state.pipelineBranch) lines.push(formatKeyValue("  Branch", state.pipelineBranch));
+		if (state.originalBranch && state.pipelineBranch) lines.push(formatKeyValue("  Original", state.originalBranch));
+	}
+
+	if (state.children.length > 0) {
+		lines.push("");
+		lines.push("📦 Child Epics");
+		const completed = state.children.filter(c => c.childStatus === "completed").length;
+		const inProgress = state.children.filter(c => c.childStatus === "in_progress").length;
+		const pending = state.children.filter(c => !c.childStatus || c.childStatus === "pending").length;
+		lines.push(formatKeyValue("  Total", String(state.children.length)));
+		lines.push(formatKeyValue("  Progress", `${completed} done, ${inProgress} active, ${pending} pending`));
+		lines.push("");
+		for (const child of state.children) {
+			const statusIcon = child.childStatus === "completed" ? "✅"
+				: child.childStatus === "in_progress" ? "🔄"
+				: child.childStatus === "cancelled" ? "🚫"
+				: "⬜";
+			const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
+			lines.push(`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`);
+		}
+	}
+
+	if (state.lastError) {
+		lines.push("");
+		formatErrorSection(lines, state.lastError);
+	}
+
+	lines.push("");
+	lines.push(formatDivider(50));
+	return lines.join("\n");
+}
+
+/**
+ * Format epic state for display
+ */
+export function formatEpicState(state: EpicState): string {
+	const lines: string[] = [];
+
+	lines.push(formatDivider(50));
+	lines.push(`  Epic: ${state.id || "unknown"}`);
+	lines.push(formatDivider(50));
+	lines.push("");
+
+	lines.push("📋 Basic Information");
+	const description = state.description || "(no description)";
+	lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
+	lines.push(formatKeyValue("  Stage", formatHierarchyStage(state.stage)));
+	lines.push(formatKeyValue("  Created", state.createdAt));
+	lines.push(formatKeyValue("  Updated", state.updatedAt));
+	lines.push(formatKeyValue("  Document", state.docFilename));
+	if (state.parentId) {
+		lines.push(formatKeyValue("  Parent", `${state.parentType || "roadmap"}:${state.parentId}`));
+	}
+
+	if (state.pipelineBranch || state.originalBranch) {
+		lines.push("");
+		lines.push("🔀 Git Branch");
+		if (state.pipelineBranch) lines.push(formatKeyValue("  Branch", state.pipelineBranch));
+		if (state.originalBranch && state.pipelineBranch) lines.push(formatKeyValue("  Original", state.originalBranch));
+	}
+
+	if (state.children.length > 0) {
+		lines.push("");
+		lines.push("📦 Child Features");
+		const completed = state.children.filter(c => c.childStatus === "completed").length;
+		const inProgress = state.children.filter(c => c.childStatus === "in_progress").length;
+		const pending = state.children.filter(c => !c.childStatus || c.childStatus === "pending").length;
+		lines.push(formatKeyValue("  Total", String(state.children.length)));
+		lines.push(formatKeyValue("  Progress", `${completed} done, ${inProgress} active, ${pending} pending`));
+		lines.push("");
+		for (const child of state.children) {
+			const statusIcon = child.childStatus === "completed" ? "✅"
+				: child.childStatus === "in_progress" ? "🔄"
+				: child.childStatus === "cancelled" ? "🚫"
+				: "⬜";
+			const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
+			lines.push(`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`);
+		}
+	}
+
+	if (state.lastError) {
+		lines.push("");
+		formatErrorSection(lines, state.lastError);
+	}
+
+	lines.push("");
+	lines.push(formatDivider(50));
 	return lines.join("\n");
 }
 

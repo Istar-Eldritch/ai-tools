@@ -32,6 +32,10 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 	implementer: { model: "opus", thinking: "high" },         // Complex code generation
 	addressReview: { model: "opus", thinking: "high" },       // Complex fix implementation
 	agentCommitMessageWriter: { model: "haiku", thinking: "off" },  // Fast, cheap commit message generation (R5)
+	// Hierarchy roles
+	scopingAgent: { model: "sonnet", thinking: "medium" },    // Scoping assessment doesn't need Opus
+	roadmapDrafter: { model: "opus", thinking: "high" },      // Complex decomposition task
+	epicDrafter: { model: "opus", thinking: "high" },         // Complex decomposition task
 } as const;
 
 /**
@@ -50,6 +54,15 @@ export const DEFAULT_TIERED_CONFIGS: Record<string, TieredModelConfig> = {
 		cheap: { model: "sonnet", thinking: "medium" },
 		expensive: { model: "opus", thinking: "high" },
 	},
+	// Hierarchy reviewers
+	roadmapReviewer: {
+		cheap: { model: "sonnet", thinking: "medium" },
+		expensive: { model: "opus", thinking: "high" },
+	},
+	epicReviewer: {
+		cheap: { model: "sonnet", thinking: "medium" },
+		expensive: { model: "opus", thinking: "high" },
+	},
 } as const;
 
 /**
@@ -65,6 +78,8 @@ export const DEFAULT_REVIEW_CYCLES: NormalizedReviewCycles = {
 	specReviewer: { ...DEFAULT_REVIEWER_CYCLES },
 	planReviewer: { ...DEFAULT_REVIEWER_CYCLES },
 	codeReviewer: { ...DEFAULT_REVIEWER_CYCLES },
+	roadmapReviewer: { ...DEFAULT_REVIEWER_CYCLES },
+	epicReviewer: { ...DEFAULT_REVIEWER_CYCLES },
 } as const;
 
 // ============================================
@@ -131,7 +146,8 @@ export function formatValidationErrors(errors: ConfigValidationError[]): string 
 function isPerReviewerFormat(config: ReviewCyclesConfig): config is PerReviewerCycles {
 	if (!config || typeof config !== "object") return false;
 	// If it has any of the reviewer keys, it's per-reviewer format
-	return "specReviewer" in config || "planReviewer" in config || "codeReviewer" in config;
+	return "specReviewer" in config || "planReviewer" in config || "codeReviewer" in config
+		|| "roadmapReviewer" in config || "epicReviewer" in config;
 }
 
 /**
@@ -159,6 +175,14 @@ function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined)
 				cheap: userReviewCycles.codeReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
 				expensive: userReviewCycles.codeReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
 			},
+			roadmapReviewer: {
+				cheap: userReviewCycles.roadmapReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
+				expensive: userReviewCycles.roadmapReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
+			},
+			epicReviewer: {
+				cheap: userReviewCycles.epicReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
+				expensive: userReviewCycles.epicReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
+			},
 		};
 	}
 	
@@ -169,6 +193,8 @@ function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined)
 		specReviewer: { cheap: globalCheap, expensive: globalExpensive },
 		planReviewer: { cheap: globalCheap, expensive: globalExpensive },
 		codeReviewer: { cheap: globalCheap, expensive: globalExpensive },
+		roadmapReviewer: { cheap: globalCheap, expensive: globalExpensive },
+		epicReviewer: { cheap: globalCheap, expensive: globalExpensive },
 	};
 }
 
@@ -196,6 +222,12 @@ function mergeWithDefaults(
 		codeReviewer: userModels?.codeReviewer ?? DEFAULT_TIERED_CONFIGS.codeReviewer,
 		addressReview: userModels?.addressReview ?? DEFAULT_MODEL_CONFIGS.addressReview,
 		agentCommitMessageWriter: userModels?.agentCommitMessageWriter ?? DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
+		// Hierarchy roles
+		scopingAgent: userModels?.scopingAgent ?? DEFAULT_MODEL_CONFIGS.scopingAgent,
+		roadmapDrafter: userModels?.roadmapDrafter ?? DEFAULT_MODEL_CONFIGS.roadmapDrafter,
+		roadmapReviewer: userModels?.roadmapReviewer ?? DEFAULT_TIERED_CONFIGS.roadmapReviewer,
+		epicDrafter: userModels?.epicDrafter ?? DEFAULT_MODEL_CONFIGS.epicDrafter,
+		epicReviewer: userModels?.epicReviewer ?? DEFAULT_TIERED_CONFIGS.epicReviewer,
 	};
 	
 	// Normalize review cycles to per-reviewer format
