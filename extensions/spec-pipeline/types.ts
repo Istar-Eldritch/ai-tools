@@ -82,6 +82,12 @@ export const SpecPipelineConfigSchema = Type.Object({
 	specsDir: Type.Optional(Type.String()),
 	testCommand: Type.Optional(Type.Union([Type.String(), Type.Null()])),
 	contextFiles: Type.Optional(Type.Array(Type.String())),
+	// Explicit paths to spec template and conventions files (overrides auto-discovery)
+	specTemplatePath: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	specConventionsPath: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	// Output format for generated specs: "md" (default) or file extension from template
+	// Auto-detected from existing specs or template format when not specified
+	specFormat: Type.Optional(Type.String()),
 	discovery: Type.Optional(Type.Object({
 		enabled: Type.Optional(Type.Boolean()),
 		maxRounds: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
@@ -172,6 +178,16 @@ export interface ProjectConfig {
 	testCommand: string | null;
 	contextFiles: string[];
 	projectContext: string;
+	// Spec template content (auto-discovered or from config)
+	specTemplate: string | null;
+	// Path to spec template file (for reference in prompts)
+	specTemplatePath: string | null;
+	// Spec conventions content (auto-discovered or from config)
+	specConventions: string | null;
+	// Path to spec conventions file (for reference in prompts)
+	specConventionsPath: string | null;
+	// Output format for generated specs (file extension without dot, e.g. "md", "typ")
+	specFormat: string;
 	// Discovery configuration
 	discovery: {
 		enabled: boolean;         // Whether discovery runs by default

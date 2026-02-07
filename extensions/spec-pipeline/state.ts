@@ -373,9 +373,10 @@ export function createInitialSpecState(
 	shortName: string,
 	specsDir: string,
 	discoveryConfig: ProjectConfig["discovery"],
-	skipDiscovery: boolean = false
+	skipDiscovery: boolean = false,
+	specFormat: string = "md"
 ): SpecState {
-	const specFilename = `${specTimestamp}_spec_${shortName}.md`;
+	const specFilename = `${specTimestamp}_spec_${shortName}.${specFormat}`;
 	const specPath = path.join(specsDir, specFilename);
 	const now = new Date().toISOString();
 	

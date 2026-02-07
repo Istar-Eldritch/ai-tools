@@ -118,7 +118,7 @@ import { runSpecPipeline } from "./spec-pipeline.ts";
 import { runImplementPipeline } from "./implement-pipeline.ts";
 
 // Import system prompts
-import { createSystemPrompts } from "./agents-config.ts";
+import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 // ============================================
 // Helpers
@@ -214,7 +214,7 @@ export default function (pi: ExtensionAPI) {
 	 * This turns the host LLM into a discovery agent.
 	 */
 	function buildDiscoveryPromptInjection(state: SpecState, projectConfig: ProjectConfig): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 		const discoveryPrompt = SYSTEM_PROMPTS.discoveryAgent;
 
 		let conversationContext = "";
@@ -255,7 +255,7 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only a
 	 * This turns the host LLM into a spec drafter.
 	 */
 	function buildDraftingPromptInjection(state: SpecState, projectConfig: ProjectConfig): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 		const specDrafterPrompt = SYSTEM_PROMPTS.specDrafter;
 
 		const fullSpecPath = path.join(activeCwd, state.specPath);
@@ -505,7 +505,7 @@ IMPORTANT: You are in SPEC DRAFTING MODE. Focus on creating/refining the specifi
 			"Running tiered review (cheap → expensive)...",
 		]);
 
-		const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 
 		// Run tiered spec review (subprocess-based for isolated judgment)
 		ctx.ui.notify(formatStepBanner(
@@ -896,7 +896,8 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				shortName,
 				projectConfig.specsDir,
 				projectConfig.discovery,
-				isQuick
+				isQuick,
+				projectConfig.specFormat
 			);
 			
 			state.originalBranch = originalBranch;
@@ -1935,7 +1936,7 @@ You MUST include ALL relevant context in the task.`,
 					isError: true,
 				};
 			}
-			const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+			const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 			
 			const result = await runAgent(
 				params.agent as "opus" | "sonnet" | "haiku",

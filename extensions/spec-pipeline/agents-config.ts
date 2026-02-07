@@ -19,17 +19,82 @@ export const THINKING_LEVELS = {
 export type AgentName = keyof typeof MODELS;
 
 /**
- * Generate system prompts with project-specific context
+ * Build SystemPromptOptions from a ProjectConfig.
+ * This extracts the relevant fields for prompt generation.
  */
-export function createSystemPrompts(projectContext: string) {
+export function buildPromptOptions(projectConfig: {
+	projectContext: string;
+	specTemplate?: string | null;
+	specTemplatePath?: string | null;
+	specConventions?: string | null;
+	specConventionsPath?: string | null;
+	specFormat?: string;
+}): SystemPromptOptions {
 	return {
-		specDrafter: `You are an expert software architect drafting technical specifications.
+		projectContext: projectConfig.projectContext,
+		specTemplate: projectConfig.specTemplate,
+		specTemplatePath: projectConfig.specTemplatePath,
+		specConventions: projectConfig.specConventions,
+		specConventionsPath: projectConfig.specConventionsPath,
+		specFormat: projectConfig.specFormat,
+	};
+}
 
-Your task is to create a clear, actionable technical specification.
+/**
+ * Options for creating system prompts
+ */
+export interface SystemPromptOptions {
+	projectContext: string;
+	specTemplate?: string | null;
+	specTemplatePath?: string | null;
+	specConventions?: string | null;
+	specConventionsPath?: string | null;
+	specFormat?: string;
+}
 
-${projectContext}
+/**
+ * Generate system prompts with project-specific context.
+ * 
+ * When specTemplate is provided, the specDrafter uses the project's template
+ * structure instead of the hardcoded default. When specConventions is provided,
+ * both specDrafter and specReviewer reference them.
+ */
+export function createSystemPrompts(projectContextOrOptions: string | SystemPromptOptions) {
+	// Support both legacy string-only and new options format
+	const options: SystemPromptOptions = typeof projectContextOrOptions === "string"
+		? { projectContext: projectContextOrOptions }
+		: projectContextOrOptions;
 
-## PART I: Requirements (Your Primary Focus)
+	const { projectContext, specTemplate, specTemplatePath, specConventions, specConventionsPath, specFormat } = options;
+	const format = specFormat ?? "md";
+
+	const hasTemplate = !!specTemplate;
+	const hasConventions = !!specConventions;
+
+	// Build the spec structure guidance section based on available templates
+	const specStructureGuidance = hasTemplate
+		? `## Spec Structure
+
+A project-specific spec template was found at \`${specTemplatePath}\`.
+The template content has been included in the Project Context section above.
+
+**You MUST follow this template's structure AND format (.${format})** when creating the spec.
+Write the spec in the same markup language as the template — if the template uses Typst syntax, write Typst; if Markdown, write Markdown.
+Adapt the template sections to the specific feature, but preserve the overall organization:
+- Keep the same section headings and ordering
+- Use the same syntax for headings, tables, callouts, and other formatting primitives as the template
+- Fill in all applicable sections
+- Remove sections that don't apply (e.g., delete the "COMPLEX SPEC" example if writing a simple spec)
+- Use the template's formatting conventions (field-list style, note boxes, etc.)
+
+${hasConventions ? `The project also has spec conventions at \`${specConventionsPath}\`.
+These conventions (included in Project Context above) define naming rules, status lifecycle, and best practices.
+Follow them for file naming, status fields, and spec organization.\n` : ""}`
+		: `## Spec Structure (Default)
+
+No project-specific spec template was found. Use this default structure:
+
+### PART I: Requirements (Your Primary Focus)
 
 Create clear, testable requirements:
 
@@ -56,34 +121,65 @@ Create clear, testable requirements:
    - List unresolved decisions that may affect requirements
    - Mark resolved questions with strikethrough
 
-## PART II: High-Level Implementation Plan
+### PART II: High-Level Implementation Plan
 
-Break work into logical phases BY CAPABILITY/FEATURE, not by implementation detail:
+Break work into logical phases BY CAPABILITY/FEATURE, not by implementation detail.`;
+
+	// Build the review conventions section
+	const reviewConventionsGuidance = hasConventions
+		? `## Project Spec Conventions
+
+The project has spec conventions at \`${specConventionsPath}\` (included in Project Context above).
+Verify the spec follows these conventions for:
+- File naming format
+- Section structure and ordering
+- Status field values
+- Best practices and anti-patterns listed in the conventions
+
+`
+		: hasTemplate
+			? `## Project Spec Template
+
+The project has a spec template at \`${specTemplatePath}\` (included in Project Context above).
+Verify the spec follows the template's structure and formatting.
+
+`
+			: "";
+
+	return {
+		specDrafter: `You are an expert software architect drafting technical specifications.
+
+Your task is to create a clear, actionable technical specification.
+
+${projectContext}
+
+${specStructureGuidance}
+
+## CRITICAL: Use Phase Table Format for Implementation Plan
+
+You MUST use this table format in your Implementation Plan section:
+
+| Phase | Focus | Effort |
+|-------|-------|--------|
+| Phase 1 | [Capability description] | X days |
+| Phase 2 | [Capability description] | X days |
+
+**Important:**
+- DO NOT create links to phase files (no markdown links, no file paths)
+- DO NOT create actual phase plan files - those will be created later during implementation
+- Just list the phases with their focus area and estimated effort
+- The phase descriptions should be high-level capabilities, not implementation details
 
 **Good phase descriptions (capability-focused):**
-- "API endpoints for job cancellation"
+- "Backend API endpoints for job cancellation"
 - "Real-time notification system"
 - "User authentication flow"
+- "Frontend UI components"
 
 **Bad phase descriptions (too detailed):**
 - "Add cancel_job method to JobManager class"
 - "Modify handle_job_cancel in routes.py lines 45-67"
-
-## CRITICAL: Use Phase Table Format
-
-You MUST use this table format in your Implementation Plan section:
-
-| Phase | Focus | Effort | Details |
-|-------|-------|--------|---------|
-| Phase 1 | [Capability description] | X days | [phase1_name.md](./YYMMDDhhmm_feature/phase1_name.md) |
-| Phase 2 | [Capability description] | X days | [phase2_name.md](./YYMMDDhhmm_feature/phase2_name.md) |
-
-Where:
-- YYMMDDhhmm = spec timestamp (will be provided in task)
-- feature = short snake_case name derived from the feature
-- phase1_name = descriptive phase name (e.g., "api_endpoints")
-
-DO NOT use inline headers like "### Phase 1: Name" - only the table format works with the pipeline.
+- "Update database schema and run migrations"
 
 ## High-Level Guidance (Optional)
 
@@ -97,24 +193,30 @@ Do NOT include:
 - Code snippets or function signatures
 - Step-by-step coding instructions
 
-Those details will be created by the planDrafter in separate phase files.
+Those details will be created by the planDrafter during the implementation phase.
 
 ## Output Format
 
 After creating the spec content, use the \`write\` tool to save it to the EXACT path provided in your task.
 Do NOT output the spec as text - you MUST write it to the file.
 
-Use proper formatting in the file:
+${hasTemplate 
+	? `The spec MUST be written in the **same format as the template** (\`.${format}\`).
+Reproduce the template's syntax and structure exactly — use the same markup language, heading styles, macros, and formatting primitives shown in the template.
+Include the standard header fields (Status, Created, Section/timestamp, etc.) as shown in the template.`
+	: `Use proper Markdown formatting in the file:
 - Header with Status: Draft, Created: YYYY-MM-DD
 - Clear section headings
 - Tables for phase plan
-- Professional tone suitable for technical documentation`,
+- Professional tone suitable for technical documentation`}`,
 
 		specReviewer: `You are a senior technical reviewer.
 
 Review the spec draft for quality and clarity.
 
 ${projectContext}
+
+${reviewConventionsGuidance}
 
 ## Review Focus Areas
 
@@ -139,18 +241,24 @@ ${projectContext}
 
 4. **Phase Table Format (CRITICAL)**
    - Phases MUST use table format, NOT inline headers
-   - Required format: | Phase | Focus | Effort | Details |
-   - Each phase must link to phase file
+   - Required format: | Phase | Focus | Effort |
+   - DO NOT include phase file links or "Details" column
+   - Phase descriptions should be high-level capabilities only
    - If using "### Phase N:" headers → mark as NEEDS_CHANGES
+   - If including phase file links or paths → mark as NEEDS_CHANGES
 
 5. **Testability**
    - Can each requirement be verified?
    - Are acceptance criteria clear?
    - Do NOT run tests yourself - you are reviewing the spec document only
 
-6. **Architecture Alignment** (if project has conventions)
+6. **Template & Convention Compliance**${hasTemplate || hasConventions ? `
+   - Does the spec follow the project's template structure?
+   - Are all required sections present?
+   - Does it use the correct naming conventions?
+   - Are status fields, dates, and metadata correct?` : `
    - Does it fit with existing project patterns?
-   - Does it reference relevant project documentation?
+   - Does it reference relevant project documentation?`}
 
 ## Review Format
 

@@ -208,6 +208,230 @@ function mergeWithDefaults(
 // Configuration Loading
 // ============================================
 
+// ============================================
+// Spec Template & Conventions Discovery
+// ============================================
+
+/** File extensions we can read as text-based templates */
+const READABLE_EXTENSIONS = new Set([".md", ".typ", ".txt", ".rst", ".adoc"]);
+
+/**
+ * Try to read a file if it exists and has a readable text extension.
+ * Returns the content or null.
+ */
+function readTextFile(filePath: string): string | null {
+	try {
+		if (!fs.existsSync(filePath)) return null;
+		const ext = path.extname(filePath).toLowerCase();
+		if (!READABLE_EXTENSIONS.has(ext)) return null;
+		const content = fs.readFileSync(filePath, "utf-8");
+		return content.trim().length > 0 ? content : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Search a directory for files matching patterns.
+ * Returns relative paths from cwd.
+ */
+function findFilesMatching(dir: string, patterns: RegExp[]): string[] {
+	const results: string[] = [];
+	try {
+		if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return results;
+		const entries = fs.readdirSync(dir);
+		for (const entry of entries) {
+			const fullPath = path.join(dir, entry);
+			const stat = fs.statSync(fullPath);
+			if (!stat.isFile()) continue;
+			for (const pattern of patterns) {
+				if (pattern.test(entry)) {
+					results.push(fullPath);
+					break;
+				}
+			}
+		}
+	} catch { /* ignore */ }
+	return results;
+}
+
+/**
+ * Discover spec template file in the project.
+ * 
+ * Priority:
+ * 1. Explicit path from config (specTemplatePath)
+ * 2. Files matching *TEMPLATE* or *template* in specs directory
+ * 3. Files matching *TEMPLATE* or *template* in common locations
+ * 
+ * Returns { path, content } or { path: null, content: null }
+ */
+export function discoverSpecTemplate(
+	cwd: string,
+	specsDir: string,
+	explicitPath?: string | null
+): { path: string | null; content: string | null } {
+	// 1. Explicit path from config
+	if (explicitPath) {
+		const fullPath = path.isAbsolute(explicitPath) 
+			? explicitPath 
+			: path.join(cwd, explicitPath);
+		const content = readTextFile(fullPath);
+		if (content) {
+			return { path: explicitPath, content };
+		}
+	}
+	
+	// Null means explicitly disabled
+	if (explicitPath === null) {
+		return { path: null, content: null };
+	}
+	
+	// 2. Search in specs directory
+	const templatePatterns = [
+		/template/i,
+	];
+	
+	const searchDirs = [
+		path.join(cwd, specsDir),
+		path.join(cwd, "docs"),
+		path.join(cwd, "specs"),
+	];
+	
+	// Deduplicate directories
+	const seen = new Set<string>();
+	for (const dir of searchDirs) {
+		const resolved = path.resolve(dir);
+		if (seen.has(resolved)) continue;
+		seen.add(resolved);
+		
+		const matches = findFilesMatching(dir, templatePatterns);
+		// Prefer files with TEMPLATE in the name (case-insensitive)
+		// Filter out _template.typ (the Typst layout file) - we want the spec template
+		const templateFiles = matches.filter(f => {
+			const basename = path.basename(f).toLowerCase();
+			// Must have "template" in the name
+			if (!basename.includes("template")) return false;
+			// Skip binary files
+			const ext = path.extname(f).toLowerCase();
+			if (!READABLE_EXTENSIONS.has(ext)) return false;
+			// Skip layout template files (prefixed with underscore, no date prefix)
+			// These are Typst layout files, not spec templates
+			if (basename.startsWith("_")) return false;
+			// Skip example files
+			if (basename.includes("example")) return false;
+			return true;
+		});
+		
+		if (templateFiles.length > 0) {
+			// Pick the first match (sorted for determinism)
+			templateFiles.sort();
+			const templatePath = templateFiles[0];
+			const content = readTextFile(templatePath);
+			if (content) {
+				const relativePath = path.relative(cwd, templatePath);
+				return { path: relativePath, content };
+			}
+		}
+	}
+	
+	return { path: null, content: null };
+}
+
+/**
+ * Discover spec conventions/guide file in the project.
+ * 
+ * Priority:
+ * 1. Explicit path from config (specConventionsPath)
+ * 2. Files matching *guide*spec* or *spec*convention* in specs directory
+ * 3. Files matching similar patterns in common locations
+ * 
+ * Returns { path, content } or { path: null, content: null }
+ */
+export function discoverSpecConventions(
+	cwd: string,
+	specsDir: string,
+	explicitPath?: string | null
+): { path: string | null; content: string | null } {
+	// 1. Explicit path from config
+	if (explicitPath) {
+		const fullPath = path.isAbsolute(explicitPath)
+			? explicitPath
+			: path.join(cwd, explicitPath);
+		const content = readTextFile(fullPath);
+		if (content) {
+			return { path: explicitPath, content };
+		}
+	}
+	
+	// Null means explicitly disabled
+	if (explicitPath === null) {
+		return { path: null, content: null };
+	}
+	
+	// 2. Search for convention files
+	const conventionPatterns = [
+		/guide.*spec/i,
+		/spec.*guide/i,
+		/spec.*convention/i,
+		/convention.*spec/i,
+		/writing.*spec/i,
+		/spec.*standard/i,
+	];
+	
+	const searchDirs = [
+		path.join(cwd, specsDir),
+		path.join(cwd, "docs"),
+		path.join(cwd, "specs"),
+	];
+	
+	const seen = new Set<string>();
+	for (const dir of searchDirs) {
+		const resolved = path.resolve(dir);
+		if (seen.has(resolved)) continue;
+		seen.add(resolved);
+		
+		const matches = findFilesMatching(dir, conventionPatterns);
+		const conventionFiles = matches.filter(f => {
+			const ext = path.extname(f).toLowerCase();
+			return READABLE_EXTENSIONS.has(ext);
+		});
+		
+		if (conventionFiles.length > 0) {
+			conventionFiles.sort();
+			const conventionPath = conventionFiles[0];
+			const content = readTextFile(conventionPath);
+			if (content) {
+				const relativePath = path.relative(cwd, conventionPath);
+				return { path: relativePath, content };
+			}
+		}
+	}
+	
+	return { path: null, content: null };
+}
+
+/**
+ * Detect the spec output format.
+ * 
+ * Priority:
+ * 1. Explicit format from config
+ * 2. Extension of the discovered template file
+ * 3. Default to "md"
+ */
+export function detectSpecFormat(
+	explicitFormat?: string,
+	templatePath?: string | null,
+): string {
+	if (explicitFormat) {
+		return explicitFormat.replace(/^\./, "");
+	}
+	if (templatePath) {
+		const ext = path.extname(templatePath).toLowerCase().replace(/^\./, "");
+		if (ext) return ext;
+	}
+	return "md";
+}
+
 /**
  * Configuration loading result
  */
@@ -313,6 +537,25 @@ function buildProjectConfig(
 		projectContext += `\n## Testing\n\nYou MUST run tests with: \`${testCommand}\`\n`;
 	}
 
+	// Discover spec template, conventions, and output format
+	const template = discoverSpecTemplate(cwd, specsDir, config.specTemplatePath);
+	const conventions = discoverSpecConventions(cwd, specsDir, config.specConventionsPath);
+	const specFormat = detectSpecFormat(config.specFormat, template.path);
+
+	if (template.content) {
+		const truncatedTemplate = template.content.length > 8000
+			? template.content.slice(0, 8000) + "\n\n[... truncated ...]"
+			: template.content;
+		projectContext += `\n## Spec Template (from ${template.path})\n\nUse this template as the basis for new specifications:\n\n\`\`\`\n${truncatedTemplate}\n\`\`\`\n`;
+	}
+
+	if (conventions.content) {
+		const truncatedConventions = conventions.content.length > 8000
+			? conventions.content.slice(0, 8000) + "\n\n[... truncated ...]"
+			: conventions.content;
+		projectContext += `\n## Spec Conventions (from ${conventions.path})\n\nFollow these conventions when writing specs:\n\n\`\`\`\n${truncatedConventions}\n\`\`\`\n`;
+	}
+
 	// Discovery configuration with defaults
 	const discoveryConfig = {
 		enabled: config.discovery?.enabled ?? true,
@@ -335,6 +578,11 @@ function buildProjectConfig(
 		testCommand,
 		contextFiles: foundFiles,
 		projectContext,
+		specTemplate: template.content,
+		specTemplatePath: template.path,
+		specConventions: conventions.content,
+		specConventionsPath: conventions.path,
+		specFormat,
 		discovery: discoveryConfig,
 		models,
 		reviewCycles,

@@ -159,6 +159,18 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 	lines.push(`    codeReviewer: ${formatCycles(config.reviewCycles.codeReviewer)}`);
 	lines.push("");
 	
+	// Spec template & conventions
+	if (config.specTemplatePath || config.specConventionsPath) {
+		lines.push("  Spec Templates:");
+		if (config.specTemplatePath) {
+			lines.push(`    template     : ${config.specTemplatePath}`);
+		}
+		if (config.specConventionsPath) {
+			lines.push(`    conventions  : ${config.specConventionsPath}`);
+		}
+		lines.push("");
+	}
+	
 	lines.push(formatDivider(60));
 	
 	return lines.join("\n");

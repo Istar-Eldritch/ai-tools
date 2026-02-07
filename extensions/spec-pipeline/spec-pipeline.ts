@@ -30,7 +30,7 @@ import {
 } from "./formatting.ts";
 import { runAgentWithConfig } from "./agents.ts";
 import { runTieredReview } from "./review.ts";
-import { createSystemPrompts } from "./agents-config.ts";
+import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 // ============================================
 // Metrics Helpers
@@ -88,7 +88,7 @@ export async function runSpecPipeline(
 	ctx: PipelineUIContext
 ): Promise<void> {
 	const specsDir = path.join(cwd, projectConfig.specsDir);
-	const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 
 	// Helper to save state
 	const save = () => saveSpecState(cwd, state);
@@ -415,9 +415,6 @@ ${discoveryContext}
 The spec timestamp is: ${state.specTimestamp}
 
 IMPORTANT: Write the spec to this EXACT path: ${fullSpecPath}
-
-Use the timestamp for phase file paths in your implementation plan table.
-Example: [phase1_api.md](./${state.specTimestamp}_feature_name/phase1_api.md)
 
 Explore the project structure first to understand conventions:
 - Look for existing specs or documentation

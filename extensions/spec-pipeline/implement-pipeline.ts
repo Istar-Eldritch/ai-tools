@@ -27,7 +27,7 @@ import {
 } from "./formatting.ts";
 import { runAgent, runAgentWithConfig } from "./agents.ts";
 import { runTieredReview } from "./review.ts";
-import { createSystemPrompts } from "./agents-config.ts";
+import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 // ============================================
 // Metrics Helpers
@@ -88,17 +88,41 @@ function finalizeImplMetrics(metrics: ImplementationMetrics, phasesCount: number
 /**
  * Extract phases from a spec document.
  * 
- * Supports two formats:
- * 1. Table format (preferred): | Phase 1 | Focus | Effort | [name](./path/phase1.md) |
- * 2. Inline format (fallback): ### Phase 1: Name
+ * Supports three formats:
+ * 1. Table format without links (preferred): | Phase 1 | Focus description | Effort |
+ * 2. Table format with links (legacy): | Phase 1 | Focus | Effort | [name](./path/phase1.md) |
+ * 3. Inline format (fallback): ### Phase 1: Name
  */
 export function extractPhases(specContent: string, specTimestamp: string, shortName: string): { paths: string[]; isInline: boolean } {
-	// First try table format
-	const tablePhases: string[] = [];
-	const tableRegex = /\|\s*Phase\s*\d+\s*\|[^|]+\|[^|]+\|\s*\[([^\]]+)\]\(([^)]+)\)/g;
+	// First try table format with links (legacy support)
+	const linkedPhases: string[] = [];
+	const linkedRegex = /\|\s*Phase\s*\d+\s*\|[^|]+\|[^|]+\|\s*\[([^\]]+)\]\(([^)]+)\)/g;
 	let match;
+	while ((match = linkedRegex.exec(specContent)) !== null) {
+		linkedPhases.push(match[2]);
+	}
+	
+	if (linkedPhases.length > 0) {
+		return { paths: linkedPhases, isInline: false };
+	}
+	
+	// Try new table format without links: | Phase N | Focus description | Effort |
+	const tablePhases: string[] = [];
+	const tableRegex = /\|\s*Phase\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*[^|]+?\s*\|/g;
 	while ((match = tableRegex.exec(specContent)) !== null) {
-		tablePhases.push(match[2]);
+		const phaseNum = match[1];
+		const focusDescription = match[2].trim();
+		
+		// Generate phase name from focus description (first 3 words, sanitized)
+		const phaseName = focusDescription
+			.toLowerCase()
+			.replace(/[^a-z0-9\s]/g, "")
+			.trim()
+			.split(/\s+/)
+			.slice(0, 3)
+			.join("_");
+		
+		tablePhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
 	}
 	
 	if (tablePhases.length > 0) {
@@ -137,7 +161,7 @@ export async function runImplementPipeline(
 	ctx: PipelineUIContext
 ): Promise<void> {
 	const specsDir = path.join(cwd, projectConfig.specsDir);
-	const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 
 	// Helper to save state
 	const save = () => saveImplState(cwd, state);

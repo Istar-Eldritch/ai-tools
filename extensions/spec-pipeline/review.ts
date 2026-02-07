@@ -552,8 +552,8 @@ export async function retryFailedOperation(
 	}
 	
 	// Get system prompts for the project
-	const { createSystemPrompts } = await import("./agents-config.ts");
-	const SYSTEM_PROMPTS = createSystemPrompts(projectConfig.projectContext);
+	const { createSystemPrompts, buildPromptOptions } = await import("./agents-config.ts");
+	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 	
 	// Determine the system prompt for this role
 	const systemPrompt = SYSTEM_PROMPTS[error.role as keyof typeof SYSTEM_PROMPTS];
