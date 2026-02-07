@@ -20,7 +20,9 @@
  *   4. Stays on implement branch for user to review and merge
  *
  * Usage:
- *   /plan <description>                             # Scoping assessment → routes to roadmap/epic/spec
+ *   /plan <description>                             # Conversational scoping → recommends roadmap/epic/spec
+ *   /plan-done                                      # Accept or override scoping recommendation
+ *   /plan-cancel                                    # Cancel scoping session
  *   /plan --roadmap <description>                   # Skip scoping, create roadmap
  *   /plan --epic <description>                      # Skip scoping, create epic
  *   /plan --feature <description>                   # Skip scoping, create feature spec
@@ -65,7 +67,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 // Import types
-import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState } from "./types.ts";
+import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState, ScopingState } from "./types.ts";
 
 // Import config
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
@@ -206,6 +208,9 @@ export default function (pi: ExtensionAPI) {
 	/** The project config for the active conversational session */
 	let activeProjectConfig: ProjectConfig | null = null;
 
+	/** Ephemeral scoping state for /plan command (not persisted) */
+	let activeScopingState: ScopingState | null = null;
+
 	/** Tracks the last user message for pairing with assistant response */
 	let lastUserMessage: string = "";
 
@@ -213,29 +218,34 @@ export default function (pi: ExtensionAPI) {
 	let exchangeCount = 0;
 
 	/**
-	 * Enter a conversational pipeline mode (discovery or drafting)
+	 * Enter a conversational pipeline mode (discovery, drafting, or scoping)
 	 */
-	function enterMode(mode: "discovery" | "drafting", state: SpecState, cwd: string, projectConfig: ProjectConfig): void {
+	function enterMode(mode: "discovery" | "drafting", state: SpecState, cwd: string, projectConfig: ProjectConfig): void;
+	function enterMode(mode: "scoping", state: null, cwd: string, projectConfig: ProjectConfig, scopingState: ScopingState): void;
+	function enterMode(mode: "discovery" | "drafting" | "scoping", state: SpecState | null, cwd: string, projectConfig: ProjectConfig, scopingState?: ScopingState): void {
 		pipelineMode = mode;
 		activeSpecState = state;
 		activeCwd = cwd;
 		activeProjectConfig = projectConfig;
 		lastUserMessage = "";
-		// Set exchange count from existing history when resuming
-		if (mode === "discovery") {
-			exchangeCount = state.discovery?.conversationHistory?.length ?? 0;
+		if (mode === "scoping" && scopingState) {
+			activeScopingState = scopingState;
+			exchangeCount = scopingState.conversationHistory.length;
+		} else if (mode === "discovery") {
+			exchangeCount = state?.discovery?.conversationHistory?.length ?? 0;
 		} else {
-			exchangeCount = state.drafting?.conversationHistory?.length ?? 0;
+			exchangeCount = state?.drafting?.conversationHistory?.length ?? 0;
 		}
 	}
 
 	/**
 	 * Exit any conversational mode and return to idle
 	 */
-	function exitMode(): { exchangeCount: number; state: SpecState | null; cwd: string; projectConfig: ProjectConfig | null } {
-		const result = { exchangeCount, state: activeSpecState, cwd: activeCwd, projectConfig: activeProjectConfig };
+	function exitMode(): { exchangeCount: number; state: SpecState | null; cwd: string; projectConfig: ProjectConfig | null; scopingState: ScopingState | null } {
+		const result = { exchangeCount, state: activeSpecState, cwd: activeCwd, projectConfig: activeProjectConfig, scopingState: activeScopingState };
 		pipelineMode = "idle";
 		activeSpecState = null;
+		activeScopingState = null;
 		activeCwd = "";
 		activeProjectConfig = null;
 		lastUserMessage = "";
@@ -341,6 +351,89 @@ IMPORTANT: You are in SPEC DRAFTING MODE. Focus on creating/refining the specifi
 	}
 
 	/**
+	 * Build the scoping system prompt injection for before_agent_start.
+	 * This turns the host LLM into a scoping agent for /plan.
+	 */
+	function buildScopingPromptInjection(scopingState: ScopingState, projectConfig: ProjectConfig): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+		const scopingPrompt = SYSTEM_PROMPTS.scopingAgent;
+
+		let conversationContext = "";
+		if (scopingState.conversationHistory.length > 0) {
+			conversationContext = "\n\n## Previous Scoping Exchanges\n\n";
+			for (const exchange of scopingState.conversationHistory) {
+				conversationContext += `**User**: ${exchange.userMessage}\n\n`;
+				conversationContext += `**You**: ${exchange.assistantResponse}\n\n---\n\n`;
+			}
+		}
+
+		return `
+${scopingPrompt}
+
+## Active Scoping Session
+
+You are assessing the scope of this request:
+
+${scopingState.description}
+
+${conversationContext}
+
+## Instructions
+
+- Explore the codebase to understand the scope of impact
+- Ask 2-3 targeted scoping questions to understand the scope
+- Based on the answers and your codebase exploration, recommend a level: roadmap, epic, or feature
+- When you have enough information, present your recommendation clearly:
+  - Start a line with "**Recommended Level**: roadmap" or "**Recommended Level**: epic" or "**Recommended Level**: feature"
+  - Provide a brief justification
+  - If roadmap or epic, sketch what the child items might look like
+- Tell the user they can type /plan-done to accept or override your recommendation
+
+IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only assess scope and recommend the right planning level.
+`;
+	}
+
+	/**
+	 * Build a summary of the scoping conversation for forwarding to child pipelines.
+	 */
+	function buildScopingSummary(scopingState: ScopingState): string {
+		if (scopingState.conversationHistory.length === 0) {
+			return "";
+		}
+
+		const sections: string[] = [];
+		sections.push("## Scoping Context\n");
+		sections.push("The following information was gathered during a scoping assessment:\n");
+
+		for (let i = 0; i < scopingState.conversationHistory.length; i++) {
+			const exchange = scopingState.conversationHistory[i];
+			sections.push(`### Exchange ${i + 1}\n`);
+			sections.push(`**User**: ${exchange.userMessage}\n`);
+			sections.push(`**Scoping Agent**: ${exchange.assistantResponse}\n`);
+			sections.push("---\n");
+		}
+
+		return sections.join("\n");
+	}
+
+	/**
+	 * Parse the recommended level from the scoping agent's conversation.
+	 * Looks for "**Recommended Level**: roadmap|epic|feature" in the last few exchanges.
+	 */
+	function parseRecommendedLevel(scopingState: ScopingState): HierarchyLevel | null {
+		// Search from the most recent exchange backwards
+		for (let i = scopingState.conversationHistory.length - 1; i >= 0; i--) {
+			const response = scopingState.conversationHistory[i].assistantResponse;
+			// Match patterns like "**Recommended Level**: roadmap" or "Recommended Level: feature"
+			const match = response.match(/\*?\*?Recommended\s+Level\*?\*?\s*:\s*(roadmap|epic|feature)/i);
+			if (match) {
+				return match[1].toLowerCase() as HierarchyLevel;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Get the spec file size for widget display
 	 */
 	function getSpecFileInfo(cwd: string, specPath: string): string {
@@ -357,7 +450,21 @@ IMPORTANT: You are in SPEC DRAFTING MODE. Focus on creating/refining the specifi
 	 * Update the widget for the current mode
 	 */
 	function updateModeWidget(ctx: any): void {
-		if (pipelineMode === "idle" || !activeSpecState) return;
+		if (pipelineMode === "idle") return;
+
+		if (pipelineMode === "scoping" && activeScopingState) {
+			ctx.ui.setWidget("spec-pipeline-status", [
+				"🔎 Scoping Mode",
+				"────────────────────────────────────",
+				`Exchanges: ${exchangeCount}`,
+				"",
+				"Chat naturally to help assess scope.",
+				"Type /plan-done when ready to proceed.",
+			]);
+			return;
+		}
+
+		if (!activeSpecState) return;
 
 		if (pipelineMode === "discovery") {
 			ctx.ui.setWidget("spec-pipeline-status", [
@@ -689,10 +796,10 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 	// ============================================
 
 	/**
-	 * Inject system prompt when in a conversational mode (discovery or drafting)
+	 * Inject system prompt when in a conversational mode (scoping, discovery, or drafting)
 	 */
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (pipelineMode === "idle" || !activeSpecState || !activeProjectConfig) {
+		if (pipelineMode === "idle" || !activeProjectConfig) {
 			return undefined;
 		}
 
@@ -700,14 +807,20 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 		let customType: string;
 		let contextLabel: string;
 
-		if (pipelineMode === "discovery") {
+		if (pipelineMode === "scoping" && activeScopingState) {
+			injection = buildScopingPromptInjection(activeScopingState, activeProjectConfig);
+			customType = "spec-scoping-context";
+			contextLabel = `[SCOPING MODE ACTIVE - Assessing scope for: ${activeScopingState.description}]`;
+		} else if (pipelineMode === "discovery" && activeSpecState) {
 			injection = buildDiscoveryPromptInjection(activeSpecState, activeProjectConfig);
 			customType = "spec-discovery-context";
 			contextLabel = `[DISCOVERY MODE ACTIVE - Exploring requirements for: ${activeSpecState.description}]`;
-		} else {
+		} else if (pipelineMode === "drafting" && activeSpecState) {
 			injection = buildDraftingPromptInjection(activeSpecState, activeProjectConfig);
 			customType = "spec-drafting-context";
 			contextLabel = `[DRAFTING MODE ACTIVE - Creating spec for: ${activeSpecState.description}]`;
+		} else {
+			return undefined;
 		}
 
 		return {
@@ -744,7 +857,7 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 	 * and pair it with the user message to build conversation history
 	 */
 	pi.on("agent_end", async (event, ctx) => {
-		if (pipelineMode === "idle" || !activeSpecState || !activeCwd) {
+		if (pipelineMode === "idle") {
 			return;
 		}
 
@@ -771,21 +884,26 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				timestamp: new Date().toISOString(),
 			};
 
-			if (pipelineMode === "discovery") {
+			if (pipelineMode === "scoping" && activeScopingState) {
+				activeScopingState.conversationHistory.push(exchange);
+				exchangeCount = activeScopingState.conversationHistory.length;
+				// No need to persist — scoping state is ephemeral
+			} else if (pipelineMode === "discovery" && activeSpecState) {
 				if (!activeSpecState.discovery!.conversationHistory) {
 					activeSpecState.discovery!.conversationHistory = [];
 				}
 				activeSpecState.discovery!.conversationHistory.push(exchange);
 				exchangeCount = activeSpecState.discovery!.conversationHistory.length;
-			} else if (pipelineMode === "drafting") {
+				saveSpecState(activeCwd, activeSpecState);
+			} else if (pipelineMode === "drafting" && activeSpecState) {
 				if (!activeSpecState.drafting!.conversationHistory) {
 					activeSpecState.drafting!.conversationHistory = [];
 				}
 				activeSpecState.drafting!.conversationHistory.push(exchange);
 				exchangeCount = activeSpecState.drafting!.conversationHistory.length;
+				saveSpecState(activeCwd, activeSpecState);
 			}
 
-			saveSpecState(activeCwd, activeSpecState);
 			updateModeWidget(ctx);
 			lastUserMessage = "";
 		}
@@ -794,12 +912,16 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 	/**
 	 * Filter out pipeline context messages that don't belong to the current mode.
 	 * - In idle: filter out all pipeline context messages
-	 * - In discovery: filter out drafting context messages
-	 * - In drafting: filter out discovery context messages
+	 * - In scoping: filter out discovery and drafting context messages
+	 * - In discovery: filter out scoping and drafting context messages
+	 * - In drafting: filter out scoping and discovery context messages
 	 */
 	pi.on("context", async (event) => {
 		return {
 			messages: event.messages.filter((m: any) => {
+				if (m.customType === "spec-scoping-context") {
+					return pipelineMode === "scoping";
+				}
 				if (m.customType === "spec-discovery-context") {
 					return pipelineMode === "discovery";
 				}
@@ -1937,7 +2059,8 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 		isQuick: boolean,
 		ctx: any,
 		parentId?: string,
-		parentType?: "roadmap"
+		parentType?: "roadmap",
+		scopingSummary?: string
 	): Promise<void> {
 		const cwd = ctx.cwd;
 
@@ -2041,6 +2164,11 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 					parentContext += `\n\n## Roadmap Discovery Context\n\n${parentState.discovery.discoverySummary}`;
 				}
 			}
+		}
+
+		// Append scoping context if available (from /plan command)
+		if (scopingSummary) {
+			parentContext = (parentContext ? parentContext + "\n\n" : "") + scopingSummary;
 		}
 
 		await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
@@ -2208,31 +2336,180 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				return;
 			}
 
-			// No level specified — run scoping assessment
+			// Check for existing active scoping session
+			if (pipelineMode === "scoping") {
+				ctx.ui.notify("A scoping session is already active. Use /plan-done to finish it, or /plan-cancel to cancel.", "error");
+				return;
+			}
+
+			const cwd = ctx.cwd;
+
+			// Load config
+			const configResult = loadPipelineConfig(cwd);
+			if (!configResult.success) {
+				ctx.ui.notify(configResult.error, "error");
+				return;
+			}
+			const projectConfig = configResult.config;
+
+			// Create ephemeral scoping state
+			const scopingState: ScopingState = {
+				description,
+				isQuick,
+				conversationHistory: [],
+			};
+
+			// Enter scoping mode
+			enterMode("scoping", null, cwd, projectConfig, scopingState);
+
+			// Show scoping widget
+			updateModeWidget(ctx);
+
 			ctx.ui.notify(formatStepBanner(
-				"SCOPING ASSESSMENT",
-				"Evaluating the right planning level for your request",
+				"SCOPING MODE",
+				"The agent will explore the codebase and ask questions to assess the right planning level.",
 				"🔎"
 			), "info");
+			ctx.ui.notify("Chat naturally to help the agent understand the scope. It will recommend Roadmap, Epic, or Feature.", "info");
+			ctx.ui.notify("Type /plan-done when ready to proceed with the recommendation.", "info");
 
-			const levelChoices = [
-				"Roadmap (large initiative → multiple epics, months of work)",
-				"Epic (medium effort → multiple feature specs, weeks of work)",
-				"Feature (single spec → direct implementation, days of work)",
-			];
-
-			const choice = await ctx.ui.select(
-				`What level of planning does "${description.slice(0, 60)}${description.length > 60 ? '...' : ''}" need?`,
-				levelChoices
+			// Send the initial scoping message
+			pi.sendUserMessage(
+				`I want to build the following: ${description}\n\n` +
+				`Please explore the codebase and assess what level of planning this needs ` +
+				`(roadmap for large multi-epic initiatives, epic for medium multi-feature efforts, or feature for a single spec). ` +
+				`Ask me scoping questions if needed.`
 			);
+		},
+	});
 
-			if (choice === levelChoices[0]) {
-				await startHierarchyPipeline("roadmap", description, isQuick, ctx);
-			} else if (choice === levelChoices[1]) {
-				await startHierarchyPipeline("epic", description, isQuick, ctx);
-			} else {
-				ctx.ui.notify(`Selected: Feature level. Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`, "info");
+	pi.registerCommand("plan-done", {
+		description: "End scoping assessment and proceed with the recommended level",
+		handler: async (_args, ctx) => {
+			if (pipelineMode !== "scoping" || !activeScopingState || !activeCwd || !activeProjectConfig) {
+				ctx.ui.notify("No active scoping session. Use /plan to start one.", "error");
+				return;
 			}
+
+			const scopingState = activeScopingState;
+			const cwd = activeCwd;
+			const projectConfig = activeProjectConfig;
+			const scopingExchanges = exchangeCount;
+
+			if (scopingExchanges === 0) {
+				const proceed = await ctx.ui.confirm(
+					"No Scoping Exchanges",
+					"No conversation exchanges recorded yet. Proceed anyway?"
+				);
+				if (!proceed) return;
+			}
+
+			// Parse the recommended level from the conversation
+			const recommendedLevel = parseRecommendedLevel(scopingState);
+
+			// Build scoping summary for forwarding to child pipeline
+			const scopingSummary = buildScopingSummary(scopingState);
+			const description = scopingState.description;
+			const isQuick = scopingState.isQuick;
+
+			// Exit scoping mode
+			exitMode();
+			clearPipelineWidget(ctx);
+
+			ctx.ui.notify(formatStepBanner(
+				"SCOPING COMPLETE",
+				`${scopingExchanges} exchange${scopingExchanges !== 1 ? "s" : ""} recorded.`,
+				"✅"
+			), "success");
+
+			// Present recommendation or let user choose
+			let chosenLevel: HierarchyLevel;
+
+			if (recommendedLevel) {
+				const levelLabels: Record<HierarchyLevel, string> = {
+					roadmap: "Roadmap (large initiative → multiple epics)",
+					epic: "Epic (medium effort → multiple feature specs)",
+					feature: "Feature (single spec → direct implementation)",
+				};
+
+				const confirmed = await ctx.ui.confirm(
+					"Scoping Recommendation",
+					`The agent recommends: **${levelLabels[recommendedLevel]}**\n\nAccept this recommendation?`
+				);
+
+				if (confirmed) {
+					chosenLevel = recommendedLevel;
+				} else {
+					// Let user override
+					const levelChoices = [
+						"Roadmap (large initiative → multiple epics, months of work)",
+						"Epic (medium effort → multiple feature specs, weeks of work)",
+						"Feature (single spec → direct implementation, days of work)",
+					];
+
+					const choice = await ctx.ui.select(
+						"Override: Select the planning level",
+						levelChoices
+					);
+
+					if (choice === levelChoices[0]) {
+						chosenLevel = "roadmap";
+					} else if (choice === levelChoices[1]) {
+						chosenLevel = "epic";
+					} else {
+						chosenLevel = "feature";
+					}
+				}
+			} else {
+				// No recommendation found — let user choose
+				ctx.ui.notify("The agent didn't provide a clear recommendation. Please choose a level.", "warning");
+
+				const levelChoices = [
+					"Roadmap (large initiative → multiple epics, months of work)",
+					"Epic (medium effort → multiple feature specs, weeks of work)",
+					"Feature (single spec → direct implementation, days of work)",
+				];
+
+				const choice = await ctx.ui.select(
+					"Select the planning level",
+					levelChoices
+				);
+
+				if (choice === levelChoices[0]) {
+					chosenLevel = "roadmap";
+				} else if (choice === levelChoices[1]) {
+					chosenLevel = "epic";
+				} else {
+					chosenLevel = "feature";
+				}
+			}
+
+			const levelLabel = chosenLevel.charAt(0).toUpperCase() + chosenLevel.slice(1);
+			ctx.ui.notify(`Selected: ${levelLabel} level. Starting pipeline...`, "info");
+
+			// Route to the appropriate pipeline, forwarding scoping context
+			if (chosenLevel === "feature") {
+				ctx.ui.notify(`Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`, "info");
+				if (scopingSummary) {
+					ctx.ui.notify("Note: Scoping context will be available in the next /spec discovery phase.", "info");
+				}
+			} else {
+				await startHierarchyPipeline(chosenLevel, description, isQuick, ctx, undefined, undefined, scopingSummary);
+			}
+		},
+	});
+
+	pi.registerCommand("plan-cancel", {
+		description: "Cancel an active scoping session",
+		handler: async (_args, ctx) => {
+			if (pipelineMode !== "scoping") {
+				ctx.ui.notify("No active scoping session to cancel.", "info");
+				return;
+			}
+
+			exitMode();
+			clearPipelineWidget(ctx);
+			ctx.ui.notify("Scoping session cancelled.", "info");
 		},
 	});
 

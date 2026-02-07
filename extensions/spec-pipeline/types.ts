@@ -333,10 +333,26 @@ export interface DraftingState {
 /**
  * Pipeline mode for the conversational extension state machine.
  * - idle: No active conversational mode
+ * - scoping: Host LLM is acting as scoping agent (for /plan command)
  * - discovery: Host LLM is acting as discovery agent
  * - drafting: Host LLM is acting as spec drafter
  */
-export type PipelineMode = "idle" | "discovery" | "drafting";
+export type PipelineMode = "idle" | "scoping" | "discovery" | "drafting";
+
+/**
+ * Ephemeral scoping state (not persisted to disk).
+ * Tracks the scoping conversation during /plan to recommend a level.
+ */
+export interface ScopingState {
+	/** Original description from /plan command */
+	description: string;
+	/** Whether --quick flag was passed */
+	isQuick: boolean;
+	/** Conversation history */
+	conversationHistory: ConversationalExchange[];
+	/** Recommended level parsed from agent output */
+	recommendedLevel?: HierarchyLevel;
+}
 
 /**
  * State for spec creation pipelines (/spec command)
