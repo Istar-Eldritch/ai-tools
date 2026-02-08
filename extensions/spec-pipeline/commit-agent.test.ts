@@ -1,384 +1,274 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { generateCommitMessage } from "./commit-agent.ts";
-import type { CommitMessageContext, CommitMessageResult } from "./commit-agent.ts";
-import type { ModelConfig } from "./types.ts";
-import * as agents from "./agents.ts";
+import type { CommitMessageContext } from "./commit-agent.ts";
 
-// Mock the agents module
-vi.mock("./agents.ts", () => ({
-	runAgentWithConfig: vi.fn(),
-}));
+describe("generateCommitMessage (deterministic)", () => {
+	describe("role-based templates", () => {
+		it("generates planDrafter message with phase", () => {
+			const context: CommitMessageContext = {
+				role: "planDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/plan-phase1.md"],
+				phase: 1,
+			};
 
-describe("generateCommitMessage", () => {
-	const mockCwd = "/fake/project";
-	const mockAgentConfig: ModelConfig = {
-		model: "haiku",
-		thinking: "off",
-	};
+			const result = generateCommitMessage(context);
 
-	beforeEach(() => {
-		vi.clearAllMocks();
-	});
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(phase-1): create implementation plan");
+			expect(result.message).toContain("- docs/plan-phase1.md");
+		});
 
-	afterEach(() => {
-		vi.restoreAllMocks();
-	});
+		it("generates planDrafter message without phase", () => {
+			const context: CommitMessageContext = {
+				role: "planDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/plan.md"],
+			};
 
-	describe("success path", () => {
-		it("generates commit message on first attempt", async () => {
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(pipeline): create implementation plan");
+		});
+
+		it("generates implementer message with phase", () => {
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/feature.ts", "src/feature.test.ts"],
+				phase: 2,
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("feat(phase-2): implement phase changes");
+			expect(result.message).toContain("- src/feature.ts");
+			expect(result.message).toContain("- src/feature.test.ts");
+		});
+
+		it("generates addressReview message with cycle", () => {
+			const context: CommitMessageContext = {
+				role: "addressReview",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/api.ts"],
+				phase: 1,
+				cycle: 3,
+				reviewFeedback: "Fix null check",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("fix(phase-1): address review feedback (cycle 3)");
+		});
+
+		it("generates addressReview message without cycle", () => {
+			const context: CommitMessageContext = {
+				role: "addressReview",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/api.ts"],
+				phase: 2,
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("fix(phase-2): address review feedback");
+			expect(result.message).not.toContain("cycle");
+		});
+
+		it("generates specDrafter message", () => {
 			const context: CommitMessageContext = {
 				role: "specDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
 				files: ["docs/specs/feature-spec.md"],
 			};
 
-			const mockOutput = `feat(spec): add feature specification
-
-- Define user requirements
-- Document API endpoints
-- Include data models`;
-
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValueOnce({
-				exitCode: 0,
-				output: mockOutput,
-			});
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
+			const result = generateCommitMessage(context);
 
 			expect(result.type).toBe("success");
-			expect(result.message).toBe(mockOutput);
-			expect(agents.runAgentWithConfig).toHaveBeenCalledTimes(1);
+			expect(result.message).toContain("docs(spec): draft specification");
 		});
 
-		it("includes phase and cycle information in task", async () => {
+		it("generates specReviewer message", () => {
 			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/feature.ts", "src/feature.test.ts"],
-				phase: 1,
-				cycle: 2,
+				role: "specReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["docs/specs/feature-spec.md"],
 			};
 
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValueOnce({
-				exitCode: 0,
-				output: "feat(api): implement user endpoint",
-			});
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
+			const result = generateCommitMessage(context);
 
 			expect(result.type).toBe("success");
-			
-			// Verify the task includes phase and cycle
-			const call = vi.mocked(agents.runAgentWithConfig).mock.calls[0];
-			const task = call[1];
-			expect(task).toContain("**Phase**: 1");
-			expect(task).toContain("**Cycle**: 2");
+			expect(result.message).toContain("docs(spec): revise spec after review");
 		});
 
-		it("includes review feedback in task when provided", async () => {
+		it("generates roadmapDrafter message", () => {
 			const context: CommitMessageContext = {
-				role: "addressReview",
+				role: "roadmapDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/api.ts"],
-				phase: 2,
-				cycle: 1,
-				reviewFeedback: "Add error handling for null inputs",
+				files: ["docs/roadmap.md"],
 			};
 
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValueOnce({
-				exitCode: 0,
-				output: "fix(api): add null input validation",
-			});
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
+			const result = generateCommitMessage(context);
 
 			expect(result.type).toBe("success");
-			
-			// Verify the task includes review feedback
-			const call = vi.mocked(agents.runAgentWithConfig).mock.calls[0];
-			const task = call[1];
-			expect(task).toContain("Review Feedback Addressed");
-			expect(task).toContain("Add error handling for null inputs");
+			expect(result.message).toContain("docs(roadmap): draft roadmap document");
 		});
 
-		it("includes modified files in task", async () => {
-			const files = ["src/auth.ts", "src/middleware.ts", "tests/auth.test.ts"];
+		it("generates epicDrafter message", () => {
 			const context: CommitMessageContext = {
-				role: "implementer",
+				role: "epicDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
-				files,
+				files: ["docs/epic.md"],
 			};
 
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValueOnce({
-				exitCode: 0,
-				output: "feat(auth): implement authentication system",
-			});
-
-			await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			const call = vi.mocked(agents.runAgentWithConfig).mock.calls[0];
-			const task = call[1];
-			expect(task).toContain("3 file(s) were modified");
-			for (const file of files) {
-				expect(task).toContain(`- ${file}`);
-			}
-		});
-	});
-
-	describe("retry behavior", () => {
-		it("retries on agent failure", async () => {
-			const context: CommitMessageContext = {
-				role: "planDrafter",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["docs/plan-phase1.md"],
-			};
-
-			// First attempt fails, second succeeds
-			vi.mocked(agents.runAgentWithConfig)
-				.mockResolvedValueOnce({
-					exitCode: 1,
-					output: "",
-					error: "Rate limit exceeded",
-				})
-				.mockResolvedValueOnce({
-					exitCode: 0,
-					output: "docs(plan): add phase 1 implementation plan",
-				});
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
+			const result = generateCommitMessage(context);
 
 			expect(result.type).toBe("success");
-			expect(result.message).toBe("docs(plan): add phase 1 implementation plan");
-			expect(agents.runAgentWithConfig).toHaveBeenCalledTimes(2);
+			expect(result.message).toContain("docs(epic): draft epic document");
 		});
 
-		it("retries on empty output", async () => {
+		it("generates planReviewer message", () => {
 			const context: CommitMessageContext = {
-				role: "specDrafter",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["docs/spec.md"],
-			};
-
-			// First attempt returns empty, second succeeds
-			vi.mocked(agents.runAgentWithConfig)
-				.mockResolvedValueOnce({
-					exitCode: 0,
-					output: "   ", // whitespace only
-				})
-				.mockResolvedValueOnce({
-					exitCode: 0,
-					output: "docs(spec): create feature specification",
-				});
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("success");
-			expect(agents.runAgentWithConfig).toHaveBeenCalledTimes(2);
-		});
-
-		it("retries up to 3 times before falling back", async () => {
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/feature.ts"],
-				phase: 1,
-				cycle: 1,
-			};
-
-			// All attempts fail
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValue({
-				exitCode: 1,
-				output: "",
-				error: "Network error",
-			});
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("fallback");
-			expect(agents.runAgentWithConfig).toHaveBeenCalledTimes(3);
-		});
-
-		it("applies exponential backoff between retries", async () => {
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/feature.ts"],
-			};
-
-			const startTime = Date.now();
-			
-			// All attempts fail
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValue({
-				exitCode: 1,
-				output: "",
-			});
-
-			await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			const duration = Date.now() - startTime;
-			
-			// Should have delays of ~1s and ~2s = ~3s total
-			// Allow some tolerance for test execution overhead
-			expect(duration).toBeGreaterThanOrEqual(2800);
-			expect(duration).toBeLessThan(4000);
-		});
-	});
-
-	describe("fallback message generation", () => {
-		it("generates fallback without phase/cycle", async () => {
-			const context: CommitMessageContext = {
-				role: "specDrafter",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["docs/spec.md", "docs/diagrams.md"],
-			};
-
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValue({
-				exitCode: 1,
-				output: "",
-			});
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("fallback");
-			expect(result.message).toBe("[FALLBACK] After specDrafter - 2 files modified");
-		});
-
-		it("generates fallback with phase only", async () => {
-			const context: CommitMessageContext = {
-				role: "planDrafter",
-				modelConfig: { model: "opus", thinking: "high" },
+				role: "planReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
 				files: ["docs/plan.md"],
 				phase: 3,
 			};
 
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValue({
-				exitCode: 1,
-				output: "",
-			});
+			const result = generateCommitMessage(context);
 
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("fallback");
-			expect(result.message).toBe("[FALLBACK] After planDrafter - Phase 3 - 1 files modified");
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(phase-3): revise plan after review");
 		});
 
-		it("generates fallback with phase and cycle", async () => {
+		it("generates codeReviewer message", () => {
 			const context: CommitMessageContext = {
-				role: "addressReview",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/api.ts", "src/utils.ts", "tests/api.test.ts"],
-				phase: 2,
-				cycle: 3,
+				role: "codeReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["src/code.ts"],
+				phase: 1,
 			};
 
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValue({
-				exitCode: 1,
-				output: "",
-			});
+			const result = generateCommitMessage(context);
 
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("fallback");
-			expect(result.message).toBe("[FALLBACK] After addressReview - Phase 2, Cycle 3 - 3 files modified");
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("refactor(phase-1): apply code review changes");
 		});
 
-		it("handles zero files in fallback", async () => {
+		it("generates fallback chore message for unknown roles", () => {
+			const context: CommitMessageContext = {
+				role: "discoveryAgent" as any,
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["notes.md"],
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("chore(pipeline): discoveryAgent changes");
+		});
+	});
+
+	describe("file list in body", () => {
+		it("includes file list in body", () => {
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/a.ts", "src/b.ts", "tests/a.test.ts"],
+				phase: 1,
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("- src/a.ts");
+			expect(result.message).toContain("- src/b.ts");
+			expect(result.message).toContain("- tests/a.test.ts");
+		});
+
+		it("omits body when no files", () => {
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: [],
+				phase: 1,
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			// Should be just the subject, no newlines
+			expect(result.message).toBe("feat(phase-1): implement phase changes");
+		});
+
+		it("truncates long file list with count", () => {
+			const files = Array.from({ length: 25 }, (_, i) => `src/file${i}.ts`);
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files,
+				phase: 1,
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			// Should list first 20 files then show truncation
+			expect(result.message).toContain("- src/file0.ts");
+			expect(result.message).toContain("- src/file19.ts");
+			expect(result.message).toContain("... and 5 more files");
+			expect(result.message).not.toContain("- src/file20.ts");
+		});
+	});
+
+	describe("always succeeds (deterministic)", () => {
+		it("always returns type success", () => {
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/feature.ts"],
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+		});
+
+		it("never returns type fallback", () => {
+			// Even with unusual input, should always succeed
 			const context: CommitMessageContext = {
 				role: "implementer",
 				modelConfig: { model: "opus", thinking: "high" },
 				files: [],
 			};
 
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValue({
-				exitCode: 1,
-				output: "",
-			});
+			const result = generateCommitMessage(context);
 
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("fallback");
-			expect(result.message).toBe("[FALLBACK] After implementer - 0 files modified");
+			expect(result.type).toBe("success");
 		});
 	});
 
-	describe("agent configuration", () => {
-		it("passes correct role for tool restrictions", async () => {
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/feature.ts"],
-			};
-
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValueOnce({
-				exitCode: 0,
-				output: "feat: implement feature",
-			});
-
-			await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			const call = vi.mocked(agents.runAgentWithConfig).mock.calls[0];
-			// Role parameter should be "commitMessageWriter" for tool restrictions
-			expect(call[6]).toBe("commitMessageWriter");
-		});
-
-		it("uses provided agent config", async () => {
-			const customConfig: ModelConfig = {
-				model: "sonnet",
-				thinking: "medium",
-			};
-
+	describe("backward compatibility", () => {
+		it("accepts but ignores agentConfig parameter", () => {
 			const context: CommitMessageContext = {
 				role: "specDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
 				files: ["docs/spec.md"],
 			};
 
-			vi.mocked(agents.runAgentWithConfig).mockResolvedValueOnce({
-				exitCode: 0,
-				output: "docs: add spec",
-			});
-
-			await generateCommitMessage(context, customConfig, mockCwd);
-
-			const call = vi.mocked(agents.runAgentWithConfig).mock.calls[0];
-			// First parameter should be the agent config
-			expect(call[0]).toEqual(customConfig);
-		});
-	});
-
-	describe("error handling", () => {
-		it("handles agent spawn failures", async () => {
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/feature.ts"],
-				phase: 1,
-			};
-
-			// Simulate spawn failure by rejecting
-			vi.mocked(agents.runAgentWithConfig).mockRejectedValue(
-				new Error("Failed to spawn process")
+			// These extra params should be accepted but ignored
+			const result = generateCommitMessage(
+				context,
+				{ model: "haiku", thinking: "off" },
+				"/fake/cwd"
 			);
 
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("fallback");
-			expect(result.message).toContain("[FALLBACK]");
-		});
-
-		it("handles unexpected errors gracefully", async () => {
-			const context: CommitMessageContext = {
-				role: "specDrafter",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["docs/spec.md"],
-			};
-
-			// Throw non-Error object
-			vi.mocked(agents.runAgentWithConfig).mockRejectedValue("String error");
-
-			const result = await generateCommitMessage(context, mockAgentConfig, mockCwd);
-
-			expect(result.type).toBe("fallback");
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(spec): draft specification");
 		});
 	});
 });

@@ -30,7 +30,7 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 	specDrafter: { model: "opus", thinking: "high" },         // Complex synthesis task
 	planDrafter: { model: "opus", thinking: "high" },         // Complex planning task
 	implementer: { model: "opus", thinking: "high" },         // Complex code generation
-	addressReview: { model: "opus", thinking: "high" },       // Complex fix implementation
+	addressReview: { model: "sonnet", thinking: "medium" },    // Fix application — issues already identified by reviewer
 	agentCommitMessageWriter: { model: "haiku", thinking: "off" },  // Fast, cheap commit message generation (R5)
 	// Hierarchy roles
 	scopingAgent: { model: "sonnet", thinking: "medium" },    // Scoping assessment doesn't need Opus

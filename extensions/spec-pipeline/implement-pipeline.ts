@@ -6,6 +6,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import type {
 	ImplementationState,
 	ProjectConfig,
@@ -15,7 +16,7 @@ import type {
 	RoleName,
 } from "./types.ts";
 import { saveImplState } from "./state.ts";
-import { createAgentCommit, createCommit, extractCommitMessage, squashCheckpointCommits, mergePipelineBranch, switchToBranch, deleteBranch } from "./git.ts";
+import { createAgentCommit, createCommit, getModifiedFiles, squashCheckpointCommits, mergePipelineBranch, switchToBranch, deleteBranch } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 import {
 	formatStepBanner,
@@ -25,7 +26,7 @@ import {
 	formatDivider,
 	formatKeyValue,
 } from "./formatting.ts";
-import { runAgent, runAgentWithConfig } from "./agents.ts";
+import { runAgentWithConfig } from "./agents.ts";
 import { runTieredReview } from "./review.ts";
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
@@ -194,6 +195,39 @@ export async function runImplementPipeline(
 	// Helper to save state
 	const save = () => saveImplState(cwd, state);
 
+	// Write spec content to a temp file to avoid embedding large text in every agent prompt
+	const specTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-spec-"));
+	const specTmpPath = path.join(specTmpDir, "spec.md");
+	fs.writeFileSync(specTmpPath, state.specContent, "utf-8");
+	const specFileRef = `Read the full specification from this file: ${specTmpPath}`;
+
+	// Cleanup helper for temp directory
+	const cleanupTmpDir = () => {
+		try {
+			fs.unlinkSync(specTmpPath);
+			fs.rmdirSync(specTmpDir);
+		} catch { /* ignore */ }
+	};
+
+	try {
+		return await _runImplementPipelineInner(state, cwd, projectConfig, ctx, specsDir, SYSTEM_PROMPTS, save, specTmpPath, specFileRef);
+	} finally {
+		cleanupTmpDir();
+	}
+}
+
+/** Inner implementation — separated so we can wrap with try/finally for temp file cleanup */
+async function _runImplementPipelineInner(
+	state: ImplementationState,
+	cwd: string,
+	projectConfig: ProjectConfig,
+	ctx: PipelineUIContext,
+	specsDir: string,
+	SYSTEM_PROMPTS: ReturnType<typeof createSystemPrompts>,
+	save: () => void,
+	specTmpPath: string,
+	specFileRef: string,
+): Promise<void> {
 	// Initialize or restore metrics
 	if (!state.metrics) {
 		state.metrics = initializeImplMetrics(state.skipPlanGeneration ?? false);
@@ -286,8 +320,7 @@ export async function runImplementPipeline(
 			
 			const planTask = `Create detailed implementation plan for Phase ${i + 1}.
 
-Spec:
-${state.specContent}
+${specFileRef}
 
 IMPORTANT: Write the plan file to this EXACT path: ${fullPhasePath}
 
@@ -448,9 +481,7 @@ Read the spec and current plan, revise to address the feedback, and write back t
 This is Phase ${phaseIdx + 1} of ${state.phases.length}.
 Expected phase file: ${phasePath}
 
-## Full Specification
-
-${state.specContent}
+${specFileRef}
 
 ## Instructions
 
@@ -463,7 +494,7 @@ Explore the codebase to understand existing patterns before making changes.`;
 			ctx.ui.notify(`⚠️ Plan file not found: ${fullPhasePath}, using spec`, "warning");
 			phasePlan = `## Implementation from Spec (Plan File Missing)
 
-${state.specContent}`;
+${specFileRef}`;
 		}
 
 		updateImplWidget(ctx, state, `Implementing phase ${phaseIdx + 1}/${state.phases.length}`);
@@ -640,36 +671,15 @@ Make the necessary fixes.`,
 		save();
 
 		// ========================================
-		// STEP 3: Create Commit for Phase
+		// STEP 3: Create Commit for Phase (if uncommitted changes remain)
 		// ========================================
-		updateImplWidget(ctx, state, "Creating commit...");
-		
-		ctx.ui.notify(`💾 Creating commit for phase ${phaseIdx + 1}...`, "info");
-		const lastReviewOutput = codeReviewResult.lastReviewOutput || "";
-		const phaseCommitTask = `Write a commit message for Phase ${phaseIdx + 1} implementation.
+		const remainingChanges = await getModifiedFiles(cwd);
+		if (remainingChanges.length > 0) {
+			updateImplWidget(ctx, state, "Creating commit...");
+			ctx.ui.notify(`💾 Creating commit for phase ${phaseIdx + 1}...`, "info");
 
-What was implemented:
-${implementationSummary}
-
-Review summary:
-${lastReviewOutput.slice(0, 500)}
-
-Final review verdict: ${codeReviewResult.verdict}
-Cheap review cycles: ${codeReviewResult.cheapCyclesCompleted}
-Expensive review cycles: ${codeReviewResult.expensiveCyclesCompleted}`;
-
-		const commitMsgResult = await runAgent(
-			"haiku",
-			phaseCommitTask,
-			cwd,
-			SYSTEM_PROMPTS.commitMessageWriter,
-			undefined,
-			undefined,
-			"commitMessageWriter"
-		);
-
-		if (commitMsgResult.exitCode === 0) {
-			const committed = await createCommit(cwd, extractCommitMessage(commitMsgResult.output));
+			const phaseCommitMsg = `feat(phase-${phaseIdx + 1}): complete phase ${phaseIdx + 1} implementation`;
+			const committed = await createCommit(cwd, phaseCommitMsg);
 			if (committed) {
 				if (!state.phaseCommits[phaseIdx]) {
 					state.phaseCommits[phaseIdx] = [];
@@ -678,6 +688,8 @@ Expensive review cycles: ${codeReviewResult.expensiveCyclesCompleted}`;
 				save();
 				ctx.ui.notify(`Phase ${phaseIdx + 1} committed`, "success");
 			}
+		} else {
+			ctx.ui.notify(`No uncommitted changes — skipping phase commit`, "info");
 		}
 
 		// Reset for next phase

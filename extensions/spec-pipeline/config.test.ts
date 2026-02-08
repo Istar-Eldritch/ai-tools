@@ -225,7 +225,7 @@ describe("default configurations", () => {
 
 		it("has addressReview config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.addressReview).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.addressReview.model).toBe("opus");
+			expect(DEFAULT_MODEL_CONFIGS.addressReview.model).toBe("sonnet");
 		});
 	});
 

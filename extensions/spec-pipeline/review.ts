@@ -162,6 +162,8 @@ export async function runTieredReview(
 	const { role, reviewTask, fixTask, runAddressReviewOnSignificantIssues = false } = operation;
 	
 	const tieredConfig = projectConfig.models[role];
+	// Use the dedicated addressReview model for fix application in both tiers
+	const addressReviewConfig = projectConfig.models.addressReview;
 	// Get per-reviewer cycle counts
 	const reviewerCycles = projectConfig.reviewCycles[role];
 	const cheapCycles = reviewerCycles.cheap;
@@ -261,11 +263,11 @@ export async function runTieredReview(
 		
 		// NEEDS_CHANGES - apply fix if more cycles remain
 		if (cycle < cheapCycles) {
-			notify(`${phaseCtx} Applying fixes for cheap tier...`, "info");
+			notify(`${phaseCtx} Applying fixes (${addressReviewConfig.model})...`, "info");
 			
-			// Apply fix using addressReview role but cheap model
+			// Apply fix using dedicated addressReview model config
 			const fixResult = await runAgentWithConfig(
-				tieredConfig.cheap,  // Use cheap model for cheap tier fixes
+				addressReviewConfig,
 				fixTask(lastReviewOutput),
 				cwd,
 				systemPrompts.addressReview,
@@ -277,7 +279,7 @@ export async function runTieredReview(
 			if (fixResult.exitCode !== 0) {
 				await handleAgentError(
 					cwd, state, fixResult,
-					tieredConfig.cheap.model,
+					addressReviewConfig.model,
 					"addressReview",
 					fixTask(lastReviewOutput),
 					phaseIndex,
@@ -295,13 +297,13 @@ export async function runTieredReview(
 				};
 			}
 			
-			// Create commit after addressReview (R1, R2, R10)
+			// Create commit after addressReview
 			const commitResult = await createAgentCommit(
 				cwd,
 				state,
 				{
 					role: "addressReview",
-					modelConfig: tieredConfig.cheap,
+					modelConfig: addressReviewConfig,
 					phase: phaseIndex,
 					cycle: cycle,
 					reviewFeedback: lastReviewOutput,
@@ -426,20 +428,20 @@ export async function runTieredReview(
 			};
 		}
 		
-		// NEEDS_CHANGES from expensive tier - fixes stay at expensive tier (R8)
+		// NEEDS_CHANGES from expensive tier
 		// Apply fix regardless of whether this is the last cycle - we want the final
 		// implementation to address all review feedback even if we've hit the limit
-		notify(`${phaseCtx} Applying fixes (staying at expensive tier)...`, "info");
+		notify(`${phaseCtx} Applying fixes (${addressReviewConfig.model})...`, "info");
 		
 		// Check for significant issues that need immediate attention
 		// (Currently informational; all fixes are applied regardless)
 		if (runAddressReviewOnSignificantIssues && hasSignificantIssues(lastReviewOutput)) {
-			notify(`${phaseCtx} Found significant issues - applying fix with expensive model`, "info");
+			notify(`${phaseCtx} Found significant issues - applying fix`, "info");
 		}
 		
-		// Apply fix using expensive model (R8 - stay at expensive tier)
+		// Apply fix using dedicated addressReview model config
 		const fixResult = await runAgentWithConfig(
-			tieredConfig.expensive,  // Use expensive model for expensive tier fixes (R8)
+			addressReviewConfig,
 			fixTask(lastReviewOutput),
 			cwd,
 			systemPrompts.addressReview,
@@ -451,7 +453,7 @@ export async function runTieredReview(
 		if (fixResult.exitCode !== 0) {
 			await handleAgentError(
 				cwd, state, fixResult,
-				tieredConfig.expensive.model,
+				addressReviewConfig.model,
 				"addressReview",
 				fixTask(lastReviewOutput),
 				phaseIndex,
@@ -469,13 +471,13 @@ export async function runTieredReview(
 			};
 		}
 		
-		// Create commit after addressReview (R1, R2, R10)
+		// Create commit after addressReview
 		const commitResult = await createAgentCommit(
 			cwd,
 			state,
 			{
 				role: "addressReview",
-				modelConfig: tieredConfig.expensive,
+				modelConfig: addressReviewConfig,
 				phase: phaseIndex,
 				cycle: cheapCycles + cycle,
 				reviewFeedback: lastReviewOutput,

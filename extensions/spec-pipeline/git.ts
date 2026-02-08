@@ -431,7 +431,7 @@ export function extractCommitMessage(output: string): string {
  * @param cwd - Working directory
  * @param state - Pipeline state (SpecState or ImplementationState)
  * @param context - Context for commit message generation (role, model, phase, etc.)
- * @param agentConfig - Model configuration for the commit message writer
+ * @param agentConfig - Model configuration (unused — retained for backward compatibility)
  * @param saveFn - Function to save the state after updating checkpoints
  * @param notify - UI notification callback
  * @returns { success: boolean; commitHash?: string; usedFallback?: boolean }
@@ -450,7 +450,7 @@ export async function createAgentCommit(
 	saveFn: () => void,
 	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
 ): Promise<{ success: boolean; commitHash?: string; usedFallback?: boolean }> {
-	// Import generateCommitMessage dynamically to avoid circular dependencies
+	// Import generateCommitMessage (now synchronous and deterministic)
 	const { generateCommitMessage } = await import("./commit-agent.ts");
 	
 	// Only create commits for new pipelines with agent commits enabled (R11 - backward compatibility)
@@ -465,83 +465,47 @@ export async function createAgentCommit(
 		return { success: true };  // No branch isolation, skip commit
 	}
 	
-	// Step 1: Get modified files (R4, R8)
+	// Step 1: Get modified files
 	const modifiedFiles = await getModifiedFiles(cwd);
 	
-	// Step 2: Check if any files were modified (R8)
+	// Step 2: Check if any files were modified
 	if (modifiedFiles.length === 0) {
 		notify?.("No files modified by agent - skipping commit", "info");
 		return { success: true };  // Nothing to commit
 	}
 	
-	// Step 3: Stage the modified files (R8)
+	// Step 3: Stage the modified files
 	const staged = await stageFiles(cwd, modifiedFiles);
 	if (!staged) {
 		notify?.("Failed to stage files", "error");
 		return { success: false };
 	}
 	
-	// Step 4: Check if there are actually staged changes (R8)
+	// Step 4: Check if there are actually staged changes
 	const hasChanges = await hasChangesStaged(cwd);
 	if (!hasChanges) {
 		notify?.("No staged changes after staging - skipping commit", "info");
 		return { success: true };  // No changes to commit
 	}
 	
-	// Step 5: Generate commit message (R4, R7)
-	notify?.(`Generating commit message for ${context.role}...`, "info");
-	const messageResult = await generateCommitMessage(
-		{
-			role: context.role as any,
-			modelConfig: context.modelConfig as any,
-			files: modifiedFiles,
-			phase: context.phase,
-			cycle: context.cycle,
-			reviewFeedback: context.reviewFeedback,
-		},
-		agentConfig as any,
-		cwd
-	);
+	// Step 5: Generate commit message (deterministic — no subprocess needed)
+	const messageResult = generateCommitMessage({
+		role: context.role as any,
+		modelConfig: context.modelConfig as any,
+		files: modifiedFiles,
+		phase: context.phase,
+		cycle: context.cycle,
+		reviewFeedback: context.reviewFeedback,
+	});
 	
-	// Step 6: Handle fallback case (R7)
-	if (messageResult.type === "fallback") {
-		notify?.(`⚠️ Commit message generation failed - using fallback`, "warning");
-		notify?.(`Fallback message: ${messageResult.message}`, "info");
-		notify?.("Pipeline aborted - please review and resume with /spec-resume", "error");
-		
-		// Create the commit with fallback message
-		const commitResult = await execGit(cwd, ["commit", "-m", messageResult.message]);
-		if (commitResult.code !== 0) {
-			notify?.("Failed to create commit with fallback message", "error");
-			return { success: false, usedFallback: true };
-		}
-		
-		// Get commit hash
-		const hashResult = await execGit(cwd, ["rev-parse", "HEAD"]);
-		const commitHash = hashResult.code === 0 ? hashResult.stdout : undefined;
-		
-		// Add to checkpoints array for squash merge (R12)
-		if (commitHash) {
-			if (!state.checkpoints) {
-				state.checkpoints = [];
-			}
-			state.checkpoints.push(commitHash);
-			saveFn();
-			notify?.(`📍 Agent commit created (fallback): ${commitHash.slice(0, 8)}`, "info");
-		}
-		
-		// Return success:false to abort pipeline (R7)
-		return { success: false, commitHash, usedFallback: true };
-	}
-	
-	// Step 7: Create the commit with generated message (R1, R2)
+	// Step 6: Create the commit
 	const commitResult = await execGit(cwd, ["commit", "-m", messageResult.message]);
 	if (commitResult.code !== 0) {
 		notify?.("Failed to create commit", "error");
 		return { success: false };
 	}
 	
-	// Step 8: Get commit hash
+	// Step 7: Get commit hash
 	const hashResult = await execGit(cwd, ["rev-parse", "HEAD"]);
 	if (hashResult.code !== 0) {
 		notify?.("Failed to get commit hash", "error");
@@ -549,7 +513,7 @@ export async function createAgentCommit(
 	}
 	const commitHash = hashResult.stdout;
 	
-	// Step 9: Add to checkpoints array for squash merge (R12)
+	// Step 8: Add to checkpoints array for squash merge
 	if (!state.checkpoints) {
 		state.checkpoints = [];
 	}
