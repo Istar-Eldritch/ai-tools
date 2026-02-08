@@ -626,4 +626,88 @@ describe("Git file tracking utilities", () => {
 		});
 	});
 
+	describe("scoped commits (dirty tree support)", () => {
+		it("commits only scoped files while leaving other dirty files untouched", async () => {
+			// Simulate a dirty working tree (e.g. implementation in progress)
+			await writeFile(join(testDir, "src-file.ts"), "implementation code\n");
+			await writeFile(join(testDir, "another-dirty.ts"), "more dirty code\n");
+			
+			// Simulate doc pipeline writing a spec file
+			await mkdir(join(testDir, "specs"), { recursive: true });
+			await writeFile(join(testDir, "specs/my-spec.md"), "# My Spec\n");
+			
+			// Stage and commit only the spec file (scoped)
+			const scopeFiles = ["specs/my-spec.md"];
+			const allModified = await getModifiedFiles(testDir);
+			const allModifiedSet = new Set(allModified);
+			const filesToCommit = scopeFiles.filter(f => allModifiedSet.has(f));
+			
+			expect(filesToCommit).toEqual(["specs/my-spec.md"]);
+			
+			const stageResult = await stageFiles(testDir, filesToCommit);
+			expect(stageResult).toBe(true);
+			
+			const commitResult = await execGit(testDir, ["commit", "-m", "docs: add spec"]);
+			expect(commitResult.code).toBe(0);
+			
+			// Verify the dirty files are still uncommitted
+			const remainingModified = await getModifiedFiles(testDir);
+			expect(remainingModified).toContain("src-file.ts");
+			expect(remainingModified).toContain("another-dirty.ts");
+			expect(remainingModified).not.toContain("specs/my-spec.md");
+		});
+		
+		it("skips commit when scoped file is not in modified files", async () => {
+			// Dirty tree with unrelated changes
+			await writeFile(join(testDir, "dirty.ts"), "dirty code\n");
+			
+			// The spec file doesn't exist / wasn't modified
+			const scopeFiles = ["specs/nonexistent.md"];
+			const allModified = await getModifiedFiles(testDir);
+			const allModifiedSet = new Set(allModified);
+			const filesToCommit = scopeFiles.filter(f => allModifiedSet.has(f));
+			
+			expect(filesToCommit).toEqual([]);
+			
+			// Nothing to stage or commit
+			const hasChanges = await hasChangesStaged(testDir);
+			expect(hasChanges).toBe(false);
+			
+			// Dirty file is still there
+			const remaining = await getModifiedFiles(testDir);
+			expect(remaining).toContain("dirty.ts");
+		});
+		
+		it("handles multiple scoped files", async () => {
+			// Create dirty unrelated files
+			await writeFile(join(testDir, "unrelated.ts"), "unrelated\n");
+			
+			// Create scoped files
+			await mkdir(join(testDir, "specs"), { recursive: true });
+			await writeFile(join(testDir, "specs/spec.md"), "# Spec\n");
+			await writeFile(join(testDir, "specs/appendix.md"), "# Appendix\n");
+			
+			const scopeFiles = ["specs/spec.md", "specs/appendix.md"];
+			const allModified = await getModifiedFiles(testDir);
+			const allModifiedSet = new Set(allModified);
+			const filesToCommit = scopeFiles.filter(f => allModifiedSet.has(f));
+			
+			expect(filesToCommit).toHaveLength(2);
+			expect(filesToCommit).toContain("specs/spec.md");
+			expect(filesToCommit).toContain("specs/appendix.md");
+			
+			const stageResult = await stageFiles(testDir, filesToCommit);
+			expect(stageResult).toBe(true);
+			
+			const commitResult = await execGit(testDir, ["commit", "-m", "docs: add specs"]);
+			expect(commitResult.code).toBe(0);
+			
+			// Unrelated file still dirty
+			const remaining = await getModifiedFiles(testDir);
+			expect(remaining).toContain("unrelated.ts");
+			expect(remaining).not.toContain("specs/spec.md");
+			expect(remaining).not.toContain("specs/appendix.md");
+		});
+	});
+
 });

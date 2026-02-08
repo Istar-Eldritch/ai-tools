@@ -289,12 +289,17 @@ export function extractCommitMessage(output: string): string {
  * 4. Creates the commit
  * 5. Adds the commit hash to state.checkpoints[]
  * 
+ * When `scopeFiles` is provided, only those specific files are staged and committed
+ * (even if other files have been modified). This is used by documentation pipelines
+ * (spec/roadmap/epic) to avoid committing unrelated dirty-tree changes.
+ * 
  * @param cwd - Working directory
  * @param state - Pipeline state (SpecState or ImplementationState)
  * @param context - Context for commit message generation (role, model, phase, etc.)
  * @param agentConfig - Model configuration (unused — retained for backward compatibility)
  * @param saveFn - Function to save the state after updating checkpoints
  * @param notify - UI notification callback
+ * @param scopeFiles - If provided, only these files are staged/committed (ignoring other changes)
  * @returns { success: boolean; commitHash?: string; usedFallback?: boolean }
  */
 export async function createAgentCommit(
@@ -309,22 +314,32 @@ export async function createAgentCommit(
 	},
 	agentConfig: { model: string; thinking: string },
 	saveFn: () => void,
-	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
+	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void,
+	scopeFiles?: string[]
 ): Promise<{ success: boolean; commitHash?: string; usedFallback?: boolean }> {
 	// Import generateCommitMessage (now synchronous and deterministic)
 	const { generateCommitMessage } = await import("./commit-agent.ts");
 	
-	// Step 1: Get modified files
-	const modifiedFiles = await getModifiedFiles(cwd);
+	// Step 1: Get files to commit
+	let filesToCommit: string[];
+	if (scopeFiles && scopeFiles.length > 0) {
+		// Scoped mode: only commit the specified files (if they have changes)
+		const allModified = await getModifiedFiles(cwd);
+		const allModifiedSet = new Set(allModified);
+		filesToCommit = scopeFiles.filter(f => allModifiedSet.has(f));
+	} else {
+		// Default mode: commit all modified files
+		filesToCommit = await getModifiedFiles(cwd);
+	}
 	
 	// Step 2: Check if any files were modified
-	if (modifiedFiles.length === 0) {
+	if (filesToCommit.length === 0) {
 		notify?.("No files modified by agent - skipping commit", "info");
 		return { success: true };  // Nothing to commit
 	}
 	
-	// Step 3: Stage the modified files
-	const staged = await stageFiles(cwd, modifiedFiles);
+	// Step 3: Stage the files
+	const staged = await stageFiles(cwd, filesToCommit);
 	if (!staged) {
 		notify?.("Failed to stage files", "error");
 		return { success: false };
@@ -341,7 +356,7 @@ export async function createAgentCommit(
 	const messageResult = generateCommitMessage({
 		role: context.role as any,
 		modelConfig: context.modelConfig as any,
-		files: modifiedFiles,
+		files: filesToCommit,
 		phase: context.phase,
 		cycle: context.cycle,
 		reviewFeedback: context.reviewFeedback,

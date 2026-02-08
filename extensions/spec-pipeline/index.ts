@@ -863,14 +863,15 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			"✅"
 		), "success");
 
-		// Create git commit for the spec draft
+		// Create git commit scoped to the spec file only (dirty tree is OK for doc pipelines)
 		const specDrafterConfig = projectConfig.models.specDrafter;
 		const commitResult = await createAgentCommit(
 			cwd, state,
 			{ role: "specDrafter", modelConfig: specDrafterConfig },
 			projectConfig.models.agentCommitMessageWriter,
 			() => saveSpecState(cwd, state),
-			ctx.ui.notify.bind(ctx.ui)
+			ctx.ui.notify.bind(ctx.ui),
+			[state.specPath]
 		);
 
 		if (!commitResult.success) {
@@ -987,7 +988,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			"✅"
 		), "success");
 
-		// Create git commit for the document draft
+		// Create git commit scoped to the doc file only (dirty tree is OK for doc pipelines)
 		const drafterRole = level === "roadmap" ? "roadmapDrafter" : "epicDrafter";
 		const drafterConfig = level === "roadmap" ? projectConfig.models.roadmapDrafter : projectConfig.models.epicDrafter;
 		const commitResult = await createAgentCommit(
@@ -998,7 +999,8 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
 				else saveEpicState(cwd, state as EpicState);
 			},
-			ctx.ui.notify.bind(ctx.ui)
+			ctx.ui.notify.bind(ctx.ui),
+			[state.docPath]
 		);
 
 		if (!commitResult.success) {
@@ -1386,19 +1388,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				}
 			}
 
-			// Git validation
+			// Git validation (repo must exist, but dirty state is OK for doc pipelines)
 			const gitValidation = await validateGitRepo(cwd);
 			if (!gitValidation.valid) {
 				ctx.ui.notify(gitValidation.error!, "error");
-				return;
-			}
-			
-			const gitClean = await checkGitClean(cwd);
-			if (!gitClean.clean) {
-				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
-				if (gitClean.status) {
-					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
-				}
 				return;
 			}
 			
@@ -1571,19 +1564,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				saveSpecState(cwd, state);
 			}
 
-			// Git validation
+			// Git validation (repo must exist, but dirty state is OK for doc pipelines)
 			const gitValidation = await validateGitRepo(cwd);
 			if (!gitValidation.valid) {
 				ctx.ui.notify(gitValidation.error!, "error");
-				return;
-			}
-			
-			const gitClean = await checkGitClean(cwd);
-			if (!gitClean.clean) {
-				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
-				if (gitClean.status) {
-					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
-				}
 				return;
 			}
 			
@@ -2363,19 +2347,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	): Promise<void> {
 		const cwd = ctx.cwd;
 
-		// Git validation
+		// Git validation (repo must exist, but dirty state is OK for doc pipelines)
 		const gitValidation = await validateGitRepo(cwd);
 		if (!gitValidation.valid) {
 			ctx.ui.notify(gitValidation.error!, "error");
-			return;
-		}
-
-		const gitClean = await checkGitClean(cwd);
-		if (!gitClean.clean) {
-			ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
-			if (gitClean.status) {
-				ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
-			}
 			return;
 		}
 
@@ -2569,16 +2544,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			else saveEpicState(cwd, state as EpicState);
 		}
 
-		// Git validation
+		// Git validation (repo must exist, but dirty state is OK for doc pipelines)
 		const gitValidation = await validateGitRepo(cwd);
 		if (!gitValidation.valid) {
 			ctx.ui.notify(gitValidation.error!, "error");
-			return;
-		}
-
-		const gitClean = await checkGitClean(cwd);
-		if (!gitClean.clean) {
-			ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
 			return;
 		}
 
