@@ -88,10 +88,11 @@ function finalizeImplMetrics(metrics: ImplementationMetrics, phasesCount: number
 /**
  * Extract phases from a spec document.
  * 
- * Supports three formats:
+ * Supports four formats:
  * 1. Table format without links (preferred): | Phase 1 | Focus description | Effort |
  * 2. Table format with links (legacy): | Phase 1 | Focus | Effort | [name](./path/phase1.md) |
- * 3. Inline format (fallback): ### Phase 1: Name
+ * 3. Typst table format: [Phase 1], [Focus description], [Effort],
+ * 4. Inline format (fallback): ### Phase 1: Name
  */
 export function extractPhases(specContent: string, specTimestamp: string, shortName: string): { paths: string[]; isInline: boolean } {
 	// First try table format with links (legacy support)
@@ -127,6 +128,29 @@ export function extractPhases(specContent: string, specTimestamp: string, shortN
 	
 	if (tablePhases.length > 0) {
 		return { paths: tablePhases, isInline: false };
+	}
+	
+	// Try Typst table format: [Phase N], [Focus description], [Effort],
+	const typstPhases: string[] = [];
+	const typstRegex = /\[Phase\s+(\d+)\],\s*\[([^\]]+)\]/g;
+	while ((match = typstRegex.exec(specContent)) !== null) {
+		const phaseNum = match[1];
+		const focusDescription = match[2].trim();
+		
+		// Generate phase name from focus description (first 3 words, sanitized)
+		const phaseName = focusDescription
+			.toLowerCase()
+			.replace(/[^a-z0-9\s]/g, "")
+			.trim()
+			.split(/\s+/)
+			.slice(0, 3)
+			.join("_");
+		
+		typstPhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
+	}
+	
+	if (typstPhases.length > 0) {
+		return { paths: typstPhases, isInline: false };
 	}
 	
 	// Fallback: detect inline phases
