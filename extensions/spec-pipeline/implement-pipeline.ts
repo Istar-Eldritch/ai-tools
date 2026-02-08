@@ -30,6 +30,28 @@ import { runTieredReview } from "./review.ts";
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 // ============================================
+// Phase Name Helpers
+// ============================================
+
+/** Stop words to skip when generating phase directory names from descriptions */
+const PHASE_STOP_WORDS = new Set([
+	"a", "an", "the", "and", "or", "for", "of", "in", "on", "to", "with",
+	"is", "are", "be", "its", "this", "that", "from", "by", "at",
+]);
+
+/** Sanitize a phase focus description into a filesystem-safe slug (max 4 words) */
+function sanitizePhaseDescription(description: string): string {
+	return description
+		.toLowerCase()
+		.replace(/[^a-z0-9\s]/g, "")
+		.trim()
+		.split(/\s+/)
+		.filter(w => w.length > 1 && !PHASE_STOP_WORDS.has(w))
+		.slice(0, 4)
+		.join("_") || "phase";
+}
+
+// ============================================
 // Metrics Helpers
 // ============================================
 
@@ -114,14 +136,8 @@ export function extractPhases(specContent: string, specTimestamp: string, shortN
 		const phaseNum = match[1];
 		const focusDescription = match[2].trim();
 		
-		// Generate phase name from focus description (first 3 words, sanitized)
-		const phaseName = focusDescription
-			.toLowerCase()
-			.replace(/[^a-z0-9\s]/g, "")
-			.trim()
-			.split(/\s+/)
-			.slice(0, 3)
-			.join("_");
+		// Generate phase name from focus description (first 4 words, sanitized)
+		const phaseName = sanitizePhaseDescription(focusDescription);
 		
 		tablePhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
 	}
@@ -137,14 +153,8 @@ export function extractPhases(specContent: string, specTimestamp: string, shortN
 		const phaseNum = match[1];
 		const focusDescription = match[2].trim();
 		
-		// Generate phase name from focus description (first 3 words, sanitized)
-		const phaseName = focusDescription
-			.toLowerCase()
-			.replace(/[^a-z0-9\s]/g, "")
-			.trim()
-			.split(/\s+/)
-			.slice(0, 3)
-			.join("_");
+		// Generate phase name from focus description (first 4 words, sanitized)
+		const phaseName = sanitizePhaseDescription(focusDescription);
 		
 		typstPhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
 	}
@@ -158,13 +168,7 @@ export function extractPhases(specContent: string, specTimestamp: string, shortN
 	const inlineRegex = /^###\s*Phase\s*(\d+)\s*:\s*(.+?)(?:\s*\([^)]*\))?\s*$/gm;
 	while ((match = inlineRegex.exec(specContent)) !== null) {
 		const phaseNum = match[1];
-		const phaseName = match[2]
-			.toLowerCase()
-			.replace(/[^a-z0-9\s]/g, "")
-			.trim()
-			.split(/\s+/)
-			.slice(0, 3)
-			.join("_");
+		const phaseName = sanitizePhaseDescription(match[2]);
 		inlinePhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
 	}
 	

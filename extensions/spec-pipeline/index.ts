@@ -169,32 +169,70 @@ import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 /** Common stop words for generating short names from descriptions */
 const STOP_WORDS = new Set([
-	"a", "an", "the", "i", "we", "you", "it", "is", "are", "was", "were",
-	"want", "need", "would", "like", "to", "for", "of", "in", "on", "at",
-	"with", "and", "or", "but", "that", "this", "these", "those", "be",
-	"have", "has", "had", "do", "does", "did", "will", "can", "could",
-	"should", "may", "might", "must", "shall", "add", "create", "make",
-	"build", "implement", "new", "some", "my", "our", "your", "their"
+	// Articles, pronouns, determiners
+	"a", "an", "the", "i", "we", "you", "it", "he", "she", "they", "me", "us",
+	"my", "our", "your", "their", "its", "his", "her", "this", "that", "these",
+	"those", "some", "any", "all", "each", "every", "no", "not",
+	// Be/have/do verbs
+	"is", "are", "was", "were", "be", "been", "being",
+	"have", "has", "had", "having",
+	"do", "does", "did", "done", "doing",
+	// Modal/auxiliary verbs
+	"will", "would", "can", "could", "should", "may", "might", "must", "shall",
+	// Common action verbs (too generic for naming)
+	"want", "need", "like", "go", "get", "got", "let", "lets", "put", "set",
+	"take", "give", "tell", "say", "said", "know", "see", "look", "find",
+	"use", "used", "using", "try", "keep", "start", "run", "work", "call",
+	"come", "think", "also", "just", "even", "still", "way", "more", "much",
+	"many", "less", "most", "only", "already", "now", "here", "there",
+	// Spec/dev action verbs (user intent, not content)
+	"add", "create", "make", "build", "implement", "write", "spec", "plan",
+	"design", "develop", "setup", "configure", "update", "modify", "change",
+	"fix", "address", "handle", "support", "enable", "allow", "ensure",
+	"improve", "optimize", "optimise", "refactor", "introduce", "provide",
+	// Prepositions and conjunctions
+	"to", "for", "of", "in", "on", "at", "by", "up", "out", "off", "from",
+	"into", "with", "about", "between", "through", "after", "before",
+	"and", "or", "but", "so", "if", "then", "than", "when", "where", "how",
+	// Filler words
+	"new", "thing", "stuff", "feature", "functionality", "ability",
+	"something", "everything", "nothing", "really", "very", "quite",
+	"please", "thanks", "hey", "ok", "okay", "sure", "right",
 ]);
 
 function generateShortName(text: string): string {
 	return text
 		.toLowerCase()
-		.replace(/[^a-z0-9\s]/g, "")
+		.replace(/[^a-z0-9\s]/g, " ")
 		.split(/\s+/)
 		.filter(word => word.length > 1 && !STOP_WORDS.has(word))
-		.slice(0, 3)
+		.slice(0, 4)
 		.join("_") || "spec";
 }
 
-function generateBranchShortName(text: string): string {
-	return text
+function shortNameToBranch(shortName: string): string {
+	return shortName.replace(/_/g, "-");
+}
+
+/**
+ * Prompt the user for a short name, with the auto-generated one as default.
+ * Returns { shortName, branchShortName }.
+ */
+async function promptForShortName(
+	ctx: { ui: { input: (title: string, placeholder?: string) => Promise<string | undefined> } },
+	description: string
+): Promise<{ shortName: string; branchShortName: string }> {
+	const suggested = generateShortName(description);
+	const userInput = await ctx.ui.input("Short name (used for file & branch names):", suggested);
+	// Sanitize whatever the user typed (or use suggested if they cancelled/left empty)
+	const raw = (userInput && userInput.trim()) ? userInput.trim() : suggested;
+	const shortName = raw
 		.toLowerCase()
-		.replace(/[^a-z0-9\s]/g, "")
-		.split(/\s+/)
-		.filter(word => word.length > 1 && !STOP_WORDS.has(word))
-		.slice(0, 3)
-		.join("-") || "spec";
+		.replace(/[^a-z0-9\s_-]/g, "")
+		.replace(/[\s-]+/g, "_")
+		.replace(/^_+|_+$/g, "")
+		|| "spec";
+	return { shortName, branchShortName: shortNameToBranch(shortName) };
 }
 
 export default function (pi: ExtensionAPI) {
@@ -1387,8 +1425,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			// Generate names and timestamps
 			const specTimestamp = generateTimestamp();
-			const shortName = generateShortName(description);
-			const branchShortName = generateBranchShortName(description);
+			const { shortName, branchShortName } = await promptForShortName(ctx, description);
 
 			// Create initial state
 			const state = createInitialSpecState(
@@ -1932,9 +1969,8 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			// Generate timestamp and names
 			const implTimestamp = generateTimestamp();
-			const branchShortName = generateBranchShortName(
-				path.basename(relativeSpecPath, path.extname(relativeSpecPath))
-			);
+			const specBaseName = path.basename(relativeSpecPath, path.extname(relativeSpecPath));
+			const branchShortName = shortNameToBranch(generateShortName(specBaseName));
 
 			// Create initial state
 			const state = createInitialImplState(
@@ -2443,8 +2479,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 		// Generate names and timestamps
 		const docTimestamp = generateTimestamp();
-		const shortName = generateShortName(description);
-		const branchShortName = generateBranchShortName(description);
+		const { shortName, branchShortName } = await promptForShortName(ctx, description);
 
 		// Create initial state
 		let state: HierarchyState;
