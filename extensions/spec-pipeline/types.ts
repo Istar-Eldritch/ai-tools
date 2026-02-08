@@ -457,7 +457,7 @@ export interface ImplementationState {
  */
 export const AGENTS = {
 	opus: {
-		model: "claude-opus-4-5",
+		model: "claude-opus-4-6",
 		thinking: "high",
 	},
 	sonnet: {
@@ -550,7 +550,7 @@ export const READ_ONLY_ROLES = new Set(["specReviewer", "planReviewer", "codeRev
  * Map model name to actual model identifier
  */
 export const MODEL_IDENTIFIERS: Record<"opus" | "sonnet" | "haiku", string> = {
-	opus: "claude-opus-4-5",
+	opus: "claude-opus-4-6",
 	sonnet: "claude-sonnet-4-5",
 	haiku: "claude-haiku-4-5",
 } as const;

@@ -274,6 +274,9 @@ export default function (pi: ExtensionAPI) {
 	/** Number of conversation exchanges in current mode */
 	let exchangeCount = 0;
 
+	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
+	let pendingScopingContext: string | undefined = undefined;
+
 	/** Helper to get the active state as SpecState (only valid when activePipelineKind === "spec") */
 	function getActiveSpecState(): SpecState | null {
 		return activePipelineKind === "spec" ? activePipelineState as SpecState : null;
@@ -385,6 +388,10 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
+		const scopingSection = state.discovery?.discoverySummary
+			? `\n\n## Prior Scoping Context\n\nThe following context was gathered during a scoping assessment before this discovery session:\n\n${state.discovery.discoverySummary}\n`
+			: "";
+
 		return `
 ${discoveryPrompt}
 
@@ -393,8 +400,7 @@ ${discoveryPrompt}
 You are currently conducting a discovery session for this feature:
 
 ${state.description}
-
-${conversationContext}
+${scopingSection}${conversationContext}
 
 ## Instructions
 
@@ -404,6 +410,7 @@ ${conversationContext}
 - Keep questions focused and actionable (${projectConfig.discovery.questionsPerRound} questions at a time)
 - The user will answer naturally — adapt your follow-up questions based on their responses
 - When you feel you have enough context, tell the user they can type /spec-done to proceed to spec drafting
+${state.discovery?.discoverySummary ? "- Scoping context is available above — factor it in but don't skip asking your own questions" : ""}
 
 IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only ask questions and explore the codebase.
 `;
@@ -1466,10 +1473,22 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			
 			updateSpecWidget(ctx, state, "Initializing...");
 
+			// Consume any pending scoping context from /plan → feature route
+			const scopingContext = pendingScopingContext;
+			pendingScopingContext = undefined;
+			if (scopingContext) {
+				ctx.ui.notify("📎 Including scoping context from /plan session.", "info");
+			}
+
 			// If discovery is enabled (not --quick), enter conversational discovery mode
 			const shouldDiscover = !isQuick && projectConfig.discovery.enabled && state.stage === "discovery";
 
 			if (shouldDiscover) {
+				// If we have scoping context, pre-populate the discovery summary so it's available
+				if (scopingContext && state.discovery) {
+					state.discovery.discoverySummary = scopingContext;
+				}
+
 				// Initialize conversational discovery state
 				state.discovery!.conversationHistory = [];
 				saveSpecState(cwd, state);
@@ -1489,7 +1508,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				ctx.ui.notify("When you're satisfied with the discovery, type /spec-done to proceed to spec drafting.", "info");
 
 				// Send the initial discovery message to kick off the conversation
-				pi.sendUserMessage(`I want to build the following feature: ${description}\n\nPlease explore the codebase and ask me clarifying questions to understand the requirements better.`);
+				const scopingNote = scopingContext
+					? `\n\nThe following context was gathered during a scoping assessment:\n\n${scopingContext}\n\nPlease take this into account and ask any additional clarifying questions.`
+					: "";
+				pi.sendUserMessage(`I want to build the following feature: ${description}${scopingNote}\n\nPlease explore the codebase and ask me clarifying questions to understand the requirements better.`);
 			} else {
 				// --quick mode: enter conversational drafting directly
 				enterDraftingMode(state, cwd, projectConfig, ctx);
@@ -1504,8 +1526,11 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 				// Send the kickoff message
 				const fullSpecPath = path.join(cwd, state.specPath);
+				const scopingNote = scopingContext
+					? `\n\nThe following context was gathered during a scoping assessment:\n\n${scopingContext}\n\nIncorporate this context into the specification.`
+					: "";
 				pi.sendUserMessage(
-					`Please create a technical specification for: ${description}\n\n` +
+					`Please create a technical specification for: ${description}${scopingNote}\n\n` +
 					`Write the spec to this exact path: ${fullSpecPath}\n` +
 					`Use spec timestamp: ${state.specTimestamp}\n\n` +
 					`Explore the codebase first to understand existing patterns, then create a comprehensive spec.`
@@ -2968,9 +2993,13 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			// Route to the appropriate pipeline, forwarding scoping context
 			if (chosenLevel === "feature") {
+				// Store scoping context so the next /spec invocation picks it up
+				if (scopingSummary) {
+					pendingScopingContext = scopingSummary;
+				}
 				ctx.ui.notify(`Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`, "info");
 				if (scopingSummary) {
-					ctx.ui.notify("Note: Scoping context will be available in the next /spec discovery phase.", "info");
+					ctx.ui.notify("✅ Scoping context saved — it will be automatically included when you run /spec.", "info");
 				}
 			} else {
 				await startHierarchyPipeline(chosenLevel, description, isQuick, ctx, undefined, undefined, scopingSummary);
