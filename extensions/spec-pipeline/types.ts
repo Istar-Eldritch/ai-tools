@@ -299,15 +299,13 @@ export interface DiscoveryState {
 }
 
 /**
- * Drafting stage state (for conversational spec drafting)
+ * Drafting stage state (for conversational drafting)
  */
 export interface DraftingState {
 	/** Conversation history for drafting phase */
 	conversationHistory: ConversationalExchange[];
-	/** Whether drafting is complete (user typed /spec-draft-done) */
+	/** Whether drafting is complete (user typed /spec-draft-done or /draft-done) */
 	completed: boolean;
-	/** Last review feedback (injected into drafting context for revisions) */
-	lastReviewFeedback?: string;
 }
 
 /**

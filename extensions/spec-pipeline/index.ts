@@ -4,10 +4,17 @@
  * Split into two separate workflows:
  *
  * SPEC CREATION (/spec):
- *   1. Discovery (optional): Sonnet asks clarifying questions
- *   2. Spec Drafting: Opus drafts technical specification
- *   3. Spec Review: Tiered review (Sonnet → Opus), user approves or requests changes
+ *   1. Discovery (optional): Conversational — LLM asks clarifying questions
+ *   2. Spec Drafting: Conversational — user guides LLM to write specification
+ *   3. User Approval: User approves, requests revisions, or cancels
  *   4. Stays on spec branch for user to review and merge
+ *
+ * HIERARCHY (/roadmap, /epic):
+ *   1. Discovery (optional): Conversational — LLM asks clarifying questions
+ *   2. Drafting: Conversational — user guides LLM to write document
+ *   3. User Approval: User approves, requests revisions, or cancels
+ *   4. Child extraction (auto-parses child items table from document)
+ *   5. Stays on hierarchy branch for user to review and merge
  *
  * IMPLEMENTATION (/implement):
  *   1. Takes a spec file path as input
@@ -67,7 +74,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 // Import types
-import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, TieredReviewerRole, ConversationalExchange, ProjectConfig, PipelineMode, DraftingState, ScopingState, ConversationalPipelineState } from "./types.ts";
+import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, ConversationalExchange, ProjectConfig, PipelineMode, ScopingState, ConversationalPipelineState } from "./types.ts";
 
 // Import config
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
@@ -146,7 +153,7 @@ import {
 import { runAgent } from "./agents.ts";
 
 // Import review
-import { retryFailedOperation, runTieredReview } from "./review.ts";
+import { retryFailedOperation } from "./review.ts";
 
 // Import pipelines
 import { runSpecPipeline } from "./spec-pipeline.ts";
@@ -378,14 +385,8 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only a
 			? `\n\n## Discovery Context\n\nThe following requirements were gathered during discovery:\n\n${state.discovery.discoverySummary}\n`
 			: "";
 
-		let reviewFeedback = "";
-		if (state.drafting?.lastReviewFeedback) {
-			reviewFeedback = `\n\n## Review Feedback to Address\n\nThe spec was reviewed and received the following feedback. Please address these issues:\n\n${state.drafting.lastReviewFeedback}\n`;
-		}
-
 		let draftingHistory = "";
 		if (state.drafting?.conversationHistory && state.drafting.conversationHistory.length > 0) {
-			// Only include a brief summary to avoid bloating the prompt
 			draftingHistory = `\n\n## Drafting Progress\n\nYou have had ${state.drafting.conversationHistory.length} exchanges with the user while drafting this spec.\n`;
 		}
 
@@ -397,7 +398,7 @@ ${specDrafterPrompt}
 You are drafting a technical specification for this feature:
 
 ${state.description}
-${discoveryContext}${reviewFeedback}${draftingHistory}
+${discoveryContext}${draftingHistory}
 
 ## Spec File Details
 
@@ -412,7 +413,7 @@ ${discoveryContext}${reviewFeedback}${draftingHistory}
 - Write the spec to the EXACT path above using the write tool
 - The user will guide you conversationally — follow their instructions
 - If the user asks you to focus on specific areas, adjust the spec accordingly
-- When the user is satisfied, they will type /spec-draft-done to proceed to review
+- When the user is satisfied, they will type /spec-draft-done to proceed
 
 ${state.specIteration > 0 ? `This is iteration ${state.specIteration + 1}. Read the existing spec file and revise it based on the conversation.` : "This is the first draft. Create the spec from scratch."}
 
@@ -560,6 +561,66 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. O
 	}
 
 	/**
+	 * Build the drafting system prompt injection for hierarchy pipelines (roadmap/epic).
+	 * This turns the host LLM into a roadmap/epic drafter.
+	 */
+	function buildHierarchyDraftingPromptInjection(
+		state: HierarchyState,
+		level: HierarchyLevel,
+		projectConfig: ProjectConfig,
+		parentContext?: string
+	): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+		const drafterPrompt = level === "roadmap" ? SYSTEM_PROMPTS.roadmapDrafter : SYSTEM_PROMPTS.epicDrafter;
+
+		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+		const fullDocPath = path.join(activeCwd, state.docPath);
+
+		const discoveryContext = state.discovery?.discoverySummary
+			? `\n\n## Discovery Context\n\nThe following requirements were gathered during discovery:\n\n${state.discovery.discoverySummary}\n`
+			: "";
+
+		const parentSection = parentContext
+			? `\n\n## Parent Context\n\n${parentContext}\n`
+			: "";
+
+		let draftingHistory = "";
+		if (state.drafting?.conversationHistory && state.drafting.conversationHistory.length > 0) {
+			draftingHistory = `\n\n## Drafting Progress\n\nYou have had ${state.drafting.conversationHistory.length} exchanges with the user while drafting this ${level}.\n`;
+		}
+
+		return `
+${drafterPrompt}
+
+## Active ${levelLabel} Drafting Session
+
+You are drafting a ${level} document for:
+
+${state.description}
+${discoveryContext}${parentSection}${draftingHistory}
+
+## Document File Details
+
+- **Document timestamp**: ${state.docTimestamp}
+- **Document file path**: ${fullDocPath}
+- **Iteration**: ${state.docIteration + 1}
+
+## Instructions
+
+- You have FULL tool access: read, bash, edit, write, grep, find, ls
+- Explore the codebase to understand existing patterns and project structure
+- Write the ${level} document to the EXACT path above using the write tool
+- The user will guide you conversationally — follow their instructions
+- If the user asks you to focus on specific areas, adjust the document accordingly
+- When the user is satisfied, they will type /draft-done to proceed to approval
+
+${state.docIteration > 0 ? `This is iteration ${state.docIteration + 1}. Read the existing document file and revise it based on the conversation.` : `This is the first draft. Create the ${level} document from scratch.`}
+
+IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creating/refining the ${level} document. Do NOT implement code.
+`;
+	}
+
+	/**
 	 * Get the spec file size for widget display
 	 */
 	function getSpecFileInfo(cwd: string, specPath: string): string {
@@ -609,6 +670,7 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. O
 			]);
 		} else if (pipelineMode === "drafting") {
 			const specState = getActiveSpecState();
+			const hierState = getActiveHierarchyState();
 			if (specState) {
 				const specInfo = getSpecFileInfo(activeCwd, specState.specPath);
 				const iteration = specState.specIteration + 1;
@@ -619,13 +681,20 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. O
 					`Iteration: ${iteration}`,
 					`Exchanges: ${exchangeCount}`,
 				];
-				if (specState.drafting?.lastReviewFeedback) {
-					lines.push("", "⚠️  Addressing review feedback");
-				}
-				lines.push("", `Type ${draftDoneCmd} when ready for review.`);
+				lines.push("", `Type ${draftDoneCmd} when satisfied.`);
 				ctx.ui.setWidget("spec-pipeline-status", lines);
-			} else {
-				// hierarchy drafting — handled by runHierarchyPipeline, not conversational
+			} else if (hierState) {
+				const docInfo = getSpecFileInfo(activeCwd, hierState.docPath);
+				const iteration = hierState.docIteration + 1;
+				const lines = [
+					`📝 ${kindLabel} Drafting Mode`,
+					"────────────────────────────────────",
+					`Document: ${docInfo}`,
+					`Iteration: ${iteration}`,
+					`Exchanges: ${exchangeCount}`,
+				];
+				lines.push("", `Type ${draftDoneCmd} when satisfied.`);
+				ctx.ui.setWidget("spec-pipeline-status", lines);
 			}
 		}
 	}
@@ -678,7 +747,7 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. O
 			"📝"
 		), "info");
 		ctx.ui.notify(`Spec file will be written to: ${state.specPath}`, "info");
-		ctx.ui.notify("When satisfied, type /spec-draft-done to proceed to review.", "info");
+		ctx.ui.notify("When satisfied, type /spec-draft-done to proceed.", "info");
 
 		// Build the kickoff message
 		const fullSpecPath = path.join(cwd, state.specPath);
@@ -715,9 +784,9 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. O
 	}
 
 	/**
-	 * Handle end of spec drafting: commit, run review, present options
+	 * Handle end of spec drafting: commit and present approval options (no AI review)
 	 */
-	async function endDraftingAndReview(ctx: any): Promise<void> {
+	async function endSpecDrafting(ctx: any): Promise<void> {
 		const specState = getActiveSpecState();
 		if (pipelineMode !== "drafting" || !specState || !activeCwd || !activeProjectConfig) {
 			ctx.ui.notify("No active drafting session.", "error");
@@ -745,15 +814,15 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. O
 		// Mark drafting as complete
 		state.drafting!.completed = true;
 		state.specIteration++;
-		state.stage = "spec_review";
+		state.stage = "user_approval";
 		saveSpecState(cwd, state);
 
-		// Exit drafting mode for the review phase
+		// Exit drafting mode
 		const { exchangeCount: draftExchanges } = exitMode();
 
 		ctx.ui.notify(formatStepBanner(
 			"SPEC DRAFTING COMPLETE",
-			`${draftExchanges} exchanges. Creating commit and running review...`,
+			`${draftExchanges} exchanges. Creating commit...`,
 			"✅"
 		), "success");
 
@@ -771,108 +840,20 @@ IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. O
 			ctx.ui.notify("Warning: Failed to create commit for spec draft", "warning");
 		}
 
-		// Update widget for review phase
-		ctx.ui.setWidget("spec-pipeline-status", [
-			"🔍 Spec Review in Progress",
-			"────────────────────────────────────",
-			`Iteration: ${state.specIteration}`,
-			"",
-			"Running tiered review (cheap → expensive)...",
-		]);
+		// Present approval options to user
+		const specPreview = state.specDraft.length > 3000
+			? state.specDraft.slice(0, 3000) + "\n\n[... truncated — read the file for full content ...]"
+			: state.specDraft;
 
-		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
-
-		// Run tiered spec review (subprocess-based for isolated judgment)
 		ctx.ui.notify(formatStepBanner(
-			"Spec Review",
-			"Running tiered review (cheap → expensive)",
-			"🔍"
+			"User Approval Required",
+			`Review the spec at: ${state.specPath}`,
+			"👤"
 		), "info");
 
-		const specReviewResult = await runTieredReview(
-			{
-				cwd,
-				projectConfig,
-				systemPrompts: SYSTEM_PROMPTS,
-				state,
-				saveFn: () => saveSpecState(cwd, state),
-				phaseIndex: undefined,
-				notify: ctx.ui.notify.bind(ctx.ui),
-			},
-			{
-				role: "specReviewer",
-				reviewTask: `Review this spec draft:\n\n${state.specDraft}`,
-				fixTask: (reviewOutput) => `Revise the spec to address review feedback.
-
-Current spec at: ${fullSpecPath}
-
-Review feedback:
-${reviewOutput}
-
-Read the current spec, apply fixes, and write the updated version back to the same path.`,
-			}
-		);
-
-		if (specReviewResult.hadError) {
-			clearPipelineWidget(ctx);
-			ctx.ui.notify("Review encountered an error. Use /spec-resume to retry.", "error");
-			return;
-		}
-
-		// Re-read spec after review fixes
-		if (fs.existsSync(fullSpecPath)) {
-			state.specDraft = fs.readFileSync(fullSpecPath, "utf-8");
-		}
-
-		const verdict = specReviewResult.verdict;
-		const reviewOutput = specReviewResult.lastReviewOutput;
-
-		// Update widget with review result
-		ctx.ui.setWidget("spec-pipeline-status", [
-			verdict === "APPROVED" ? "✅ Spec Review: APPROVED" : "🔄 Spec Review: NEEDS_CHANGES",
-			"────────────────────────────────────",
-			`Iteration: ${state.specIteration}`,
-			`Review cycles: cheap=${specReviewResult.cheapCyclesCompleted}, expensive=${specReviewResult.expensiveCyclesCompleted}`,
-		]);
-
-		// Show review summary
-		const reviewPreview = reviewOutput.length > 2000
-			? reviewOutput.slice(0, 2000) + "\n\n[... truncated ...]"
-			: reviewOutput;
-		ctx.ui.notify(formatStepBanner(
-			`Review Result: ${verdict}`,
-			`Cheap: ${specReviewResult.cheapCyclesCompleted}, Expensive: ${specReviewResult.expensiveCyclesCompleted}`,
-			verdict === "APPROVED" ? "✅" : "🔄"
-		), "info");
-		ctx.ui.notify(reviewPreview, "info");
-
-		// Present options to user
-		if (verdict === "APPROVED") {
-			const approve = await ctx.ui.confirm(
-				"Spec Approved by Reviewer",
-				"The spec was approved by the reviewer. Do you approve it too?"
-			);
-
-			if (approve) {
-				state.specApproved = true;
-				state.stage = "completed";
-				saveSpecState(cwd, state);
-				clearPipelineWidget(ctx);
-
-				ctx.ui.notify(formatStepBanner(
-					"🎉 Spec Creation Complete!",
-					`Spec: ${state.specPath}`,
-					"✅"
-				), "success");
-				ctx.ui.notify(`Next: /implement ${state.specPath}`, "info");
-				return;
-			}
-		}
-
-		// User wants to revise (or reviewer said NEEDS_CHANGES)
 		const choices = [
-			"Revise spec conversationally (recommended)",
-			"Approve spec as-is",
+			"Approve spec",
+			"Revise spec conversationally",
 			"Cancel pipeline",
 		];
 		const choice = await ctx.ui.select(
@@ -880,8 +861,8 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			choices
 		);
 
-		if (choice === choices[1]) {
-			// Approve anyway
+		if (choice === choices[0]) {
+			// Approve
 			state.specApproved = true;
 			state.stage = "completed";
 			saveSpecState(cwd, state);
@@ -905,23 +886,145 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			return;
 		}
 
-		// Re-enter drafting mode with review feedback
-		state.drafting!.lastReviewFeedback = reviewOutput;
+		// Re-enter drafting mode for revision
 		state.drafting!.completed = false;
 		enterDraftingMode(state, cwd, projectConfig, ctx);
 
 		ctx.ui.notify(formatStepBanner(
 			"REVISION MODE",
-			"Guide the LLM to address the review feedback.",
+			"Continue chatting to refine the spec.",
 			"📝"
 		), "info");
-		ctx.ui.notify("The review feedback has been injected into the LLM's context.", "info");
-		ctx.ui.notify("Type /spec-draft-done when ready for another review cycle.", "info");
+		ctx.ui.notify("Type /spec-draft-done when satisfied.", "info");
 
 		// Kick off revision
 		pi.sendUserMessage(
-			`The spec at ${fullSpecPath} received review feedback. Please read the current spec and the review feedback, then revise accordingly.\n\n` +
-			`Key issues from reviewer:\n${reviewOutput.slice(0, 3000)}`
+			`Please read the current spec at ${fullSpecPath} and let me guide you on revisions.`
+		);
+	}
+
+	/**
+	 * Handle end of hierarchy drafting: commit and present approval options (no AI review)
+	 */
+	async function endHierarchyDrafting(ctx: any): Promise<void> {
+		const hierState = getActiveHierarchyState();
+		if (pipelineMode !== "drafting" || !hierState || !activeCwd || !activeProjectConfig) {
+			ctx.ui.notify("No active hierarchy drafting session.", "error");
+			return;
+		}
+
+		const state = hierState;
+		const cwd = activeCwd;
+		const projectConfig = activeProjectConfig;
+		const level = activeHierarchyLevel!;
+		const parentContext = activeParentContext;
+		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+		const fullDocPath = path.join(cwd, state.docPath);
+
+		// Validate document file exists
+		if (!fs.existsSync(fullDocPath)) {
+			ctx.ui.notify(`Document file not found at: ${state.docPath}\n\nThe LLM needs to write the document file first. Continue chatting to guide it.`, "error");
+			return;
+		}
+
+		// Read the document content
+		state.docContent = fs.readFileSync(fullDocPath, "utf-8");
+		if (!state.docContent.trim()) {
+			ctx.ui.notify("Document file is empty. Continue chatting to guide the LLM.", "error");
+			return;
+		}
+
+		// Mark drafting as complete
+		state.drafting!.completed = true;
+		state.docIteration++;
+		state.stage = "user_approval";
+		if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+		else saveEpicState(cwd, state as EpicState);
+
+		// Exit drafting mode
+		const { exchangeCount: draftExchanges } = exitMode();
+
+		ctx.ui.notify(formatStepBanner(
+			`${levelLabel.toUpperCase()} DRAFTING COMPLETE`,
+			`${draftExchanges} exchanges. Creating commit...`,
+			"✅"
+		), "success");
+
+		// Create git commit for the document draft
+		const drafterRole = level === "roadmap" ? "roadmapDrafter" : "epicDrafter";
+		const drafterConfig = level === "roadmap" ? projectConfig.models.roadmapDrafter : projectConfig.models.epicDrafter;
+		const commitResult = await createAgentCommit(
+			cwd, state,
+			{ role: drafterRole as any, modelConfig: drafterConfig },
+			projectConfig.models.agentCommitMessageWriter,
+			() => {
+				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+				else saveEpicState(cwd, state as EpicState);
+			},
+			ctx.ui.notify.bind(ctx.ui)
+		);
+
+		if (!commitResult.success) {
+			ctx.ui.notify("Warning: Failed to create commit for document draft", "warning");
+		}
+
+		// Present approval options to user
+		ctx.ui.notify(formatStepBanner(
+			"User Approval Required",
+			`Review the ${level} document at: ${state.docPath}`,
+			"👤"
+		), "info");
+
+		const choices = [
+			`Approve ${level}`,
+			`Revise ${level} conversationally`,
+			"Cancel pipeline",
+		];
+		const choice = await ctx.ui.select(
+			"How would you like to proceed?",
+			choices
+		);
+
+		if (choice === choices[0]) {
+			// Approve — continue to child extraction and completion
+			state.docApproved = true;
+			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+
+			// Run the hierarchy pipeline for child extraction and completion
+			await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
+			return;
+		}
+
+		if (choice === choices[2]) {
+			// Cancel
+			state.stage = "cancelled";
+			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+			clearPipelineWidget(ctx);
+			ctx.ui.notify("Pipeline cancelled.", "info");
+			return;
+		}
+
+		// Re-enter drafting mode for revision
+		state.drafting!.completed = false;
+		state.stage = "drafting";
+		if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+		else saveEpicState(cwd, state as EpicState);
+
+		enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
+		updateModeWidget(ctx);
+
+		ctx.ui.notify(formatStepBanner(
+			"REVISION MODE",
+			`Continue chatting to refine the ${level} document.`,
+			"📝"
+		), "info");
+		ctx.ui.notify("Type /draft-done when satisfied.", "info");
+
+		// Kick off revision
+		pi.sendUserMessage(
+			`Please read the current ${level} document at ${fullDocPath} and let me guide you on revisions.`
 		);
 	}
 
@@ -958,10 +1061,19 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			}
 			customType = "spec-discovery-context";
 			contextLabel = `[DISCOVERY MODE ACTIVE - Exploring requirements for: ${activePipelineState.description}]`;
-		} else if (pipelineMode === "drafting" && activePipelineState && activePipelineKind === "spec") {
-			injection = buildDraftingPromptInjection(activePipelineState as SpecState, activeProjectConfig);
+		} else if (pipelineMode === "drafting" && activePipelineState) {
+			if (activePipelineKind === "spec") {
+				injection = buildDraftingPromptInjection(activePipelineState as SpecState, activeProjectConfig);
+			} else {
+				injection = buildHierarchyDraftingPromptInjection(
+					activePipelineState as HierarchyState,
+					activeHierarchyLevel!,
+					activeProjectConfig,
+					activeParentContext
+				);
+			}
 			customType = "spec-drafting-context";
-			contextLabel = `[DRAFTING MODE ACTIVE - Creating spec for: ${activePipelineState.description}]`;
+			contextLabel = `[DRAFTING MODE ACTIVE - Creating ${activePipelineKind === "spec" ? "spec" : activeHierarchyLevel} for: ${activePipelineState.description}]`;
 		} else {
 			return undefined;
 		}
@@ -1101,14 +1213,14 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 	});
 
 	pi.registerCommand("spec-draft-done", {
-		description: "End spec drafting and proceed to review",
+		description: "End spec drafting and proceed to approval",
 		handler: async (_args, ctx) => {
-			if (pipelineMode !== "drafting") {
-				ctx.ui.notify("No active drafting session. Use /spec to start one.", "error");
+			if (pipelineMode !== "drafting" || activePipelineKind !== "spec") {
+				ctx.ui.notify("No active spec drafting session. Use /spec to start one.", "error");
 				return;
 			}
 
-			await endDraftingAndReview(ctx);
+			await endSpecDrafting(ctx);
 		},
 	});
 
@@ -1146,24 +1258,59 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			const cwd = activeCwd;
 			const projectConfig = activeProjectConfig;
 			const parentContext = activeParentContext;
-
-			// Save state before exiting mode
-			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
-			else saveEpicState(cwd, state as EpicState);
-
-			// Exit discovery mode
-			exitMode();
-			clearPipelineWidget(ctx);
-
 			const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+
 			ctx.ui.notify(formatStepBanner(
 				"DISCOVERY COMPLETE",
-				`${discoveryExchanges} exchanges recorded. Proceeding to ${level} drafting...`,
+				`${discoveryExchanges} exchanges recorded. Entering ${level} drafting mode...`,
 				"✅"
 			), "success");
 
-			// Continue with the hierarchy pipeline (which will pick up at drafting stage)
-			await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
+			// Initialize drafting state and transition to drafting mode
+			state.drafting = {
+				conversationHistory: [],
+				completed: false,
+			};
+			state.stage = "drafting";
+			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+
+			// Enter hierarchy drafting mode (stay in conversational mode — don't exit)
+			enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
+			updateModeWidget(ctx);
+
+			ctx.ui.notify(formatStepBanner(
+				`${levelLabel.toUpperCase()} DRAFTING MODE`,
+				`The LLM will draft the ${level} document. Guide it conversationally.`,
+				"📝"
+			), "info");
+			ctx.ui.notify(`Document will be written to: ${state.docPath}`, "info");
+			ctx.ui.notify("When satisfied, type /draft-done to proceed to approval.", "info");
+
+			// Send the kickoff message
+			const fullDocPath = path.join(cwd, state.docPath);
+			const discoveryContext = state.discovery?.discoverySummary
+				? `\n\nHere is the context gathered during discovery:\n\n${state.discovery.discoverySummary}`
+				: "";
+
+			pi.sendUserMessage(
+				`Please create a ${level} document for: ${state.description}${discoveryContext}\n\n` +
+				`Write the document to this exact path: ${fullDocPath}\n` +
+				`Use document timestamp: ${state.docTimestamp}\n\n` +
+				`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`
+			);
+		},
+	});
+
+	pi.registerCommand("draft-done", {
+		description: "End hierarchy drafting and proceed to approval",
+		handler: async (_args, ctx) => {
+			if (pipelineMode !== "drafting" || activePipelineKind !== "hierarchy") {
+				ctx.ui.notify("No active hierarchy drafting session. Use /roadmap or /epic to start one.", "error");
+				return;
+			}
+
+			await endHierarchyDrafting(ctx);
 		},
 	});
 
@@ -1316,7 +1463,7 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 					"📝"
 				), "info");
 				ctx.ui.notify(`Spec file will be written to: ${state.specPath}`, "info");
-				ctx.ui.notify("When satisfied, type /spec-draft-done to proceed to review.", "info");
+				ctx.ui.notify("When satisfied, type /spec-draft-done to proceed.", "info");
 
 				// Send the kickoff message
 				const fullSpecPath = path.join(cwd, state.specPath);
@@ -1519,7 +1666,7 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 					"📝"
 				), "info");
 				ctx.ui.notify(`Spec file: ${state.specPath}`, "info");
-				ctx.ui.notify("Type /spec-draft-done when ready for review.", "info");
+				ctx.ui.notify("Type /spec-draft-done when satisfied.", "info");
 
 				// Send a resume message
 				const fullSpecPath = path.join(cwd, state.specPath);
@@ -2398,8 +2545,35 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				`Please explore the codebase and ask me clarifying questions to understand the requirements and scope better.`
 			);
 		} else {
-			// --quick mode or discovery disabled: go straight to drafting via runHierarchyPipeline
-			await runHierarchyPipeline(state, cwd, projectConfig, ctx, parentContext);
+			// --quick mode or discovery disabled: enter conversational drafting directly
+			state.drafting = {
+				conversationHistory: [],
+				completed: false,
+			};
+			state.stage = "drafting";
+			if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
+
+			enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
+			updateModeWidget(ctx);
+
+			ctx.ui.notify(formatStepBanner(
+				`${levelLabel.toUpperCase()} DRAFTING MODE`,
+				`The LLM will draft the ${level} document. Guide it conversationally.`,
+				"📝"
+			), "info");
+			ctx.ui.notify(`Document will be written to: ${state.docPath}`, "info");
+			ctx.ui.notify("When satisfied, type /draft-done to proceed to approval.", "info");
+
+			// Send the kickoff message
+			const fullDocPath = path.join(cwd, state.docPath);
+			const parentNote = parentContext ? "\n\nRelevant parent context has been provided." : "";
+			pi.sendUserMessage(
+				`Please create a ${level} document for: ${description}${parentNote}\n\n` +
+				`Write the document to this exact path: ${fullDocPath}\n` +
+				`Use document timestamp: ${state.docTimestamp}\n\n` +
+				`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`
+			);
 		}
 	}
 
@@ -2535,6 +2709,30 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 			return;
 		}
 
+		// If resuming in conversational drafting mode, re-enter drafting mode
+		if (state.stage === "drafting" && state.drafting && !state.drafting.completed) {
+			enterHierarchyMode("drafting", state, level, cwd, projectConfig);
+			updateModeWidget(ctx);
+
+			ctx.ui.notify(formatStepBanner(
+				`${levelLabel.toUpperCase()} DRAFTING MODE RESUMED`,
+				`${exchangeCount} previous exchanges. Continue guiding the ${level} document.`,
+				"📝"
+			), "info");
+			ctx.ui.notify(`Document: ${state.docPath}`, "info");
+			ctx.ui.notify("Type /draft-done when satisfied.", "info");
+
+			// Send a resume message
+			const fullDocPath = path.join(cwd, state.docPath);
+			pi.sendUserMessage(
+				`I'm resuming the ${level} drafting session for: ${state.description}\n\n` +
+				`Document file path: ${fullDocPath}\n\n` +
+				`Please review the current state and continue drafting.`
+			);
+			return;
+		}
+
+		// For approved/completed stages, or user_approval after drafting, continue with pipeline
 		await runHierarchyPipeline(state, cwd, projectConfig, ctx);
 	}
 
@@ -2937,6 +3135,11 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				state.stage = "cancelled";
 				saveRoadmapState(cwd, state);
 
+				// Clean up conversational mode if active
+				if (pipelineMode !== "idle" && activePipelineState?.id === state.id) {
+					exitMode();
+				}
+
 				clearPipelineWidget(ctx);
 
 				if (state.pipelineBranch) {
@@ -3156,6 +3359,11 @@ Read the current spec, apply fixes, and write the updated version back to the sa
 				}
 				state.stage = "cancelled";
 				saveEpicState(cwd, state);
+
+				// Clean up conversational mode if active
+				if (pipelineMode !== "idle" && activePipelineState?.id === state.id) {
+					exitMode();
+				}
 
 				clearPipelineWidget(ctx);
 
