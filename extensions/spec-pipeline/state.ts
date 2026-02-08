@@ -380,8 +380,6 @@ export function createInitialSpecState(
 		specDraft: "",
 		specApproved: false,
 		specIteration: 0,
-
-		useAgentCommits: true,
 	};
 }
 
@@ -415,7 +413,6 @@ export function createInitialImplState(
 		phaseCommits: [],
 
 		skipPlanGeneration,
-		useAgentCommits: true,
 	};
 }
 
@@ -635,8 +632,6 @@ export function createInitialRoadmapState(
 		docIteration: 0,
 
 		children: [],
-
-		useAgentCommits: true,
 	};
 }
 
@@ -681,8 +676,6 @@ export function createInitialEpicState(
 		docIteration: 0,
 
 		children: [],
-
-		useAgentCommits: true,
 	};
 }
 

@@ -371,11 +371,8 @@ export interface SpecState {
 	specApproved: boolean;
 	specIteration: number;
 	
-	// Git branch management
-	originalBranch?: string;     // Branch name before pipeline started
-	pipelineBranch?: string;     // e.g. "spec/2602071030-feature-name"
-	useAgentCommits?: boolean;   // If true, use agent commits instead of checkpoints
-	checkpoints?: string[];      // Array of checkpoint commit hashes
+	// Git state
+	checkpoints?: string[];      // Array of commit hashes
 	errorStash?: string;         // Stash reference if error occurred
 	
 	// Error tracking
@@ -431,10 +428,7 @@ export interface ImplementationState {
 	// Commit tracking
 	phaseCommits: boolean[][];  // phaseCommits[phaseIdx][cycleIdx]
 	
-	// Git branch management
-	originalBranch?: string;     // Branch name before pipeline started
-	pipelineBranch?: string;     // e.g. "implement/2602071145-feature-name"
-	useAgentCommits?: boolean;
+	// Git state
 	checkpoints?: string[];
 	errorStash?: string;
 	
@@ -623,10 +617,7 @@ export interface RoadmapState {
 	// Child items (extracted from document after approval)
 	children: ChildItem[];
 
-	// Git branch management
-	originalBranch?: string;
-	pipelineBranch?: string;
-	useAgentCommits?: boolean;
+	// Git state
 	checkpoints?: string[];
 	errorStash?: string;
 
@@ -670,10 +661,7 @@ export interface EpicState {
 	// Child items (features extracted from document after approval)
 	children: ChildItem[];
 
-	// Git branch management
-	originalBranch?: string;
-	pipelineBranch?: string;
-	useAgentCommits?: boolean;
+	// Git state
 	checkpoints?: string[];
 	errorStash?: string;
 

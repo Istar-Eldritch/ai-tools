@@ -198,20 +198,18 @@ export async function handleAgentError(
 	};
 	
 	// Stash any uncommitted changes from the failed operation
-	if (state.pipelineBranch) {
-		const stashRef = await stashChanges(cwd, errorDetails.timestamp.replace(/[:.]/g, "-"));
-		if (stashRef) {
-			state.errorStash = stashRef;
-			notify("💾 Uncommitted changes stashed for recovery", "info");
-			
-			// Reset working directory to clean state (R6)
-			const { resetToHead } = await import("./git.ts");
-			const resetSuccess = await resetToHead(cwd);
-			if (resetSuccess) {
-				notify("🔄 Working directory reset to clean state", "info");
-			} else {
-				notify("⚠️ Failed to reset working directory - manual cleanup may be needed", "warning");
-			}
+	const stashRef = await stashChanges(cwd, errorDetails.timestamp.replace(/[:.]/g, "-"));
+	if (stashRef) {
+		state.errorStash = stashRef;
+		notify("💾 Uncommitted changes stashed for recovery", "info");
+		
+		// Reset working directory to clean state (R6)
+		const { resetToHead } = await import("./git.ts");
+		const resetSuccess = await resetToHead(cwd);
+		if (resetSuccess) {
+			notify("🔄 Working directory reset to clean state", "info");
+		} else {
+			notify("⚠️ Failed to reset working directory - manual cleanup may be needed", "warning");
 		}
 	}
 	

@@ -78,15 +78,9 @@ export async function runSpecPipeline(
 		completionLines.push(formatKeyValue("  Duration", `${durationMins} min`));
 	}
 	
-	if (state.pipelineBranch) {
-		completionLines.push("");
-		completionLines.push(`  🔀 You are on branch: ${state.pipelineBranch}`);
-	}
-	
 	completionLines.push("");
 	completionLines.push("  📋 Next Steps:");
-	completionLines.push("     • Review the spec on this branch");
-	completionLines.push("     • Merge to main when satisfied");
+	completionLines.push("     • Review the spec");
 	completionLines.push(`     • Then run: /implement ${state.specPath}`);
 	completionLines.push("");
 	completionLines.push(formatDivider(50));

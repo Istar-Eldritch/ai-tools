@@ -335,17 +335,11 @@ export function formatSpecState(state: SpecState): string {
 	lines.push(formatKeyValue("  Spec", state.specFilename));
 	
 	// Git section
-	if (state.pipelineBranch || state.originalBranch) {
+	if ((state.checkpoints && state.checkpoints.length > 0) || state.errorStash) {
 		lines.push("");
-		lines.push("🔀 Git Branch");
-		if (state.pipelineBranch) {
-			lines.push(formatKeyValue("  Branch", state.pipelineBranch));
-		}
-		if (state.originalBranch && state.pipelineBranch) {
-			lines.push(formatKeyValue("  Original", state.originalBranch));
-		}
+		lines.push("📦 Git");
 		if (state.checkpoints && state.checkpoints.length > 0) {
-			lines.push(formatKeyValue("  Checkpoints", String(state.checkpoints.length)));
+			lines.push(formatKeyValue("  Commits", String(state.checkpoints.length)));
 		}
 		if (state.errorStash) {
 			lines.push(formatKeyValue("  Error Stash", state.errorStash + " (will be dropped on resume)"));
@@ -420,17 +414,11 @@ export function formatImplState(state: ImplementationState): string {
 	}
 	
 	// Git section
-	if (state.pipelineBranch || state.originalBranch) {
+	if ((state.checkpoints && state.checkpoints.length > 0) || state.errorStash) {
 		lines.push("");
-		lines.push("🔀 Git Branch");
-		if (state.pipelineBranch) {
-			lines.push(formatKeyValue("  Branch", state.pipelineBranch));
-		}
-		if (state.originalBranch && state.pipelineBranch) {
-			lines.push(formatKeyValue("  Original", state.originalBranch));
-		}
+		lines.push("📦 Git");
 		if (state.checkpoints && state.checkpoints.length > 0) {
-			lines.push(formatKeyValue("  Checkpoints", String(state.checkpoints.length)));
+			lines.push(formatKeyValue("  Commits", String(state.checkpoints.length)));
 		}
 		if (state.errorStash) {
 			lines.push(formatKeyValue("  Error Stash", state.errorStash + " (will be dropped on resume)"));
@@ -512,13 +500,6 @@ export function formatRoadmapState(state: RoadmapState): string {
 	lines.push(formatKeyValue("  Updated", state.updatedAt));
 	lines.push(formatKeyValue("  Document", state.docFilename));
 
-	if (state.pipelineBranch || state.originalBranch) {
-		lines.push("");
-		lines.push("🔀 Git Branch");
-		if (state.pipelineBranch) lines.push(formatKeyValue("  Branch", state.pipelineBranch));
-		if (state.originalBranch && state.pipelineBranch) lines.push(formatKeyValue("  Original", state.originalBranch));
-	}
-
 	if (state.children.length > 0) {
 		lines.push("");
 		lines.push("📦 Child Epics");
@@ -568,13 +549,6 @@ export function formatEpicState(state: EpicState): string {
 	lines.push(formatKeyValue("  Document", state.docFilename));
 	if (state.parentId) {
 		lines.push(formatKeyValue("  Parent", `${state.parentType || "roadmap"}:${state.parentId}`));
-	}
-
-	if (state.pipelineBranch || state.originalBranch) {
-		lines.push("");
-		lines.push("🔀 Git Branch");
-		if (state.pipelineBranch) lines.push(formatKeyValue("  Branch", state.pipelineBranch));
-		if (state.originalBranch && state.pipelineBranch) lines.push(formatKeyValue("  Original", state.originalBranch));
 	}
 
 	if (state.children.length > 0) {

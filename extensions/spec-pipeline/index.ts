@@ -7,14 +7,14 @@
  *   1. Discovery (optional): Conversational — LLM asks clarifying questions
  *   2. Spec Drafting: Conversational — user guides LLM to write specification
  *   3. User Approval: User approves, requests revisions, or cancels
- *   4. Stays on spec branch for user to review and merge
+ *   4. User reviews and approves the spec
  *
  * HIERARCHY (/roadmap, /epic):
  *   1. Discovery (optional): Conversational — LLM asks clarifying questions
  *   2. Drafting: Conversational — user guides LLM to write document
  *   3. User Approval: User approves, requests revisions, or cancels
  *   4. Child extraction (auto-parses child items table from document)
- *   5. Stays on hierarchy branch for user to review and merge
+ *   5. User reviews and approves the document
  *
  * IMPLEMENTATION (/implement):
  *   1. Takes a spec file path as input
@@ -24,7 +24,7 @@
  *   3. For each implementation phase:
  *      - Implementation: Opus implements according to plan
  *      - Code Review: Tiered review (Sonnet → Opus)
- *   4. Stays on implement branch for user to review and merge
+ *   4. User reviews the implementation
  *
  * Usage:
  *   /plan <description>                             # Conversational scoping → recommends roadmap/epic/spec
@@ -113,10 +113,6 @@ import {
 import {
 	validateGitRepo,
 	checkGitClean,
-	getCurrentBranch,
-	branchExists,
-	createPipelineBranch,
-	switchToBranch,
 	stashExists,
 	dropStash,
 	createAgentCommit,
@@ -210,20 +206,16 @@ function generateShortName(text: string): string {
 		.join("_") || "spec";
 }
 
-function shortNameToBranch(shortName: string): string {
-	return shortName.replace(/_/g, "-");
-}
-
 /**
  * Prompt the user for a short name, with the auto-generated one as default.
- * Returns { shortName, branchShortName }.
+ * Returns { shortName }.
  */
 async function promptForShortName(
 	ctx: { ui: { input: (title: string, placeholder?: string) => Promise<string | undefined> } },
 	description: string
-): Promise<{ shortName: string; branchShortName: string }> {
+): Promise<{ shortName: string }> {
 	const suggested = generateShortName(description);
-	const userInput = await ctx.ui.input("Short name (used for file & branch names):", suggested);
+	const userInput = await ctx.ui.input("Short name (used for file names):", suggested);
 	// Sanitize whatever the user typed (or use suggested if they cancelled/left empty)
 	const raw = (userInput && userInput.trim()) ? userInput.trim() : suggested;
 	const shortName = raw
@@ -232,7 +224,7 @@ async function promptForShortName(
 		.replace(/[\s-]+/g, "_")
 		.replace(/^_+|_+$/g, "")
 		|| "spec";
-	return { shortName, branchShortName: shortNameToBranch(shortName) };
+	return { shortName };
 }
 
 export default function (pi: ExtensionAPI) {
@@ -1410,12 +1402,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				return;
 			}
 			
-			const originalBranch = await getCurrentBranch(cwd);
-			if (!originalBranch) {
-				ctx.ui.notify("Failed to determine current branch", "error");
-				return;
-			}
-
 			// Load config
 			const configResult = loadPipelineConfig(cwd);
 			if (!configResult.success) {
@@ -1432,7 +1418,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			// Generate names and timestamps
 			const specTimestamp = generateTimestamp();
-			const { shortName, branchShortName } = await promptForShortName(ctx, description);
+			const { shortName } = await promptForShortName(ctx, description);
 
 			// Create initial state
 			const state = createInitialSpecState(
@@ -1445,19 +1431,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				projectConfig.specFormat
 			);
 			
-			state.originalBranch = originalBranch;
 			state.checkpoints = [];
-			saveSpecState(cwd, state);
-			
-			// Create branch: spec/<timestamp>-<short-name>
-			const branchResult = await createPipelineBranch(cwd, "spec", `${specTimestamp}-${branchShortName}`);
-			if (!branchResult.success) {
-				ctx.ui.notify(`Failed to create spec branch: ${branchResult.error}`, "error");
-				state.stage = "cancelled";
-				saveSpecState(cwd, state);
-				return;
-			}
-			state.pipelineBranch = branchResult.branchName;
 			saveSpecState(cwd, state);
 			
 			ctx.ui.notify(formatStepBanner(
@@ -1465,7 +1439,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				`ID: ${state.id}`,
 				"📝"
 			), "info");
-			ctx.ui.notify(`Branch: ${branchResult.branchName}`, "info");
 			
 			if (isQuick) {
 				ctx.ui.notify("Skipping discovery phase (--quick mode)", "info");
@@ -1614,32 +1587,15 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				return;
 			}
 			
-			// Switch to pipeline branch
-			if (state.pipelineBranch) {
-				const currentBranch = await getCurrentBranch(cwd);
-				const pipelineBranchExists = await branchExists(cwd, state.pipelineBranch);
-				if (!pipelineBranchExists) {
-					ctx.ui.notify(`Pipeline branch '${state.pipelineBranch}' no longer exists.`, "error");
-					return;
+			// Clean up error stash if present
+			if (state.errorStash) {
+				const stashStillExists = await stashExists(cwd, state.errorStash);
+				if (stashStillExists) {
+					ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+					await dropStash(cwd, state.errorStash);
 				}
-				if (currentBranch !== state.pipelineBranch) {
-					ctx.ui.notify(`Switching to pipeline branch: ${state.pipelineBranch}`, "info");
-					const switchResult = await switchToBranch(cwd, state.pipelineBranch);
-					if (!switchResult.success) {
-						ctx.ui.notify(`Failed to switch to pipeline branch: ${switchResult.error}`, "error");
-						return;
-					}
-				}
-				
-				if (state.errorStash) {
-					const stashStillExists = await stashExists(cwd, state.errorStash);
-					if (stashStillExists) {
-						ctx.ui.notify("Dropping stashed changes from previous error...", "info");
-						await dropStash(cwd, state.errorStash);
-					}
-					state.errorStash = undefined;
-					saveSpecState(cwd, state);
-				}
+				state.errorStash = undefined;
+				saveSpecState(cwd, state);
 			}
 
 			ctx.ui.notify(formatStepBanner(
@@ -1812,7 +1768,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				const desc = state.description || "(no description)";
 				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
 				lines.push(`   Stage: ${formatSpecStage(state.stage)}`);
-				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
 				lines.push(`   Updated: ${state.updatedAt}`);
 				if (state.stage === "completed") {
 					lines.push(`   Spec: ${state.specPath}`);
@@ -1874,18 +1829,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				}
 				
 				clearPipelineWidget(ctx);
-				
-				if (state.pipelineBranch) {
-					ctx.ui.notify(`Pipeline cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
-					if (state.originalBranch) {
-						const switchResult = await switchToBranch(cwd, state.originalBranch);
-						if (switchResult.success) {
-							ctx.ui.notify(`Switched back to '${state.originalBranch}'`, "info");
-						}
-					}
-				} else {
-					ctx.ui.notify("Pipeline cancelled. Resume with /spec-resume", "info");
-				}
+				ctx.ui.notify("Pipeline cancelled. Resume with /spec-resume", "info");
 			}
 		},
 	});
@@ -1966,12 +1910,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				return;
 			}
 			
-			const originalBranch = await getCurrentBranch(cwd);
-			if (!originalBranch) {
-				ctx.ui.notify("Failed to determine current branch", "error");
-				return;
-			}
-
 			// Load config
 			const configResult = loadPipelineConfig(cwd);
 			if (!configResult.success) {
@@ -1994,8 +1932,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			// Generate timestamp and names
 			const implTimestamp = generateTimestamp();
-			const specBaseName = path.basename(relativeSpecPath, path.extname(relativeSpecPath));
-			const branchShortName = shortNameToBranch(generateShortName(specBaseName));
 
 			// Create initial state
 			const state = createInitialImplState(
@@ -2005,19 +1941,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				noPlan
 			);
 			
-			state.originalBranch = originalBranch;
 			state.checkpoints = [];
-			saveImplState(cwd, state);
-			
-			// Create branch: implement/<timestamp>-<short-name>
-			const branchResult = await createPipelineBranch(cwd, "implement", `${implTimestamp}-${branchShortName}`);
-			if (!branchResult.success) {
-				ctx.ui.notify(`Failed to create implementation branch: ${branchResult.error}`, "error");
-				state.stage = "cancelled";
-				saveImplState(cwd, state);
-				return;
-			}
-			state.pipelineBranch = branchResult.branchName;
 			saveImplState(cwd, state);
 			
 			ctx.ui.notify(formatStepBanner(
@@ -2025,7 +1949,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				`ID: ${state.id}`,
 				"🚀"
 			), "info");
-			ctx.ui.notify(`Branch: ${branchResult.branchName}`, "info");
 			ctx.ui.notify(`Spec: ${relativeSpecPath}`, "info");
 			
 			updateImplWidget(ctx, state, "Initializing...");
@@ -2102,32 +2025,15 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				return;
 			}
 			
-			// Switch to pipeline branch
-			if (state.pipelineBranch) {
-				const currentBranch = await getCurrentBranch(cwd);
-				const pipelineBranchExists = await branchExists(cwd, state.pipelineBranch);
-				if (!pipelineBranchExists) {
-					ctx.ui.notify(`Pipeline branch '${state.pipelineBranch}' no longer exists.`, "error");
-					return;
+			// Clean up error stash if present
+			if (state.errorStash) {
+				const stashStillExists = await stashExists(cwd, state.errorStash);
+				if (stashStillExists) {
+					ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+					await dropStash(cwd, state.errorStash);
 				}
-				if (currentBranch !== state.pipelineBranch) {
-					ctx.ui.notify(`Switching to pipeline branch: ${state.pipelineBranch}`, "info");
-					const switchResult = await switchToBranch(cwd, state.pipelineBranch);
-					if (!switchResult.success) {
-						ctx.ui.notify(`Failed to switch to pipeline branch: ${switchResult.error}`, "error");
-						return;
-					}
-				}
-				
-				if (state.errorStash) {
-					const stashStillExists = await stashExists(cwd, state.errorStash);
-					if (stashStillExists) {
-						ctx.ui.notify("Dropping stashed changes from previous error...", "info");
-						await dropStash(cwd, state.errorStash);
-					}
-					state.errorStash = undefined;
-					saveImplState(cwd, state);
-				}
+				state.errorStash = undefined;
+				saveImplState(cwd, state);
 			}
 
 			ctx.ui.notify(formatStepBanner(
@@ -2259,7 +2165,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				lines.push(`${statusIcon} ${state.id || "unknown"}`);
 				lines.push(`   Spec: ${state.specPath}`);
 				lines.push(`   Stage: ${formatImplStage(state.stage)}`);
-				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
 				const phases = state.phases || [];
 				if (phases.length > 0) {
 					lines.push(`   Phases: ${state.currentPhaseIndex + 1}/${phases.length}`);
@@ -2317,18 +2222,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				saveImplState(cwd, state);
 				
 				clearPipelineWidget(ctx);
-				
-				if (state.pipelineBranch) {
-					ctx.ui.notify(`Implementation cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
-					if (state.originalBranch) {
-						const switchResult = await switchToBranch(cwd, state.originalBranch);
-						if (switchResult.success) {
-							ctx.ui.notify(`Switched back to '${state.originalBranch}'`, "info");
-						}
-					}
-				} else {
-					ctx.ui.notify("Implementation cancelled. Resume with /implement-resume", "info");
-				}
+				ctx.ui.notify("Implementation cancelled. Resume with /implement-resume", "info");
 			}
 		},
 	});
@@ -2485,12 +2379,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			return;
 		}
 
-		const originalBranch = await getCurrentBranch(cwd);
-		if (!originalBranch) {
-			ctx.ui.notify("Failed to determine current branch", "error");
-			return;
-		}
-
 		// Load config
 		const configResult = loadPipelineConfig(cwd);
 		if (!configResult.success) {
@@ -2504,7 +2392,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 		// Generate names and timestamps
 		const docTimestamp = generateTimestamp();
-		const { shortName, branchShortName } = await promptForShortName(ctx, description);
+		const { shortName } = await promptForShortName(ctx, description);
 
 		// Create initial state
 		let state: HierarchyState;
@@ -2523,7 +2411,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			);
 		}
 
-		state.originalBranch = originalBranch;
 		state.checkpoints = [];
 
 		if (level === "roadmap") {
@@ -2532,27 +2419,12 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			saveEpicState(cwd, state as EpicState);
 		}
 
-		// Create branch
-		const branchPrefix = level === "roadmap" ? "roadmap" : "epic";
-		const branchResult = await createPipelineBranch(cwd, branchPrefix, `${docTimestamp}-${branchShortName}`);
-		if (!branchResult.success) {
-			ctx.ui.notify(`Failed to create ${level} branch: ${branchResult.error}`, "error");
-			state.stage = "cancelled";
-			if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
-			else saveEpicState(cwd, state as EpicState);
-			return;
-		}
-		state.pipelineBranch = branchResult.branchName;
-		if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
-		else saveEpicState(cwd, state as EpicState);
-
 		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
 		ctx.ui.notify(formatStepBanner(
 			`${levelLabel.toUpperCase()} CREATION STARTED`,
 			`ID: ${state.id}`,
 			level === "roadmap" ? "🗺️" : "📋"
 		), "info");
-		ctx.ui.notify(`Branch: ${branchResult.branchName}`, "info");
 
 		if (isQuick) {
 			ctx.ui.notify("Skipping discovery phase (--quick mode)", "info");
@@ -2710,33 +2582,16 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			return;
 		}
 
-		// Switch to pipeline branch
-		if (state.pipelineBranch) {
-			const currentBranch = await getCurrentBranch(cwd);
-			const pipelineBranchExistsResult = await branchExists(cwd, state.pipelineBranch);
-			if (!pipelineBranchExistsResult) {
-				ctx.ui.notify(`Pipeline branch '${state.pipelineBranch}' no longer exists.`, "error");
-				return;
+		// Clean up error stash if present
+		if (state.errorStash) {
+			const stashStillExists = await stashExists(cwd, state.errorStash);
+			if (stashStillExists) {
+				ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+				await dropStash(cwd, state.errorStash);
 			}
-			if (currentBranch !== state.pipelineBranch) {
-				ctx.ui.notify(`Switching to pipeline branch: ${state.pipelineBranch}`, "info");
-				const switchResult = await switchToBranch(cwd, state.pipelineBranch);
-				if (!switchResult.success) {
-					ctx.ui.notify(`Failed to switch to pipeline branch: ${switchResult.error}`, "error");
-					return;
-				}
-			}
-
-			if (state.errorStash) {
-				const stashStillExists = await stashExists(cwd, state.errorStash);
-				if (stashStillExists) {
-					ctx.ui.notify("Dropping stashed changes from previous error...", "info");
-					await dropStash(cwd, state.errorStash);
-				}
-				state.errorStash = undefined;
-				if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
-				else saveEpicState(cwd, state as EpicState);
-			}
+			state.errorStash = undefined;
+			if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			else saveEpicState(cwd, state as EpicState);
 		}
 
 		ctx.ui.notify(formatStepBanner(
@@ -3146,7 +3001,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					const completed = state.children.filter(c => c.childStatus === "completed").length;
 					lines.push(`   Children: ${completed}/${state.children.length} completed`);
 				}
-				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
 				lines.push(`   Updated: ${state.updatedAt}`);
 				lines.push("");
 			}
@@ -3205,18 +3059,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				}
 
 				clearPipelineWidget(ctx);
-
-				if (state.pipelineBranch) {
-					ctx.ui.notify(`Roadmap cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
-					if (state.originalBranch) {
-						const switchResult = await switchToBranch(cwd, state.originalBranch);
-						if (switchResult.success) {
-							ctx.ui.notify(`Switched back to '${state.originalBranch}'`, "info");
-						}
-					}
-				} else {
-					ctx.ui.notify("Roadmap cancelled. Resume with /roadmap-resume", "info");
-				}
+				ctx.ui.notify("Roadmap cancelled. Resume with /roadmap-resume", "info");
 			}
 		},
 	});
@@ -3371,7 +3214,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					const completed = state.children.filter(c => c.childStatus === "completed").length;
 					lines.push(`   Children: ${completed}/${state.children.length} completed`);
 				}
-				if (state.pipelineBranch) lines.push(`   Branch: ${state.pipelineBranch}`);
 				lines.push(`   Updated: ${state.updatedAt}`);
 				lines.push("");
 			}
@@ -3430,18 +3272,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				}
 
 				clearPipelineWidget(ctx);
-
-				if (state.pipelineBranch) {
-					ctx.ui.notify(`Epic cancelled. Branch '${state.pipelineBranch}' preserved.`, "info");
-					if (state.originalBranch) {
-						const switchResult = await switchToBranch(cwd, state.originalBranch);
-						if (switchResult.success) {
-							ctx.ui.notify(`Switched back to '${state.originalBranch}'`, "info");
-						}
-					}
-				} else {
-					ctx.ui.notify("Epic cancelled. Resume with /epic-resume", "info");
-				}
+				ctx.ui.notify("Epic cancelled. Resume with /epic-resume", "info");
 			}
 		},
 	});

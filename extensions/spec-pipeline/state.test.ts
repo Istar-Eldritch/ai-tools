@@ -225,16 +225,6 @@ describe("createInitialSpecState", () => {
 		expect(state1.id).not.toBe(state2.id);
 	});
 
-	it("sets useAgentCommits flag to true for new pipelines (Phase 5 - R11)", () => {
-		const state = createInitialSpecState(
-			"Build a feature",
-			"2602011200",
-			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
-		);
-		expect(state.useAgentCommits).toBe(true);
-	});
 });
 
 // ============================================
@@ -263,7 +253,6 @@ describe("createInitialRoadmapState", () => {
 		expect(state.docPath).toBe("docs/2602071200_roadmap_warm_pools.md");
 		expect(state.children).toEqual([]);
 		expect(state.docApproved).toBe(false);
-		expect(state.useAgentCommits).toBe(true);
 	});
 
 	it("skips discovery when flag is set", () => {

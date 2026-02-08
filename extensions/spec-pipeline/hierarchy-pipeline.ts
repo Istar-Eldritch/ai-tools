@@ -135,11 +135,6 @@ export async function runHierarchyPipeline(
 		completionLines.push(formatKeyValue("  Duration", `${durationMins} min`));
 	}
 
-	if (state.pipelineBranch) {
-		completionLines.push("");
-		completionLines.push(`  🔀 You are on branch: ${state.pipelineBranch}`);
-	}
-
 	if (state.children.length > 0) {
 		completionLines.push("");
 		completionLines.push(`  📦 ${state.children.length} ${childLabel} ready to create:`);
@@ -149,8 +144,7 @@ export async function runHierarchyPipeline(
 		}
 		completionLines.push("");
 		completionLines.push("  📋 Next Steps:");
-		completionLines.push(`     • Review the ${level} on this branch`);
-		completionLines.push("     • Merge to main when satisfied");
+		completionLines.push(`     • Review the ${level} document`);
 		if (level === "roadmap") {
 			completionLines.push("     • Use /epic <description> to create each epic");
 		} else {
@@ -161,7 +155,6 @@ export async function runHierarchyPipeline(
 		completionLines.push("");
 		completionLines.push("  📋 Next Steps:");
 		completionLines.push(`     • Review the ${level} document`);
-		completionLines.push("     • Merge to main when satisfied");
 	}
 
 	completionLines.push("");

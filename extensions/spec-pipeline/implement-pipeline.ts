@@ -16,7 +16,7 @@ import type {
 	RoleName,
 } from "./types.ts";
 import { saveImplState } from "./state.ts";
-import { createAgentCommit, createCommit, getModifiedFiles, squashCheckpointCommits, mergePipelineBranch, switchToBranch, deleteBranch } from "./git.ts";
+import { createAgentCommit, createCommit, getModifiedFiles } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 import {
 	formatStepBanner,
@@ -754,11 +754,6 @@ Make the necessary fixes.`,
 	completionLines.push(formatKeyValue("  Plan Generation", metrics.skipPlanGeneration ? "Skipped" : "Enabled"));
 	completionLines.push(formatKeyValue("  Code Review Cycles", `${metrics.codeReviewCycles.cheap}c/${metrics.codeReviewCycles.expensive}e`));
 	
-	if (state.pipelineBranch) {
-		completionLines.push("");
-		completionLines.push(`  🔀 You are on branch: ${state.pipelineBranch}`);
-	}
-	
 	completionLines.push("");
 	completionLines.push("  📋 Next Steps:");
 	completionLines.push("     • Review the implementation changes");
@@ -767,7 +762,6 @@ Make the necessary fixes.`,
 	} else {
 		completionLines.push("     • Run your project's test suite");
 	}
-	completionLines.push("     • Merge to main when ready");
 	completionLines.push("     • Run /implement-metrics to export comparison data");
 	completionLines.push("");
 	completionLines.push(formatDivider(50));

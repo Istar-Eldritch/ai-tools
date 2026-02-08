@@ -61,128 +61,8 @@ export async function checkGitClean(cwd: string): Promise<{ clean: boolean; stat
 }
 
 // ============================================
-// Branch Operations
-// ============================================
-
-/**
- * Get the current git branch name
- */
-export async function getCurrentBranch(cwd: string): Promise<string | null> {
-	const result = await execGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-	if (result.code !== 0) {
-		return null;
-	}
-	return result.stdout || null;
-}
-
-/**
- * Check if a branch exists
- */
-export async function branchExists(cwd: string, branchName: string): Promise<boolean> {
-	const result = await execGit(cwd, ["rev-parse", "--verify", branchName]);
-	return result.code === 0;
-}
-
-/**
- * Create a new branch and switch to it
- * If branch exists, appends -N suffix
- * Returns the actual branch name created
- * 
- * @param prefix - Branch prefix: "spec" for spec creation, "implement" for implementation
- * @param name - Short name for the branch (e.g. "2602071030-feature-name")
- */
-export async function createPipelineBranch(cwd: string, prefix: string, name: string): Promise<{ success: boolean; branchName?: string; error?: string }> {
-	const baseName = `${prefix}/${name}`;
-	let branchName = baseName;
-	let suffix = 1;
-	
-	// Find unique branch name if base already exists
-	while (await branchExists(cwd, branchName)) {
-		branchName = `${baseName}-${suffix}`;
-		suffix++;
-		if (suffix > 100) {
-			return { success: false, error: "Too many branch name collisions" };
-		}
-	}
-	
-	// Create and switch to the new branch
-	const result = await execGit(cwd, ["checkout", "-b", branchName]);
-	if (result.code !== 0) {
-		return { success: false, error: result.stderr || "Failed to create branch" };
-	}
-	
-	return { success: true, branchName };
-}
-
-/**
- * Switch to an existing branch
- */
-export async function switchToBranch(cwd: string, branchName: string): Promise<{ success: boolean; error?: string }> {
-	const result = await execGit(cwd, ["checkout", branchName]);
-	if (result.code !== 0) {
-		return { success: false, error: result.stderr || "Failed to switch branch" };
-	}
-	return { success: true };
-}
-
-/**
- * Delete a branch
- */
-export async function deleteBranch(cwd: string, branchName: string): Promise<boolean> {
-	const result = await execGit(cwd, ["branch", "-D", branchName]);
-	return result.code === 0;
-}
-
-// ============================================
 // Checkpoint Operations
 // ============================================
-
-/**
- * Create a checkpoint commit with all current changes
- * Returns the commit hash or null if nothing to commit
- */
-export async function createCheckpoint(
-	cwd: string, 
-	role: string, 
-	phase?: number, 
-	cycle?: number
-): Promise<string | null> {
-	// Stage all changes
-	const addResult = await execGit(cwd, ["add", "-A"]);
-	if (addResult.code !== 0) {
-		return null;
-	}
-	
-	// Check if there are changes to commit
-	const statusResult = await execGit(cwd, ["diff", "--staged", "--quiet"]);
-	if (statusResult.code === 0) {
-		// No staged changes, nothing to commit
-		return null;
-	}
-	
-	// Build commit message
-	let message = `[CHECKPOINT] Before ${role}`;
-	if (phase !== undefined) {
-		message += ` - Phase ${phase}`;
-		if (cycle !== undefined) {
-			message += `, Cycle ${cycle}`;
-		}
-	}
-	
-	// Create commit
-	const commitResult = await execGit(cwd, ["commit", "-m", message]);
-	if (commitResult.code !== 0) {
-		return null;
-	}
-	
-	// Get commit hash
-	const hashResult = await execGit(cwd, ["rev-parse", "HEAD"]);
-	if (hashResult.code !== 0) {
-		return null;
-	}
-	
-	return hashResult.stdout;
-}
 
 /**
  * Create a checkpoint before a write operation and update state
@@ -199,26 +79,7 @@ export async function createCheckpointAndSave(
 	cycle?: number,
 	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
 ): Promise<boolean> {
-	// Skip checkpoints for pipelines using agent commits (R11 - backward compatibility)
-	if (state.useAgentCommits) {
-		return true;  // New pipelines use agent commits instead
-	}
-	
-	// Only create checkpoints if on a pipeline branch (old pipelines with branch isolation)
-	if (!state.pipelineBranch) {
-		return true;  // No branch isolation, skip checkpoint
-	}
-	
-	const commitHash = await createCheckpoint(cwd, role, phase, cycle);
-	if (commitHash) {
-		if (!state.checkpoints) {
-			state.checkpoints = [];
-		}
-		state.checkpoints.push(commitHash);
-		saveFn();
-		notify?.(`📍 Checkpoint created: ${commitHash.slice(0, 8)}`, "info");
-	}
-	// null means nothing to commit, which is fine
+	// Pipelines use agent commits instead of checkpoints
 	return true;
 }
 
@@ -426,7 +287,7 @@ export function extractCommitMessage(output: string): string {
  * 2. Stages only those files (not all changes)
  * 3. Generates a commit message using the agentCommitMessageWriter
  * 4. Creates the commit
- * 5. Adds the commit hash to state.checkpoints[] for squash merge compatibility
+ * 5. Adds the commit hash to state.checkpoints[]
  * 
  * @param cwd - Working directory
  * @param state - Pipeline state (SpecState or ImplementationState)
@@ -452,18 +313,6 @@ export async function createAgentCommit(
 ): Promise<{ success: boolean; commitHash?: string; usedFallback?: boolean }> {
 	// Import generateCommitMessage (now synchronous and deterministic)
 	const { generateCommitMessage } = await import("./commit-agent.ts");
-	
-	// Only create commits for new pipelines with agent commits enabled (R11 - backward compatibility)
-	if (!state.useAgentCommits) {
-		notify?.("Skipping agent commit (pipeline uses checkpoints)", "info");
-		return { success: true };  // Old pipeline using checkpoints
-	}
-	
-	// Only create commits if on a pipeline branch
-	if (!state.pipelineBranch) {
-		notify?.("Skipping agent commit (not on pipeline branch)", "info");
-		return { success: true };  // No branch isolation, skip commit
-	}
 	
 	// Step 1: Get modified files
 	const modifiedFiles = await getModifiedFiles(cwd);
@@ -513,7 +362,7 @@ export async function createAgentCommit(
 	}
 	const commitHash = hashResult.stdout;
 	
-	// Step 8: Add to checkpoints array for squash merge
+	// Step 8: Add to checkpoints array
 	if (!state.checkpoints) {
 		state.checkpoints = [];
 	}
@@ -525,82 +374,4 @@ export async function createAgentCommit(
 	return { success: true, commitHash };
 }
 
-// ============================================
-// Branch Merge Operations
-// ============================================
 
-/**
- * Squash all commits on the pipeline branch into meaningful phase commits
- * This creates a clean history with one commit per phase
- */
-export async function squashCheckpointCommits(
-	cwd: string, 
-	originalBranch: string,
-	phaseCount: number
-): Promise<{ success: boolean; error?: string }> {
-	// Get the merge-base with the original branch
-	const baseResult = await execGit(cwd, ["merge-base", originalBranch, "HEAD"]);
-	if (baseResult.code !== 0) {
-		return { success: false, error: "Failed to find merge-base" };
-	}
-	const mergeBase = baseResult.stdout;
-	
-	// Soft reset to merge-base, keeping all changes staged
-	const resetResult = await execGit(cwd, ["reset", "--soft", mergeBase]);
-	if (resetResult.code !== 0) {
-		return { success: false, error: "Failed to reset for squash" };
-	}
-	
-	// Create a single squashed commit
-	const commitResult = await execGit(cwd, [
-		"commit", 
-		"-m", 
-		`feat: complete spec pipeline implementation (${phaseCount} phases)`
-	]);
-	if (commitResult.code !== 0) {
-		// If nothing to commit, that's OK (no changes were made)
-		const statusResult = await execGit(cwd, ["status", "--porcelain"]);
-		if (statusResult.stdout.length === 0) {
-			return { success: true };
-		}
-		return { success: false, error: "Failed to create squashed commit" };
-	}
-	
-	return { success: true };
-}
-
-/**
- * Merge pipeline branch to original branch
- * Uses fast-forward if possible, otherwise creates merge commit
- */
-export async function mergePipelineBranch(
-	cwd: string, 
-	originalBranch: string,
-	pipelineBranch: string
-): Promise<{ success: boolean; error?: string; conflicted?: boolean }> {
-	// Switch to original branch
-	const switchResult = await switchToBranch(cwd, originalBranch);
-	if (!switchResult.success) {
-		return { success: false, error: `Failed to switch to ${originalBranch}: ${switchResult.error}` };
-	}
-	
-	// Try to merge with fast-forward
-	const mergeResult = await execGit(cwd, ["merge", "--ff-only", pipelineBranch]);
-	if (mergeResult.code === 0) {
-		return { success: true };
-	}
-	
-	// Try regular merge if fast-forward fails
-	const regularMergeResult = await execGit(cwd, ["merge", pipelineBranch, "-m", `Merge ${pipelineBranch}`]);
-	if (regularMergeResult.code !== 0) {
-		// Check if it's a conflict
-		if (regularMergeResult.stderr.includes("CONFLICT") || regularMergeResult.stdout.includes("CONFLICT")) {
-			// Abort the merge
-			await execGit(cwd, ["merge", "--abort"]);
-			return { success: false, conflicted: true, error: "Merge conflict detected. Please resolve manually." };
-		}
-		return { success: false, error: regularMergeResult.stderr || "Merge failed" };
-	}
-	
-	return { success: true };
-}

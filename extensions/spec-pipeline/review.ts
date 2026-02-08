@@ -565,18 +565,16 @@ export async function retryFailedOperation(
 		return false;
 	}
 	
-	// Create checkpoint before retry (if on pipeline branch)
-	if (state.pipelineBranch) {
-		await createCheckpointAndSave(
-			cwd,
-			state,
-			`retry_${error.role}`,
-			saveFn,
-			error.phase,
-			error.cycle,
-			ctx.ui.notify.bind(ctx.ui)
-		);
-	}
+	// Create checkpoint before retry
+	await createCheckpointAndSave(
+		cwd,
+		state,
+		`retry_${error.role}`,
+		saveFn,
+		error.phase,
+		error.cycle,
+		ctx.ui.notify.bind(ctx.ui)
+	);
 	
 	// Display retry notification
 	ctx.ui.notify(`🔄 Retrying ${error.role}...`, "info");
