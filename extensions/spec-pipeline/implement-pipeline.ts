@@ -281,7 +281,7 @@ async function _runImplementPipelineInner(
 	}
 
 	// ============================================
-	// PLAN GENERATION
+	// PER-PHASE PIPELINE: Plan → Implement (interleaved)
 	// ============================================
 	if (effectiveSkipPlanGeneration) {
 		ctx.ui.notify(formatStepBanner(
@@ -292,25 +292,47 @@ async function _runImplementPipelineInner(
 		
 		state.phasesGenerated = state.phases.map(() => true);
 		save();
-	} else if (state.stage === "plan_generation") {
+	}
+
+	state.stage = "implementation";
+	save();
+
+	ctx.ui.notify(formatStepBanner(
+		"IMPLEMENTATION",
+		`Processing ${state.phases.length} phase(s) — plan + implement per phase`,
+		"🚀"
+	), "info");
+
+	for (let phaseIdx = state.currentPhaseIndex; phaseIdx < state.phases.length; phaseIdx++) {
+		state.currentPhaseIndex = phaseIdx;
+		
+		const resumingMidPhase = state.implementerCompletedForPhase === true;
+		
+		if (!resumingMidPhase) {
+			state.currentReviewTier = undefined;
+			state.cheapCyclesCompleted = 0;
+			state.expensiveCyclesCompleted = 0;
+			state.implementerCompletedForPhase = false;
+		}
+		save();
+
+		const phasePath = state.phases[phaseIdx];
+		const fullPhasePath = path.join(specsDir, phasePath);
+
 		ctx.ui.notify(formatStepBanner(
-			"PLAN GENERATION PHASE",
-			`Creating implementation plans for ${state.phases.length} phase(s)`,
-			"📋"
+			`Phase ${phaseIdx + 1}/${state.phases.length}`,
+			phasePath.split("/").pop() || "implementation",
+			"🔨"
 		), "info");
 
-		for (let i = 0; i < state.phases.length; i++) {
-			if (state.phasesGenerated[i]) {
-				continue;
-			}
-
-			const phasePath = state.phases[i];
-			const fullPhasePath = path.join(specsDir, phasePath);
-
-			updateImplWidget(ctx, state, `Generating plan for phase ${i + 1}/${state.phases.length}`);
+		// ========================================
+		// STEP 1: Plan Generation (per phase)
+		// ========================================
+		if (!effectiveSkipPlanGeneration && !state.phasesGenerated[phaseIdx]) {
+			updateImplWidget(ctx, state, `Generating plan for phase ${phaseIdx + 1}/${state.phases.length}`);
 			
 			ctx.ui.notify(formatStepBanner(
-				`Phase ${i + 1}/${state.phases.length} Plan`,
+				`Phase ${phaseIdx + 1}/${state.phases.length} Plan`,
 				`Creating detailed implementation plan`,
 				"📝"
 			), "info");
@@ -318,7 +340,7 @@ async function _runImplementPipelineInner(
 			const planDrafterConfig = projectConfig.models.planDrafter;
 			ctx.ui.notify(`📋 ${planDrafterConfig.model} drafting implementation plan...`, "info");
 			
-			const planTask = `Create detailed implementation plan for Phase ${i + 1}.
+			const planTask = `Create detailed implementation plan for Phase ${phaseIdx + 1}.
 
 ${specFileRef}
 
@@ -341,7 +363,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 				undefined,
 				"planDrafter"
 			);
-			recordAgentCall(metrics, "planDrafter", planDrafterConfig.model, planDrafterConfig.thinking, planStartTime, planDraftResult.exitCode, i + 1);
+			recordAgentCall(metrics, "planDrafter", planDrafterConfig.model, planDrafterConfig.thinking, planStartTime, planDraftResult.exitCode, phaseIdx + 1);
 			save();
 
 			if (planDraftResult.exitCode !== 0) {
@@ -355,7 +377,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 				return;
 			}
 
-			ctx.ui.notify(formatAgentSummary("planDrafter", planDrafterConfig.model, planDraftResult.output, "✅", i + 1), "info");
+			ctx.ui.notify(formatAgentSummary("planDrafter", planDrafterConfig.model, planDraftResult.output, "✅", phaseIdx + 1), "info");
 
 			if (!fs.existsSync(fullPhasePath)) {
 				const errorMsg = `Plan file was not created at ${fullPhasePath}`;
@@ -371,7 +393,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 			// Create commit after plan drafting
 			const commitResult = await createAgentCommit(
 				cwd, state,
-				{ role: "planDrafter", modelConfig: planDrafterConfig, phase: i + 1 },
+				{ role: "planDrafter", modelConfig: planDrafterConfig, phase: phaseIdx + 1 },
 				projectConfig.models.agentCommitMessageWriter,
 				save,
 				ctx.ui.notify.bind(ctx.ui)
@@ -402,7 +424,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 					systemPrompts: SYSTEM_PROMPTS,
 					state,
 					saveFn: save,
-					phaseIndex: i + 1,
+					phaseIndex: phaseIdx + 1,
 					notify: ctx.ui.notify.bind(ctx.ui),
 				},
 				{
@@ -436,44 +458,18 @@ Read the spec and current plan, revise to address the feedback, and write back t
 					: projectConfig.models.planReviewer.expensive.model,
 				planReviewResult.lastReviewOutput,
 				planReviewResult.verdict === "APPROVED" ? "✅" : "🔄",
-				i + 1,
+				phaseIdx + 1,
 				`(cheap: ${planReviewResult.cheapCyclesCompleted}, expensive: ${planReviewResult.expensiveCyclesCompleted})`
 			), "info");
 
-			state.phasesGenerated[i] = true;
+			state.phasesGenerated[phaseIdx] = true;
 			save();
-			ctx.ui.notify(`Phase ${i + 1} plan saved to ${phasePath}`, "success");
+			ctx.ui.notify(`Phase ${phaseIdx + 1} plan saved to ${phasePath}`, "success");
 		}
-	}
 
-	// ============================================
-	// IMPLEMENTATION PHASE
-	// ============================================
-	state.stage = "implementation";
-	save();
-
-	ctx.ui.notify(formatStepBanner(
-		"IMPLEMENTATION PHASE",
-		`Implementing ${state.phases.length} phase(s) with code review`,
-		"🚀"
-	), "info");
-
-	for (let phaseIdx = state.currentPhaseIndex; phaseIdx < state.phases.length; phaseIdx++) {
-		state.currentPhaseIndex = phaseIdx;
-		
-		const resumingMidPhase = state.implementerCompletedForPhase === true;
-		
-		if (!resumingMidPhase) {
-			state.currentReviewTier = undefined;
-			state.cheapCyclesCompleted = 0;
-			state.expensiveCyclesCompleted = 0;
-			state.implementerCompletedForPhase = false;
-		}
-		save();
-
-		const phasePath = state.phases[phaseIdx];
-		const fullPhasePath = path.join(specsDir, phasePath);
-		
+		// ========================================
+		// STEP 2: Read Phase Plan
+		// ========================================
 		let phasePlan: string;
 		if (effectiveSkipPlanGeneration) {
 			phasePlan = `## Direct Implementation from Spec (No Plan File)
@@ -497,23 +493,15 @@ Explore the codebase to understand existing patterns before making changes.`;
 ${specFileRef}`;
 		}
 
-		updateImplWidget(ctx, state, `Implementing phase ${phaseIdx + 1}/${state.phases.length}`);
-		
-		ctx.ui.notify(formatStepBanner(
-			`Implementation Phase ${phaseIdx + 1}/${state.phases.length}`,
-			phasePath.split("/").pop() || "implementation",
-			"🔨"
-		), "info");
-
 		// ========================================
-		// STEP 1: Initial Implementation
+		// STEP 3: Implementation
 		// ========================================
 		let implementationSummary: string;
 		
 		if (!resumingMidPhase) {
 			const implementerConfig = projectConfig.models.implementer;
 			
-			updateImplWidget(ctx, state, `Implementing (${implementerConfig.model})...`);
+			updateImplWidget(ctx, state, `Implementing phase ${phaseIdx + 1}/${state.phases.length} (${implementerConfig.model})...`);
 			
 			ctx.ui.notify(`🔵 ${implementerConfig.model} implementing phase ${phaseIdx + 1}...`, "info");
 			
@@ -604,7 +592,7 @@ Address all issues raised in the review.`;
 		}
 
 		// ========================================
-		// STEP 2: Tiered Code Review
+		// STEP 4: Tiered Code Review
 		// ========================================
 		updateImplWidget(ctx, state, "Running code review...");
 		
@@ -671,7 +659,7 @@ Make the necessary fixes.`,
 		save();
 
 		// ========================================
-		// STEP 3: Create Commit for Phase (if uncommitted changes remain)
+		// STEP 5: Create Commit for Phase (if uncommitted changes remain)
 		// ========================================
 		const remainingChanges = await getModifiedFiles(cwd);
 		if (remainingChanges.length > 0) {

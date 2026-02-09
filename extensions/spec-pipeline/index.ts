@@ -18,13 +18,12 @@
  *
  * IMPLEMENTATION (/implement):
  *   1. Takes a spec file path as input
- *   2. For each implementation phase:
+ *   2. For each implementation phase (plan + implement interleaved):
  *      - Plan Drafting: Opus drafts implementation plan
  *      - Plan Review: Tiered review (Sonnet → Opus)
- *   3. For each implementation phase:
  *      - Implementation: Opus implements according to plan
  *      - Code Review: Tiered review (Sonnet → Opus)
- *   4. User reviews the implementation
+ *   3. User reviews the implementation
  *
  * Usage:
  *   /plan <description>                             # Conversational scoping → recommends roadmap/epic/spec
@@ -1982,11 +1981,9 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					state.stage = state.stageBeforeCancellation;
 					state.stageBeforeCancellation = undefined;
 				} else {
-					if (!state.phasesGenerated.every(Boolean)) {
-						state.stage = "plan_generation";
-					} else {
-						state.stage = "implementation";
-					}
+					// Plan generation and implementation are now interleaved per-phase,
+					// so always resume into "implementation" stage
+					state.stage = "implementation";
 				}
 				saveImplState(cwd, state);
 			}

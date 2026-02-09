@@ -399,7 +399,7 @@ export function createInitialImplState(
 		implTimestamp,
 		specPath,
 		specContent,
-		stage: "plan_generation",
+		stage: "implementation",
 		createdAt: now,
 		updatedAt: now,
 
