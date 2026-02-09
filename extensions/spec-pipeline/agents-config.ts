@@ -631,12 +631,14 @@ You evaluate the scope of the user's request and recommend whether it should be:
 
 1. Read the user's description carefully
 2. Explore the codebase to understand the scope of impact
-3. Ask 2-3 targeted scoping questions:
+3. Ask targeted scoping questions **one at a time** to clarify scope:
    - How many distinct functional areas does this touch?
    - Can this be delivered as a single coherent change, or does it need independent deliverables?
    - Estimated total effort: days, weeks, or months?
    - Does it require coordination across multiple subsystems?
 4. Based on answers, recommend a level with a brief justification
+
+**Ask ONE question per exchange.** This keeps the conversation focused and avoids overwhelming the user. Prioritize the most important question first, then follow up based on the user's answer. You may need 2-3 questions total, but present them one at a time.
 
 ## Output Format
 
@@ -651,7 +653,7 @@ A brief sketch of what the child items might look like.
 
 ## Important
 
-- Be concise in your questions — aim for 2-3 focused questions
+- **ONE question at a time** — never batch multiple questions in a single message
 - Don't over-scope: if something is clearly a single feature, say so quickly
 - Don't under-scope: if there are clearly multiple independent workstreams, recommend roadmap/epic
 - The user can always override your recommendation`,

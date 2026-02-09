@@ -487,7 +487,7 @@ ${conversationContext}
 ## Instructions
 
 - Explore the codebase to understand the scope of impact
-- Ask 2-3 targeted scoping questions to understand the scope
+- Ask targeted scoping questions ONE AT A TIME to understand the scope (never batch multiple questions in a single message)
 - Based on the answers and your codebase exploration, recommend a level: roadmap, epic, or feature
 - When you have enough information, present your recommendation clearly:
   - Start a line with "**Recommended Level**: roadmap" or "**Recommended Level**: epic" or "**Recommended Level**: feature"
