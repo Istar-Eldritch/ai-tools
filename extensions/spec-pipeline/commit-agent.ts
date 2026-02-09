@@ -24,6 +24,10 @@ export interface CommitMessageContext {
 	files: string[];
 	/** Phase number (1-indexed) if in implementation stage */
 	phase?: number;
+	/** Phase name/description extracted from the phase file path */
+	phaseName?: string;
+	/** Document name for roadmap/epic (e.g., "warm pools", "user auth") */
+	docName?: string;
 	/** Cycle number (1-indexed) if in implementation stage */
 	cycle?: number;
 	/** Review feedback that was addressed (if applicable) */
@@ -51,10 +55,55 @@ export type CommitMessageResult =
 const MAX_FILES_IN_BODY = 20;
 
 /**
- * Generate a short scope string from a phase number
+ * Extract phase name from a phase path
+ * Phase paths look like: "20250209_myproject/phase1_backend_api.md"
+ * This extracts "backend_api" from the filename
  */
-function phaseScope(phase?: number): string {
-	return phase !== undefined ? `phase-${phase}` : "pipeline";
+export function extractPhaseName(phasePath: string): string | undefined {
+	// Get just the filename
+	const filename = phasePath.split("/").pop();
+	if (!filename) return undefined;
+	
+	// Match pattern: phaseN_name.md
+	const match = filename.match(/^phase\d+_(.+)\.md$/);
+	if (!match) return undefined;
+	
+	// Convert underscores to spaces for readability
+	return match[1].replace(/_/g, " ");
+}
+
+/**
+ * Extract document name from spec/roadmap/epic filename
+ * Filenames look like: 
+ *   - "20250209_spec_user_auth.md"
+ *   - "2602071200_roadmap_warm_pools.md"
+ *   - "2602071200_epic_user_auth.md"
+ * This extracts "user_auth", "warm_pools", etc. and converts to "user auth", "warm pools", etc.
+ */
+export function extractDocName(filename: string): string | undefined {
+	// Get just the filename (in case a path was passed)
+	const name = filename.split("/").pop();
+	if (!name) return undefined;
+	
+	// Match pattern: TIMESTAMP_TYPE_name.ext where TYPE is spec, roadmap, or epic
+	const match = name.match(/^\d+_(spec|roadmap|epic)_(.+)\.(md|typ)$/);
+	if (!match) return undefined;
+	
+	// Convert underscores to spaces for readability
+	return match[2].replace(/_/g, " ");
+}
+
+/**
+ * Generate a short scope string from a phase number and optional name
+ */
+function phaseScope(phase?: number, phaseName?: string): string {
+	if (phase === undefined) return "pipeline";
+	if (phaseName) {
+		// Use phase name if available, truncate if too long
+		const name = phaseName.length > 30 ? phaseName.slice(0, 27) + "..." : phaseName;
+		return `phase-${phase}/${name}`;
+	}
+	return `phase-${phase}`;
 }
 
 /**
@@ -93,8 +142,8 @@ export function generateCommitMessage(
 	_agentConfig?: ModelConfig,
 	_cwd?: string
 ): CommitMessageResult {
-	const { role, files, phase, cycle, reviewFeedback } = context;
-	const scope = phaseScope(phase);
+	const { role, files, phase, phaseName, docName, cycle, reviewFeedback } = context;
+	const scope = phaseScope(phase, phaseName);
 	const body = buildFileListBody(files);
 	
 	let subject: string;
@@ -117,27 +166,57 @@ export function generateCommitMessage(
 			break;
 		
 		case "specDrafter":
-			subject = "docs(spec): draft specification";
+			if (docName) {
+				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
+				subject = `docs(spec/${name}): draft specification`;
+			} else {
+				subject = "docs(spec): draft specification";
+			}
 			break;
 		
 		case "specReviewer":
-			subject = "docs(spec): revise spec after review";
+			if (docName) {
+				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
+				subject = `docs(spec/${name}): revise spec after review`;
+			} else {
+				subject = "docs(spec): revise spec after review";
+			}
 			break;
 		
 		case "roadmapDrafter":
-			subject = "docs(roadmap): draft roadmap document";
+			if (docName) {
+				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
+				subject = `docs(roadmap/${name}): draft roadmap document`;
+			} else {
+				subject = "docs(roadmap): draft roadmap document";
+			}
 			break;
 		
 		case "roadmapReviewer":
-			subject = "docs(roadmap): revise roadmap after review";
+			if (docName) {
+				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
+				subject = `docs(roadmap/${name}): revise roadmap after review`;
+			} else {
+				subject = "docs(roadmap): revise roadmap after review";
+			}
 			break;
 		
 		case "epicDrafter":
-			subject = "docs(epic): draft epic document";
+			if (docName) {
+				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
+				subject = `docs(epic/${name}): draft epic document`;
+			} else {
+				subject = "docs(epic): draft epic document";
+			}
 			break;
 		
 		case "epicReviewer":
-			subject = "docs(epic): revise epic after review";
+			if (docName) {
+				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
+				subject = `docs(epic/${name}): revise epic after review`;
+			} else {
+				subject = "docs(epic): revise epic after review";
+			}
 			break;
 		
 		case "planReviewer":

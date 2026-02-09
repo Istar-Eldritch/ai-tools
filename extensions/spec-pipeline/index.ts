@@ -862,9 +862,14 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 		// Create git commit scoped to the spec file only (dirty tree is OK for doc pipelines)
 		const specDrafterConfig = projectConfig.models.specDrafter;
+		
+		// Extract doc name from filename for better commit messages
+		const { extractDocName } = await import("./commit-agent.ts");
+		const docName = extractDocName(state.specFilename);
+		
 		const commitResult = await createAgentCommit(
 			cwd, state,
-			{ role: "specDrafter", modelConfig: specDrafterConfig },
+			{ role: "specDrafter", modelConfig: specDrafterConfig, docName },
 			projectConfig.models.agentCommitMessageWriter,
 			() => saveSpecState(cwd, state),
 			ctx.ui.notify.bind(ctx.ui),
@@ -988,9 +993,14 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		// Create git commit scoped to the doc file only (dirty tree is OK for doc pipelines)
 		const drafterRole = level === "roadmap" ? "roadmapDrafter" : "epicDrafter";
 		const drafterConfig = level === "roadmap" ? projectConfig.models.roadmapDrafter : projectConfig.models.epicDrafter;
+		
+		// Extract doc name from filename for better commit messages
+		const { extractDocName } = await import("./commit-agent.ts");
+		const docName = extractDocName(state.docFilename);
+		
 		const commitResult = await createAgentCommit(
 			cwd, state,
-			{ role: drafterRole as any, modelConfig: drafterConfig },
+			{ role: drafterRole as any, modelConfig: drafterConfig, docName },
 			projectConfig.models.agentCommitMessageWriter,
 			() => {
 				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);

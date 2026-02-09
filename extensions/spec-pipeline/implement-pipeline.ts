@@ -17,6 +17,7 @@ import type {
 } from "./types.ts";
 import { saveImplState } from "./state.ts";
 import { createAgentCommit, createCommit, getModifiedFiles } from "./git.ts";
+import { extractPhaseName } from "./commit-agent.ts";
 import { handleAgentError } from "./errors.ts";
 import {
 	formatStepBanner,
@@ -318,6 +319,7 @@ async function _runImplementPipelineInner(
 
 		const phasePath = state.phases[phaseIdx];
 		const fullPhasePath = path.join(specsDir, phasePath);
+		const phaseName = extractPhaseName(phasePath);
 
 		ctx.ui.notify(formatStepBanner(
 			`Phase ${phaseIdx + 1}/${state.phases.length}`,
@@ -393,7 +395,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 			// Create commit after plan drafting
 			const commitResult = await createAgentCommit(
 				cwd, state,
-				{ role: "planDrafter", modelConfig: planDrafterConfig, phase: phaseIdx + 1 },
+				{ role: "planDrafter", modelConfig: planDrafterConfig, phase: phaseIdx + 1, phaseName },
 				projectConfig.models.agentCommitMessageWriter,
 				save,
 				ctx.ui.notify.bind(ctx.ui)
@@ -425,6 +427,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 					state,
 					saveFn: save,
 					phaseIndex: phaseIdx + 1,
+					phaseName,
 					notify: ctx.ui.notify.bind(ctx.ui),
 				},
 				{
@@ -561,6 +564,7 @@ Address all issues raised in the review.`;
 					role: "implementer",
 					modelConfig: implementerConfig,
 					phase: phaseIdx + 1,
+					phaseName,
 					cycle: 1,
 				},
 				projectConfig.models.agentCommitMessageWriter,
@@ -610,6 +614,7 @@ Address all issues raised in the review.`;
 				state,
 				saveFn: save,
 				phaseIndex: phaseIdx + 1,
+				phaseName,
 				notify: ctx.ui.notify.bind(ctx.ui),
 			},
 			{

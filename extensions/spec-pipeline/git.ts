@@ -309,6 +309,8 @@ export async function createAgentCommit(
 		role: string;
 		modelConfig: { model: string; thinking: string };
 		phase?: number;
+		phaseName?: string;
+		docName?: string;
 		cycle?: number;
 		reviewFeedback?: string;
 	},
@@ -358,6 +360,8 @@ export async function createAgentCommit(
 		modelConfig: context.modelConfig as any,
 		files: filesToCommit,
 		phase: context.phase,
+		phaseName: context.phaseName,
+		docName: context.docName,
 		cycle: context.cycle,
 		reviewFeedback: context.reviewFeedback,
 	});

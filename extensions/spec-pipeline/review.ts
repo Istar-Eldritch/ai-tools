@@ -118,6 +118,8 @@ export interface TieredReviewContext {
 	saveFn: () => void;
 	/** Phase index (1-indexed, for logging/checkpoints) */
 	phaseIndex?: number;
+	/** Phase name/description (for commit messages) */
+	phaseName?: string;
 	/** UI notification callback */
 	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
 	/** Output stream callback (optional - if not provided, output is not streamed) */
@@ -305,6 +307,7 @@ export async function runTieredReview(
 					role: "addressReview",
 					modelConfig: addressReviewConfig,
 					phase: phaseIndex,
+					phaseName: ctx.phaseName,
 					cycle: cycle,
 					reviewFeedback: lastReviewOutput,
 				},
@@ -479,6 +482,7 @@ export async function runTieredReview(
 				role: "addressReview",
 				modelConfig: addressReviewConfig,
 				phase: phaseIndex,
+				phaseName: ctx.phaseName,
 				cycle: cheapCycles + cycle,
 				reviewFeedback: lastReviewOutput,
 			},

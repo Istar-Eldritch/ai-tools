@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateCommitMessage } from "./commit-agent.ts";
+import { generateCommitMessage, extractPhaseName, extractDocName } from "./commit-agent.ts";
 import type { CommitMessageContext } from "./commit-agent.ts";
 
 describe("generateCommitMessage (deterministic)", () => {
@@ -269,6 +269,242 @@ describe("generateCommitMessage (deterministic)", () => {
 
 			expect(result.type).toBe("success");
 			expect(result.message).toContain("docs(spec): draft specification");
+		});
+	});
+
+	describe("phase name extraction and usage", () => {
+		it("extracts phase name from phase path", () => {
+			expect(extractPhaseName("20250209_myproject/phase1_backend_api.md")).toBe("backend api");
+			expect(extractPhaseName("20250209_myproject/phase2_frontend_components.md")).toBe("frontend components");
+			expect(extractPhaseName("specs/phase10_database_migrations.md")).toBe("database migrations");
+		});
+
+		it("handles underscore-separated names", () => {
+			expect(extractPhaseName("20250209_project/phase1_user_auth_system.md")).toBe("user auth system");
+		});
+
+		it("returns undefined for invalid paths", () => {
+			expect(extractPhaseName("invalid.md")).toBeUndefined();
+			expect(extractPhaseName("phase1.md")).toBeUndefined();
+			expect(extractPhaseName("")).toBeUndefined();
+			expect(extractPhaseName("no-phase-here.md")).toBeUndefined();
+		});
+
+		it("includes phase name in commit message scope", () => {
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/api.ts"],
+				phase: 1,
+				phaseName: "backend api",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("feat(phase-1/backend api): implement phase changes");
+		});
+
+		it("truncates long phase names", () => {
+			const context: CommitMessageContext = {
+				role: "planDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["plan.md"],
+				phase: 2,
+				phaseName: "very long phase name that exceeds the maximum length",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(phase-2/very long phase name that e...): create implementation plan");
+		});
+
+		it("uses plain phase number when phaseName is undefined", () => {
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/code.ts"],
+				phase: 3,
+				phaseName: undefined,
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("feat(phase-3): implement phase changes");
+		});
+
+		it("uses pipeline scope when no phase number", () => {
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/code.ts"],
+				phaseName: "some name",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("feat(pipeline): implement phase changes");
+		});
+	});
+
+	describe("document name extraction and usage (specs/roadmaps/epics)", () => {
+		it("extracts spec name from filename", () => {
+			expect(extractDocName("20250209_spec_user_auth.md")).toBe("user auth");
+			expect(extractDocName("20250209_spec_payment_api.md")).toBe("payment api");
+		});
+
+		it("extracts roadmap name from filename", () => {
+			expect(extractDocName("2602071200_roadmap_warm_pools.md")).toBe("warm pools");
+			expect(extractDocName("2602071200_roadmap_api_modernization.md")).toBe("api modernization");
+		});
+
+		it("extracts epic name from filename", () => {
+			expect(extractDocName("2602071200_epic_user_auth.md")).toBe("user auth");
+			expect(extractDocName("2602071200_epic_payment_integration.md")).toBe("payment integration");
+		});
+
+		it("handles Typst format", () => {
+			expect(extractDocName("2602071200_roadmap_warm_pools.typ")).toBe("warm pools");
+			expect(extractDocName("2602071200_epic_user_auth.typ")).toBe("user auth");
+		});
+
+		it("handles paths with directories", () => {
+			expect(extractDocName("docs/roadmaps/2602071200_roadmap_warm_pools.md")).toBe("warm pools");
+			expect(extractDocName("docs/epics/2602071200_epic_user_auth.md")).toBe("user auth");
+		});
+
+		it("returns undefined for invalid filenames", () => {
+			expect(extractDocName("invalid.md")).toBeUndefined();
+			expect(extractDocName("roadmap_warm_pools.md")).toBeUndefined();
+			expect(extractDocName("")).toBeUndefined();
+			expect(extractDocName("2602071200_wrong_test.md")).toBeUndefined();
+		});
+
+		it("includes roadmap name in commit message", () => {
+			const context: CommitMessageContext = {
+				role: "roadmapDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/roadmap.md"],
+				docName: "warm pools",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(roadmap/warm pools): draft roadmap document");
+		});
+
+		it("includes epic name in commit message", () => {
+			const context: CommitMessageContext = {
+				role: "epicDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/epic.md"],
+				docName: "user auth",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(epic/user auth): draft epic document");
+		});
+
+		it("truncates long roadmap names", () => {
+			const context: CommitMessageContext = {
+				role: "roadmapDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/roadmap.md"],
+				docName: "very long roadmap name that exceeds the maximum allowed length",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(roadmap/very long roadmap name that...): draft roadmap document");
+		});
+
+		it("uses plain roadmap scope when docName is undefined", () => {
+			const context: CommitMessageContext = {
+				role: "roadmapDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/roadmap.md"],
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(roadmap): draft roadmap document");
+		});
+
+		it("includes spec name in commit message", () => {
+			const context: CommitMessageContext = {
+				role: "specDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/spec.md"],
+				docName: "user auth",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(spec/user auth): draft specification");
+		});
+
+		it("uses plain spec scope when docName is undefined", () => {
+			const context: CommitMessageContext = {
+				role: "specDrafter",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/spec.md"],
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(spec): draft specification");
+		});
+
+		it("handles spec reviewer commits with docName", () => {
+			const context: CommitMessageContext = {
+				role: "specReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["docs/spec.md"],
+				docName: "payment api",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(spec/payment api): revise spec after review");
+		});
+
+		it("handles roadmap reviewer commits with docName", () => {
+			const context: CommitMessageContext = {
+				role: "roadmapReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["docs/roadmap.md"],
+				docName: "api modernization",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(roadmap/api modernization): revise roadmap after review");
+		});
+
+		it("handles epic reviewer commits with docName", () => {
+			const context: CommitMessageContext = {
+				role: "epicReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["docs/epic.md"],
+				docName: "payment integration",
+			};
+
+			const result = generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toContain("docs(epic/payment integration): revise epic after review");
 		});
 	});
 });
