@@ -4,13 +4,13 @@
  * Split into two separate workflows:
  *
  * SPEC CREATION (/spec):
- *   1. Discovery (optional): Conversational — LLM asks clarifying questions
+ *   1. Discovery (optional): Conversational — LLM proposes assumptions one at a time for user to confirm
  *   2. Spec Drafting: Conversational — user guides LLM to write specification
  *   3. User Approval: User approves, requests revisions, or cancels
  *   4. User reviews and approves the spec
  *
  * HIERARCHY (/roadmap, /epic):
- *   1. Discovery (optional): Conversational — LLM asks clarifying questions
+ *   1. Discovery (optional): Conversational — LLM proposes assumptions one at a time for user to confirm
  *   2. Drafting: Conversational — user guides LLM to write document
  *   3. User Approval: User approves, requests revisions, or cancels
  *   4. Child extraction (auto-parses child items table from document)
@@ -396,15 +396,14 @@ ${scopingSection}${conversationContext}
 
 ## Instructions
 
-- Ask clarifying questions to understand requirements better
-- You have access to the codebase via read, bash, grep, find, ls tools — USE THEM to explore the project
+- Explore the project using read, bash, grep, find, ls tools — USE THEM
 - Reference specific files and patterns you find
-- Keep questions focused and actionable (${projectConfig.discovery.questionsPerRound} questions at a time)
-- The user will answer naturally — adapt your follow-up questions based on their responses
+- Present ONE assumption at a time — propose the most likely solution, explain your reasoning, and ask the user to confirm or correct
+- The user will respond naturally — adapt based on their feedback and move to the next topic
 - When you feel you have enough context, tell the user they can type /spec-done to proceed to spec drafting
-${state.discovery?.discoverySummary ? "- Scoping context is available above — factor it in but don't skip asking your own questions" : ""}
+${state.discovery?.discoverySummary ? "- Scoping context is available above — factor it in but don't skip exploring the codebase" : ""}
 
-IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only ask questions and explore the codebase.
+IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only propose assumptions and explore the codebase.
 `;
 	}
 
@@ -581,19 +580,18 @@ ${parentSection}${conversationContext}
 
 ## Instructions
 
-- Ask clarifying questions to understand the scope and requirements
-- You have access to the codebase via read, bash, grep, find, ls tools — USE THEM to explore the project
+- Explore the codebase using read, bash, grep, find, ls tools to understand the project
 - Reference specific files and patterns you find
-- Keep questions focused and actionable (${projectConfig.discovery.questionsPerRound} questions at a time)
+- Present ONE assumption at a time — propose the most likely approach, explain your reasoning, and ask the user to confirm or correct
 - Focus on understanding:
   - The scope of the initiative and its boundaries
   - Key deliverables and how they decompose
   - Dependencies between workstreams
   - Critical constraints or limitations
-- The user will answer naturally — adapt your follow-up questions based on their responses
+- The user will respond naturally — adapt based on their feedback and move to the next topic
 - When you feel you have enough context, tell the user they can type /discovery-done to proceed
 
-IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. Only ask questions and explore the codebase.
+IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. Only propose assumptions and explore the codebase.
 `;
 	}
 
@@ -702,7 +700,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				"────────────────────────────────────",
 				`Exchanges: ${exchangeCount}`,
 				"",
-				"Chat naturally to refine requirements.",
+				"Confirm or correct each assumption.",
 				`Type ${doneCmd} when ready to proceed.`,
 			]);
 		} else if (pipelineMode === "drafting") {
@@ -1467,17 +1465,17 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 				ctx.ui.notify(formatStepBanner(
 					"DISCOVERY MODE",
-					"Chat naturally to explore requirements. The LLM will ask clarifying questions.",
+					"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
 					"🔍"
 				), "info");
-				ctx.ui.notify("Just type your answers in the editor below. The LLM has access to your codebase and will ask questions to understand your requirements.", "info");
+				ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
 				ctx.ui.notify("When you're satisfied with the discovery, type /spec-done to proceed to spec drafting.", "info");
 
 				// Send the initial discovery message to kick off the conversation
 				const scopingNote = scopingContext
-					? `\n\nThe following context was gathered during a scoping assessment:\n\n${scopingContext}\n\nPlease take this into account and ask any additional clarifying questions.`
+					? `\n\nThe following context was gathered during a scoping assessment:\n\n${scopingContext}\n\nPlease take this into account when forming your assumptions.`
 					: "";
-				pi.sendUserMessage(`I want to build the following feature: ${description}${scopingNote}\n\nPlease explore the codebase and ask me clarifying questions to understand the requirements better.`);
+				pi.sendUserMessage(`I want to build the following feature: ${description}${scopingNote}\n\nPlease explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`);
 			} else {
 				// --quick mode: enter conversational drafting directly
 				enterDraftingMode(state, cwd, projectConfig, ctx);
@@ -1653,7 +1651,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				ctx.ui.notify("Type /spec-done when ready to proceed to spec drafting.", "info");
 
 				// Send a resume message to kick off the conversation
-				pi.sendUserMessage(`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue asking clarifying questions.`);
+				pi.sendUserMessage(`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`);
 				return;
 			}
 
@@ -2439,17 +2437,17 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			ctx.ui.notify(formatStepBanner(
 				`${levelLabel.toUpperCase()} DISCOVERY MODE`,
-				"Chat naturally to explore requirements. The LLM will ask clarifying questions.",
+				"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
 				"🔍"
 			), "info");
-			ctx.ui.notify("Just type your answers below. The LLM has access to your codebase and will ask questions to understand the scope.", "info");
+			ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
 			ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed.", "info");
 
 			// Send the initial discovery message
 			const parentNote = parentContext ? "\n\nRelevant parent context has been provided." : "";
 			pi.sendUserMessage(
 				`I want to create a ${level} for the following: ${description}${parentNote}\n\n` +
-				`Please explore the codebase and ask me clarifying questions to understand the requirements and scope better.`
+				`Please explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`
 			);
 		} else {
 			// --quick mode or discovery disabled: enter conversational drafting directly
@@ -2589,7 +2587,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			), "info");
 			ctx.ui.notify("Type /discovery-done when ready to proceed.", "info");
 
-			pi.sendUserMessage(`I'm resuming the discovery session for this ${level}: ${state.description}\n\nPlease review what we've discussed so far and continue asking clarifying questions.`);
+			pi.sendUserMessage(`I'm resuming the discovery session for this ${level}: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`);
 			return;
 		}
 
