@@ -1453,7 +1453,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			}
 
 			// If discovery is enabled (not --quick), enter conversational discovery mode
-			const shouldDiscover = !isQuick && projectConfig.discovery.enabled && state.stage === "discovery";
+			const shouldDiscover = !isQuick && state.stage === "discovery";
 
 			if (shouldDiscover) {
 				// If we have scoping context, pre-populate the discovery summary so it's available
@@ -2427,7 +2427,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		}
 
 		// If discovery is enabled (not --quick), enter conversational discovery mode
-		const shouldDiscover = !isQuick && projectConfig.discovery.enabled && state.stage === "discovery";
+		const shouldDiscover = !isQuick && state.stage === "discovery";
 
 		if (shouldDiscover) {
 			// Initialize conversational discovery state

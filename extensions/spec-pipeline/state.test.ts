@@ -99,12 +99,6 @@ describe("createInitialDiscoveryState", () => {
 });
 
 describe("createInitialSpecState", () => {
-	const defaultDiscoveryConfig = {
-		enabled: true,
-		maxRounds: 5,
-		questionsPerRound: 4,
-	};
-
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));

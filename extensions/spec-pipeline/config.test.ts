@@ -31,14 +31,14 @@ describe("validateConfig", () => {
 				specsDir: "docs/specs",
 				testCommand: "npm test",
 				contextFiles: ["README.md", "CONTRIBUTING.md"],
-				discovery: {
-					enabled: true,
-					maxRounds: 5,
-					questionsPerRound: 4,
-				},
 				models: {
-					specDrafter: { model: "opus", thinking: "high" },
-					specReviewer: {
+					planDrafter: { model: "opus", thinking: "high" },
+					implementer: { model: "opus", thinking: "high" },
+					planReviewer: {
+						cheap: { model: "sonnet", thinking: "medium" },
+						expensive: { model: "opus", thinking: "high" },
+					},
+					codeReviewer: {
 						cheap: { model: "sonnet", thinking: "medium" },
 						expensive: { model: "opus", thinking: "high" },
 					},
@@ -61,7 +61,6 @@ describe("validateConfig", () => {
 		it("accepts per-reviewer review cycles format", () => {
 			const config = {
 				reviewCycles: {
-					specReviewer: { cheap: 1, expensive: 1 },
 					planReviewer: { cheap: 0, expensive: 0 },
 					codeReviewer: { cheap: 3, expensive: 2 },
 				},
@@ -107,7 +106,7 @@ describe("validateConfig", () => {
 		it("rejects invalid model name", () => {
 			const config = {
 				models: {
-					specDrafter: { model: "gpt-4", thinking: "high" },
+					implementer: { model: "gpt-4", thinking: "high" },
 				},
 			};
 			const errors = validateConfig(config);
@@ -117,27 +116,7 @@ describe("validateConfig", () => {
 		it("rejects invalid thinking level", () => {
 			const config = {
 				models: {
-					specDrafter: { model: "opus", thinking: "extreme" },
-				},
-			};
-			const errors = validateConfig(config);
-			expect(errors.length).toBeGreaterThan(0);
-		});
-
-		it("rejects invalid discovery maxRounds", () => {
-			const config = {
-				discovery: {
-					maxRounds: 100, // Max is 20
-				},
-			};
-			const errors = validateConfig(config);
-			expect(errors.length).toBeGreaterThan(0);
-		});
-
-		it("rejects invalid discovery questionsPerRound", () => {
-			const config = {
-				discovery: {
-					questionsPerRound: 0, // Min is 1
+					implementer: { model: "opus", thinking: "extreme" },
 				},
 			};
 			const errors = validateConfig(config);
@@ -202,17 +181,6 @@ describe("formatValidationErrors", () => {
 
 describe("default configurations", () => {
 	describe("DEFAULT_MODEL_CONFIGS", () => {
-		it("has discoveryAgent config", () => {
-			expect(DEFAULT_MODEL_CONFIGS.discoveryAgent).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.discoveryAgent.model).toBe("sonnet");
-		});
-
-		it("has specDrafter config", () => {
-			expect(DEFAULT_MODEL_CONFIGS.specDrafter).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.specDrafter.model).toBe("opus");
-			expect(DEFAULT_MODEL_CONFIGS.specDrafter.thinking).toBe("high");
-		});
-
 		it("has planDrafter config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.planDrafter).toBeDefined();
 			expect(DEFAULT_MODEL_CONFIGS.planDrafter.model).toBe("opus");
@@ -227,17 +195,14 @@ describe("default configurations", () => {
 			expect(DEFAULT_MODEL_CONFIGS.addressReview).toBeDefined();
 			expect(DEFAULT_MODEL_CONFIGS.addressReview.model).toBe("sonnet");
 		});
+
+		it("has agentCommitMessageWriter config", () => {
+			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter).toBeDefined();
+			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe("haiku");
+		});
 	});
 
 	describe("DEFAULT_TIERED_CONFIGS", () => {
-		it("has specReviewer tiered config", () => {
-			const config = DEFAULT_TIERED_CONFIGS.specReviewer;
-			expect(config.cheap).toBeDefined();
-			expect(config.expensive).toBeDefined();
-			expect(config.cheap.model).toBe("sonnet");
-			expect(config.expensive.model).toBe("opus");
-		});
-
 		it("has planReviewer tiered config", () => {
 			const config = DEFAULT_TIERED_CONFIGS.planReviewer;
 			expect(config.cheap.model).toBe("sonnet");
@@ -253,18 +218,18 @@ describe("default configurations", () => {
 
 	describe("DEFAULT_REVIEW_CYCLES", () => {
 		it("has cycles for all reviewers", () => {
-			expect(DEFAULT_REVIEW_CYCLES.specReviewer).toBeDefined();
 			expect(DEFAULT_REVIEW_CYCLES.planReviewer).toBeDefined();
 			expect(DEFAULT_REVIEW_CYCLES.codeReviewer).toBeDefined();
 		});
 
 		it("has cheap and expensive cycles for each reviewer", () => {
-			expect(DEFAULT_REVIEW_CYCLES.specReviewer.cheap).toBe(2);
-			expect(DEFAULT_REVIEW_CYCLES.specReviewer.expensive).toBe(2);
+			expect(DEFAULT_REVIEW_CYCLES.planReviewer.cheap).toBe(2);
+			expect(DEFAULT_REVIEW_CYCLES.planReviewer.expensive).toBe(2);
+			expect(DEFAULT_REVIEW_CYCLES.codeReviewer.cheap).toBe(2);
+			expect(DEFAULT_REVIEW_CYCLES.codeReviewer.expensive).toBe(2);
 		});
 
 		it("all reviewers have same default cycles", () => {
-			expect(DEFAULT_REVIEW_CYCLES.specReviewer).toEqual(DEFAULT_REVIEW_CYCLES.planReviewer);
 			expect(DEFAULT_REVIEW_CYCLES.planReviewer).toEqual(DEFAULT_REVIEW_CYCLES.codeReviewer);
 		});
 	});
