@@ -635,3 +635,30 @@ export type HierarchyState = RoadmapState | EpicState;
 /** State directories for hierarchy types */
 export const ROADMAP_STATE_DIR = ".pi/spec-pipeline/roadmaps";
 export const EPIC_STATE_DIR = ".pi/spec-pipeline/epics";
+
+// ============================================
+// Agent Progress Event Types
+// ============================================
+
+/**
+ * Data structure for tool invocation events from pi subprocess
+ */
+export interface ToolEventData {
+	type: "tool";
+	name: string;
+	arguments: Record<string, any>;
+}
+
+/**
+ * Data structure for text delta events from pi subprocess (legacy)
+ */
+export interface TextEventData {
+	type: "text";
+	delta: string;
+}
+
+/**
+ * Union type for agent output events
+ * Allows onOutput callback to handle both text deltas and tool events
+ */
+export type AgentOutputEvent = TextEventData | ToolEventData | string;

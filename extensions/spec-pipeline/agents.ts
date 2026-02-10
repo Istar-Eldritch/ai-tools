@@ -10,6 +10,8 @@ import type {
 	ModelConfig,
 	AgentName,
 	AgentResult,
+	AgentOutputEvent,
+	ToolEventData,
 } from "./types.ts";
 import { AGENTS, MODEL_IDENTIFIERS, READ_ONLY_ROLES, WRITE_ROLES } from "./types.ts";
 
@@ -26,7 +28,7 @@ export async function runAgentWithConfig(
 	cwd: string,
 	systemPrompt: string,
 	signal?: AbortSignal,
-	onOutput?: (text: string) => void,
+	onOutput?: (event: AgentOutputEvent) => void,
 	role?: string
 ): Promise<AgentResult> {
 	const args: string[] = [
@@ -73,12 +75,39 @@ export async function runAgentWithConfig(
 				if (!line.trim()) return;
 				try {
 					const event = JSON.parse(line);
+					
+					// Handle text delta events (for output accumulation and legacy callbacks)
 					if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-						output += event.assistantMessageEvent.delta;
-						onOutput?.(event.assistantMessageEvent.delta);
+						const delta = event.assistantMessageEvent.delta;
+						output += delta;
+						
+						// Call onOutput with text delta (backward compatibility)
+						// Legacy callers expect strings, new callers can handle TextEventData
+						if (onOutput) {
+							onOutput(delta);
+						}
+					}
+					
+					// Handle tool call events (for progress visibility)
+					if (event.type === "message_update" && event.assistantMessageEvent?.type === "toolcall_end") {
+						const toolCall = event.assistantMessageEvent?.toolCall;
+						
+						// Gracefully handle missing fields
+						if (toolCall && toolCall.name && toolCall.arguments) {
+							const toolEvent: ToolEventData = {
+								type: "tool",
+								name: toolCall.name,
+								arguments: toolCall.arguments,
+							};
+							
+							// Call onOutput with structured tool data
+							if (onOutput) {
+								onOutput(toolEvent);
+							}
+						}
 					}
 				} catch {
-					// Ignore parse errors
+					// Ignore parse errors (malformed JSON, incomplete events)
 				}
 			};
 
@@ -135,7 +164,7 @@ export async function runAgent(
 	cwd: string,
 	systemPrompt: string,
 	signal?: AbortSignal,
-	onOutput?: (text: string) => void,
+	onOutput?: (event: AgentOutputEvent) => void,
 	role?: string
 ): Promise<AgentResult> {
 	const config = AGENTS[agentName];
