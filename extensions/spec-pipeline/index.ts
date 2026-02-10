@@ -1840,8 +1840,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			const argsStr = args || "";
 			const noPlan = argsStr.includes("--no-plan");
+			const noReview = argsStr.includes("--no-review");
 			const specPath = argsStr
 				.replace("--no-plan", "")
+				.replace("--no-review", "")
 				.replace(/\s+/g, " ")
 				.trim();
 			
@@ -1912,6 +1914,11 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 			if (noPlan) {
 				projectConfig.skipPlanGeneration = true;
+			}
+
+			if (noReview) {
+				projectConfig.reviewCycles.planReviewer = { cheap: 0, expensive: 0 };
+				projectConfig.reviewCycles.codeReviewer = { cheap: 0, expensive: 0 };
 			}
 
 			ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
