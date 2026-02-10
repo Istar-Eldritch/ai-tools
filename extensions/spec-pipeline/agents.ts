@@ -100,12 +100,10 @@ export async function runAgentWithConfig(
 								arguments: toolCall.arguments,
 							};
 							
-							// Phase 1: Parse and capture tool events, but don't emit yet
-							// Phase 2 will introduce progress callbacks that properly handle tool events
-							// For now, only text deltas are emitted to maintain backward compatibility
-							// if (onOutput) {
-							// 	onOutput(toolEvent);
-							// }
+							// Call onOutput with structured tool data
+							if (onOutput) {
+								onOutput(toolEvent);
+							}
 						}
 					}
 				} catch {
