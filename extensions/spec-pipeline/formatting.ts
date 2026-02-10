@@ -141,20 +141,12 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 	
 	// Model configurations
 	lines.push("  Model Configurations:");
-	lines.push(`    discoveryAgent    : ${formatModelConfig(config.models.discoveryAgent)}`);
-	lines.push(`    specDrafter       : ${formatModelConfig(config.models.specDrafter)}`);
-	lines.push(`    specReviewer      : ${formatTieredConfig(config.models.specReviewer)}`);
 	lines.push(`    planDrafter       : ${formatModelConfig(config.models.planDrafter)}`);
 	lines.push(`    planReviewer      : ${formatTieredConfig(config.models.planReviewer)}`);
 	lines.push(`    implementer       : ${formatModelConfig(config.models.implementer)}`);
 	lines.push(`    codeReviewer      : ${formatTieredConfig(config.models.codeReviewer)}`);
 	lines.push(`    addressReview     : ${formatModelConfig(config.models.addressReview)}`);
-	lines.push(`    commitMessageWriter: haiku/off (fixed)`);
-	lines.push(`    scopingAgent      : ${formatModelConfig(config.models.scopingAgent)}`);
-	lines.push(`    roadmapDrafter    : ${formatModelConfig(config.models.roadmapDrafter)}`);
-	lines.push(`    roadmapReviewer   : ${formatTieredConfig(config.models.roadmapReviewer)}`);
-	lines.push(`    epicDrafter       : ${formatModelConfig(config.models.epicDrafter)}`);
-	lines.push(`    epicReviewer      : ${formatTieredConfig(config.models.epicReviewer)}`);
+	lines.push(`    agentCommitMessageWriter: ${formatModelConfig(config.models.agentCommitMessageWriter)}`);
 	lines.push("");
 	
 	// Review cycles (per reviewer)
@@ -163,11 +155,8 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 		if (cycles.cheap === 0 && cycles.expensive === 0) return "skipped";
 		return `${cycles.cheap}/${cycles.expensive}`;
 	};
-	lines.push(`    specReviewer: ${formatCycles(config.reviewCycles.specReviewer)}`);
 	lines.push(`    planReviewer: ${formatCycles(config.reviewCycles.planReviewer)}`);
 	lines.push(`    codeReviewer: ${formatCycles(config.reviewCycles.codeReviewer)}`);
-	lines.push(`    roadmapReviewer: ${formatCycles(config.reviewCycles.roadmapReviewer)}`);
-	lines.push(`    epicReviewer: ${formatCycles(config.reviewCycles.epicReviewer)}`);
 	lines.push("");
 	
 	// Spec template & conventions
