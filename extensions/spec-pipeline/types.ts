@@ -659,6 +659,26 @@ export interface TextEventData {
 
 /**
  * Union type for agent output events
- * Allows onOutput callback to handle both text deltas and tool events
+ * 
+ * Supports both legacy string callbacks and structured event data:
+ * - `string`: Text delta from agent output (backward compatible)
+ * - `TextEventData`: Structured text delta with explicit type
+ * - `ToolEventData`: Tool invocation events (name, arguments)
+ * 
+ * **Type Narrowing Example:**
+ * ```typescript
+ * function handleOutput(event: AgentOutputEvent) {
+ *     if (typeof event === "string") {
+ *         // Legacy text delta
+ *     } else if (event.type === "tool") {
+ *         // Tool invocation: event.name, event.arguments
+ *     } else if (event.type === "text") {
+ *         // Structured text: event.delta
+ *     }
+ * }
+ * ```
+ * 
+ * @since Phase 1 - Event parsing infrastructure
+ * @see Phase 2 will introduce progress callbacks that leverage ToolEventData
  */
 export type AgentOutputEvent = TextEventData | ToolEventData | string;
