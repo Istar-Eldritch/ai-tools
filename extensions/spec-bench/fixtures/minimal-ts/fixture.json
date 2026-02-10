@@ -1,7 +1,0 @@
-{
-  "name": "Minimal TypeScript",
-  "description": "A minimal fixture for testing spec-bench with a simple TypeScript project. Implements a basic string utility function.",
-  "hiddenTestsTarget": "tests/hidden",
-  "testCommand": "npm test",
-  "timeout": 1800
-}
