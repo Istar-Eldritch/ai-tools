@@ -42,9 +42,6 @@ export const TieredModelConfigSchema = Type.Object({
 // it in config but silently ignore it per R5a. Using Type.Any() means any value
 // is accepted but we never use it.
 export const ModelsConfigSchema = Type.Object({
-	discoveryAgent: Type.Optional(ModelConfigSchema),
-	specDrafter: Type.Optional(ModelConfigSchema),
-	specReviewer: Type.Optional(TieredModelConfigSchema),
 	planDrafter: Type.Optional(ModelConfigSchema),
 	planReviewer: Type.Optional(TieredModelConfigSchema),
 	implementer: Type.Optional(ModelConfigSchema),
@@ -52,14 +49,8 @@ export const ModelsConfigSchema = Type.Object({
 	addressReview: Type.Optional(ModelConfigSchema),
 	// agentCommitMessageWriter for commits after agent operations (R5)
 	agentCommitMessageWriter: Type.Optional(ModelConfigSchema),
-	// commitMessageWriter allowed in config but silently ignored (R5a)
+	// commitMessageWriter allowed in config but silently ignore it per R5a
 	commitMessageWriter: Type.Optional(Type.Any()),
-	// Hierarchy roles (roadmaps & epics)
-	scopingAgent: Type.Optional(ModelConfigSchema),
-	roadmapDrafter: Type.Optional(ModelConfigSchema),
-	roadmapReviewer: Type.Optional(TieredModelConfigSchema),
-	epicDrafter: Type.Optional(ModelConfigSchema),
-	epicReviewer: Type.Optional(TieredModelConfigSchema),
 });
 
 // Single reviewer cycle configuration (allows 0 to skip)
@@ -70,11 +61,8 @@ export const SingleReviewerCyclesSchema = Type.Object({
 
 // Per-reviewer cycle configuration
 export const PerReviewerCyclesSchema = Type.Object({
-	specReviewer: Type.Optional(SingleReviewerCyclesSchema),
 	planReviewer: Type.Optional(SingleReviewerCyclesSchema),
 	codeReviewer: Type.Optional(SingleReviewerCyclesSchema),
-	roadmapReviewer: Type.Optional(SingleReviewerCyclesSchema),
-	epicReviewer: Type.Optional(SingleReviewerCyclesSchema),
 });
 
 // Review cycles configuration schema - supports both global and per-reviewer formats
@@ -96,11 +84,6 @@ export const SpecPipelineConfigSchema = Type.Object({
 	// Output format for generated specs: "md" (default) or file extension from template
 	// Auto-detected from existing specs or template format when not specified
 	specFormat: Type.Optional(Type.String()),
-	discovery: Type.Optional(Type.Object({
-		enabled: Type.Optional(Type.Boolean()),
-		maxRounds: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
-		questionsPerRound: Type.Optional(Type.Number({ minimum: 1, maximum: 10 })),
-	})),
 	models: Type.Optional(ModelsConfigSchema),
 	reviewCycles: Type.Optional(ReviewCyclesConfigSchema),
 	// Experimental: skip plan generation phase (go directly from spec to implementation)
@@ -121,11 +104,8 @@ export type ReviewCyclesConfig = Static<typeof ReviewCyclesConfigSchema>;
 
 // Normalized per-reviewer cycles structure used internally
 export interface NormalizedReviewCycles {
-	specReviewer: { cheap: number; expensive: number };
 	planReviewer: { cheap: number; expensive: number };
 	codeReviewer: { cheap: number; expensive: number };
-	roadmapReviewer: { cheap: number; expensive: number };
-	epicReviewer: { cheap: number; expensive: number };
 }
 
 // ============================================
@@ -198,29 +178,14 @@ export interface ProjectConfig {
 	specConventionsPath: string | null;
 	// Output format for generated specs (file extension without dot, e.g. "md", "typ")
 	specFormat: string;
-	// Discovery configuration
-	discovery: {
-		enabled: boolean;         // Whether discovery runs by default
-		maxRounds: number;        // Maximum Q&A rounds (default: 5)
-		questionsPerRound: number; // Target questions per round (default: 3-5)
-	};
 	// Model configurations per role
 	models: {
-		discoveryAgent: ModelConfig;
-		specDrafter: ModelConfig;
-		specReviewer: TieredModelConfig;
 		planDrafter: ModelConfig;
 		planReviewer: TieredModelConfig;
 		implementer: ModelConfig;
 		codeReviewer: TieredModelConfig;
 		addressReview: ModelConfig;
 		agentCommitMessageWriter: ModelConfig;
-		// Hierarchy roles
-		scopingAgent: ModelConfig;
-		roadmapDrafter: ModelConfig;
-		roadmapReviewer: TieredModelConfig;
-		epicDrafter: ModelConfig;
-		epicReviewer: TieredModelConfig;
 	};
 	// Review cycle counts per reviewer
 	// Setting both cheap and expensive to 0 skips that review entirely
@@ -236,20 +201,12 @@ export interface ProjectConfig {
 export type ErrorType = "RATE_LIMIT" | "TIMEOUT" | "NETWORK" | "VALIDATION" | "UNKNOWN";
 
 export type RoleName = 
-	| "discoveryAgent"
-	| "specDrafter"
-	| "specReviewer"
 	| "planDrafter"
 	| "planReviewer"
 	| "implementer"
 	| "codeReviewer"
 	| "addressReview"
-	| "commitMessageWriter" // Role for tool restrictions (read-only for both old and new commit agents)
-	| "scopingAgent"
-	| "roadmapDrafter"
-	| "roadmapReviewer"
-	| "epicDrafter"
-	| "epicReviewer";
+	| "commitMessageWriter"; // Role for tool restrictions (read-only for both old and new commit agents)
 
 export interface ErrorDetails {
 	timestamp: string;           // ISO timestamp of error
@@ -500,7 +457,7 @@ export interface TieredReviewResult {
 }
 
 /** Reviewer role names that support tiered configuration */
-export type TieredReviewerRole = "specReviewer" | "planReviewer" | "codeReviewer" | "roadmapReviewer" | "epicReviewer";
+export type TieredReviewerRole = "planReviewer" | "codeReviewer";
 
 // ============================================
 // UI Context Types
@@ -536,9 +493,9 @@ export const MAX_SPEC_ITERATIONS = 5;
 export const PIPELINE_WIDGET_ID = "spec-pipeline-status";
 
 // Roles that need write/edit access to modify files
-export const WRITE_ROLES = new Set(["specDrafter", "planDrafter", "implementer", "addressReview", "roadmapDrafter", "epicDrafter"]);
+export const WRITE_ROLES = new Set(["planDrafter", "implementer", "addressReview"]);
 // Roles that only need to read and analyze (no write/edit access)
-export const READ_ONLY_ROLES = new Set(["specReviewer", "planReviewer", "codeReviewer", "commitMessageWriter", "discoveryAgent", "scopingAgent", "roadmapReviewer", "epicReviewer"]);
+export const READ_ONLY_ROLES = new Set(["planReviewer", "codeReviewer", "commitMessageWriter"]);
 
 /**
  * Map model name to actual model identifier
