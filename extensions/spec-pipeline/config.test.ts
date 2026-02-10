@@ -159,11 +159,11 @@ describe("formatValidationErrors", () => {
 	it("formats multiple errors", () => {
 		const errors = [
 			{ path: "/specsDir", message: "Expected string" },
-			{ path: "/models/specDrafter/model", message: "Invalid model" },
+			{ path: "/models/planDrafter/model", message: "Invalid model" },
 		];
 		const formatted = formatValidationErrors(errors);
 		expect(formatted).toContain("/specsDir");
-		expect(formatted).toContain("/models/specDrafter/model");
+		expect(formatted).toContain("/models/planDrafter/model");
 	});
 
 	it("handles root-level errors", () => {

@@ -261,17 +261,10 @@ Create `.pi/spec-pipeline.json` in your project root:
   "specsDir": "docs/specs",
   "testCommand": "npm test",
   "contextFiles": ["CONTRIBUTING.md", "docs/architecture.md"],
-  "discovery": {
-    "enabled": true,
-    "maxRounds": 5,
-    "questionsPerRound": 4
-  },
   "models": {
-    "specDrafter": { "model": "opus", "thinking": "high" },
     "implementer": { "model": "opus", "thinking": "high" }
   },
   "reviewCycles": {
-    "specReviewer": { "cheap": 2, "expensive": 1 },
     "codeReviewer": { "cheap": 3, "expensive": 2 }
   }
 }
@@ -290,15 +283,14 @@ Create `.pi/spec-pipeline.json` in your project root:
 | `specConventionsPath` | string | auto-detected | Path to spec conventions file |
 | `specFormat` | string | `"md"` | Output format for specs (md, typ, etc.) |
 
-#### Discovery Settings
+#### Discovery Behavior
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `discovery.enabled` | boolean | `true` | Whether discovery runs by default |
-| `discovery.maxRounds` | number | `5` | Maximum conversation rounds (currently not enforced) |
-| `discovery.questionsPerRound` | number | `4` | Questions per round (currently not enforced) |
+Discovery is controlled only by the `--quick` flag on commands:
+- `/spec "description"` - Runs discovery conversation before drafting
+- `/spec --quick "description"` - Skips discovery, goes straight to drafting
+- Same applies to `/roadmap` and `/epic` commands
 
-**Note:** Discovery is fully conversational - these settings are legacy and not actively enforced. Discovery continues until you type `/discovery-done`.
+Discovery is fully conversational and continues until you type `/discovery-done`. There are no configuration settings for discovery behavior.
 
 #### Experimental Settings
 
@@ -345,26 +337,6 @@ Configure models per-role to optimize cost and quality:
 |------|---------------|-------------------|---------|
 | `planReviewer` | sonnet/medium | opus/high | Review implementation plans (tiered) |
 | `codeReviewer` | sonnet/medium | opus/high | Review code changes (tiered) |
-
-**Conversational Roles (NOT used - discovery/drafting is conversational):**
-
-These roles exist in config but are NOT invoked because the host LLM handles these conversationally:
-
-| Role | Default Model | Default Thinking | Notes |
-|------|---------------|------------------|-------|
-| `discoveryAgent` | sonnet | medium | NOT USED - discovery is conversational with host LLM |
-| `specDrafter` | opus | high | NOT USED - spec drafting is conversational with host LLM |
-| `scopingAgent` | sonnet | medium | NOT USED - scoping is conversational with host LLM |
-| `roadmapDrafter` | opus | high | NOT USED - roadmap drafting is conversational |
-| `epicDrafter` | opus | high | NOT USED - epic drafting is conversational |
-
-**Hierarchy Review Roles (defined but rarely used):**
-
-| Role | Default Cheap | Default Expensive | Notes |
-|------|---------------|-------------------|-------|
-| `specReviewer` | sonnet/medium | opus/high | Review specs (not used - user approves conversationally) |
-| `roadmapReviewer` | sonnet/medium | opus/high | Review roadmaps (not used - user approves conversationally) |
-| `epicReviewer` | sonnet/medium | opus/high | Review epics (not used - user approves conversationally) |
 
 #### Model Options
 

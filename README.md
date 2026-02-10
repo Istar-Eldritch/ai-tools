@@ -59,9 +59,6 @@ A comprehensive workflow automation extension that takes projects from idea to i
   "specsDir": "docs/specs",
   "testCommand": "npm test",
   "contextFiles": ["CONTRIBUTING.md", "docs/architecture.md"],
-  "discovery": {
-    "enabled": true
-  },
   "models": {
     "implementer": { "model": "opus", "thinking": "high" },
     "codeReviewer": {
