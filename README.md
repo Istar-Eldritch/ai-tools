@@ -18,80 +18,65 @@ Extensions add new commands and tools to pi. They are TypeScript modules that in
 
 ### spec-pipeline
 
-Automates the spec → implementation workflow with configurable AI agents:
+A comprehensive workflow automation extension that takes projects from idea to implementation with AI-assisted specification, planning, and coding.
 
-1. **Discovery** (optional): Sonnet asks clarifying questions to gather requirements
-2. **Spec Drafting**: Opus drafts a technical specification
-3. **Spec Review**: Tiered review (Sonnet → Opus), user approves or requests changes
-4. **Plan Generation**: For each implementation phase, Opus creates detailed plans with tiered review
-5. **Implementation**: Opus implements, tiered code review (Sonnet → Opus), Opus addresses feedback
-6. **Commits**: Haiku writes commit messages after each phase
+**Key Features:**
+- **Fully Conversational** - Discovery and drafting are natural conversations with AI
+- **Tiered Review System** - Implementation uses cheap model (Sonnet) first, expensive (Opus) as quality gate
+- **Conversational Scoping** - `/plan` command assesses scope and recommends roadmap/epic/feature level
+- **Hierarchical Planning** - Break down large initiatives: roadmaps → epics → features
+- **Git Integration** - Automatic branching, commits, checkpoints, and error recovery
+- **Dirty Tree Support** - Write specs while implementation runs (documentation pipelines only)
+- **Fully Configurable** - Customize models, thinking levels, review cycles, and context files
 
-The tiered review system runs cheaper models (Sonnet) first, then expensive models (Opus) as a final quality gate, optimizing costs while maintaining quality.
+**Quick Start:**
+```bash
+# Create a spec (conversational discovery → drafting)
+/spec "Add user authentication system"
+# AI explores codebase, proposes assumptions
+# You guide naturally until /spec-draft-done
 
-**Commands:**
-- `/spec [--quick] <description>` - Start a new spec pipeline (--quick skips discovery)
-- `/spec-resume` - Resume the last active pipeline
-- `/spec-status` - Show current pipeline status
-- `/spec-list` - List all pipelines
-- `/spec-cancel` - Cancel the current pipeline
+# Implement the spec
+/implement specs/2602101200_auth_system_spec.md
 
-**Configuration:** Create `.pi/spec-pipeline.json` in your project:
+# For large initiatives, use hierarchical planning
+/plan "Redesign the billing system"
+# AI assesses scope, recommends roadmap/epic/feature
+```
+
+**Main Commands:**
+- `/spec [--quick] <description>` - Create a spec (conversational discovery → drafting)
+- `/spec-resume` - Resume spec pipeline
+- `/implement [--no-plan] <spec-path>` - Implement a spec
+- `/plan <description>` - Conversational scoping (recommends roadmap/epic/feature)
+- `/roadmap <description>` - Create a roadmap (→ epics)
+- `/epic <description>` - Create an epic (→ features)
+- `/plan-overview [id]` - Show full hierarchy tree
+
+**Configuration:** Create `.pi/spec-pipeline.json`:
 ```json
 {
   "specsDir": "docs/specs",
   "testCommand": "npm test",
   "contextFiles": ["CONTRIBUTING.md", "docs/architecture.md"],
   "discovery": {
-    "enabled": true,
-    "maxRounds": 5,
-    "questionsPerRound": 4
-  }
-}
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `specsDir` | string | `"docs"` | Directory for spec files |
-| `testCommand` | string | auto-detected | Command to run tests |
-| `contextFiles` | string[] | `[]` | Extra context files to include |
-| `discovery.enabled` | boolean | `true` | Whether discovery runs by default |
-| `discovery.maxRounds` | number | `5` | Maximum Q&A rounds |
-| `discovery.questionsPerRound` | number | `4` | Target questions per round |
-| `models` | object | see below | Model configuration per role |
-| `reviewCycles.cheap` | number | `2` | Review cycles for cheap tier |
-| `reviewCycles.expensive` | number | `2` | Review cycles for expensive tier |
-
-**Model Configuration:**
-
-All models are configurable via the `models` object. Example:
-```json
-{
+    "enabled": true
+  },
   "models": {
-    "discoveryAgent": { "model": "sonnet", "thinking": "medium" },
-    "specReviewer": {
+    "implementer": { "model": "opus", "thinking": "high" },
+    "codeReviewer": {
       "cheap": { "model": "sonnet", "thinking": "medium" },
       "expensive": { "model": "opus", "thinking": "high" }
     }
   },
-  "reviewCycles": { "cheap": 2, "expensive": 2 }
+  "reviewCycles": {
+    "planReviewer": { "cheap": 2, "expensive": 1 },
+    "codeReviewer": { "cheap": 3, "expensive": 2 }
+  }
 }
 ```
 
-| Role | Default Model | Default Thinking | Notes |
-|------|---------------|------------------|-------|
-| `discoveryAgent` | sonnet | medium | Question generation |
-| `specDrafter` | opus | high | Complex synthesis |
-| `specReviewer` | tiered | - | cheap: sonnet/medium, expensive: opus/high |
-| `planDrafter` | opus | high | Complex planning |
-| `planReviewer` | tiered | - | cheap: sonnet/medium, expensive: opus/high |
-| `implementer` | opus | high | Code generation |
-| `codeReviewer` | tiered | - | cheap: sonnet/medium, expensive: opus/high |
-| `addressReview` | opus | high | Fix implementation |
-| `agentCommitMessageWriter` | haiku | off | Commit messages after agent work |
-| `commitMessageWriter` | haiku | off | Fixed, not configurable |
-
-Reviewer roles use tiered configuration (`cheap`/`expensive` tiers). Other roles use flat `{ model, thinking }` configuration.
+**📖 [Full Documentation](extensions/spec-pipeline/README.md)** - Detailed guide, configuration options, examples, and troubleshooting.
 
 ### pi-wakatime
 
