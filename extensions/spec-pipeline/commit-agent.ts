@@ -165,60 +165,6 @@ export function generateCommitMessage(
 			}
 			break;
 		
-		case "specDrafter":
-			if (docName) {
-				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
-				subject = `docs(spec/${name}): draft specification`;
-			} else {
-				subject = "docs(spec): draft specification";
-			}
-			break;
-		
-		case "specReviewer":
-			if (docName) {
-				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
-				subject = `docs(spec/${name}): revise spec after review`;
-			} else {
-				subject = "docs(spec): revise spec after review";
-			}
-			break;
-		
-		case "roadmapDrafter":
-			if (docName) {
-				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
-				subject = `docs(roadmap/${name}): draft roadmap document`;
-			} else {
-				subject = "docs(roadmap): draft roadmap document";
-			}
-			break;
-		
-		case "roadmapReviewer":
-			if (docName) {
-				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
-				subject = `docs(roadmap/${name}): revise roadmap after review`;
-			} else {
-				subject = "docs(roadmap): revise roadmap after review";
-			}
-			break;
-		
-		case "epicDrafter":
-			if (docName) {
-				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
-				subject = `docs(epic/${name}): draft epic document`;
-			} else {
-				subject = "docs(epic): draft epic document";
-			}
-			break;
-		
-		case "epicReviewer":
-			if (docName) {
-				const name = docName.length > 30 ? docName.slice(0, 27) + "..." : docName;
-				subject = `docs(epic/${name}): revise epic after review`;
-			} else {
-				subject = "docs(epic): revise epic after review";
-			}
-			break;
-		
 		case "planReviewer":
 			subject = `docs(${scope}): revise plan after review`;
 			break;
