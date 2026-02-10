@@ -135,9 +135,9 @@ export function createProgressCallback(
 				
 				// Update widget with current action (R13, R14, R15)
 				if (isImplPipeline) {
-					updateImplWidget(ctx as any, state as ImplementationState, contextualMessage);
+					updateImplWidget(ctx, state as ImplementationState, contextualMessage);
 				} else {
-					updateSpecWidget(ctx as any, state as SpecState, contextualMessage);
+					updateSpecWidget(ctx, state as SpecState, contextualMessage);
 				}
 			}
 		}
