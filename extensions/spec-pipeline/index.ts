@@ -1848,7 +1848,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				.trim();
 			
 			if (!specPath) {
-				ctx.ui.notify("Usage: /implement [--no-plan] <path-to-spec-file>", "error");
+				ctx.ui.notify("Usage: /implement [--no-plan] [--no-review] <path-to-spec-file>", "error");
 				return;
 			}
 
@@ -1925,6 +1925,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			
 			if (noPlan) {
 				ctx.ui.notify("⏭️ Plan generation will be skipped (--no-plan flag)", "info");
+			}
+
+			if (noReview) {
+				ctx.ui.notify("⏭️ Reviews will be skipped (--no-review flag)", "info");
 			}
 
 			ctx.ui.notify(`Starting implementation from: ${relativeSpecPath}`, "info");
