@@ -119,8 +119,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
+			"docs/specs"
 		);
 		expect(state.description).toBe("Build a feature");
 	});
@@ -130,8 +129,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
+			"docs/specs"
 		);
 		expect(state.specFilename).toBe("2602011200_spec_feature.md");
 	});
@@ -141,8 +139,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
+			"docs/specs"
 		);
 		expect(state.specPath).toBe("docs/specs/2602011200_spec_feature.md");
 	});
@@ -153,7 +150,6 @@ describe("createInitialSpecState", () => {
 			"2602011200",
 			"feature",
 			"docs/specs",
-			{ ...defaultDiscoveryConfig, enabled: true },
 			false // skipDiscovery
 		);
 		expect(state.stage).toBe("discovery");
@@ -165,7 +161,7 @@ describe("createInitialSpecState", () => {
 			"2602011200",
 			"feature",
 			"docs/specs",
-			{ ...defaultDiscoveryConfig, enabled: false }
+			true // skipDiscovery
 		);
 		expect(state.stage).toBe("spec_drafting");
 	});
@@ -176,7 +172,6 @@ describe("createInitialSpecState", () => {
 			"2602011200",
 			"feature",
 			"docs/specs",
-			defaultDiscoveryConfig,
 			true // skipDiscovery
 		);
 		expect(state.stage).toBe("spec_drafting");
@@ -188,8 +183,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
+			"docs/specs"
 		);
 		expect(state.specApproved).toBe(false);
 		expect(state.specIteration).toBe(0);
@@ -200,8 +194,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs",
-			defaultDiscoveryConfig
+			"docs/specs"
 		);
 		expect(state.createdAt).toBe("2026-02-01T12:00:00.000Z");
 		expect(state.updatedAt).toBe("2026-02-01T12:00:00.000Z");
@@ -212,15 +205,13 @@ describe("createInitialSpecState", () => {
 			"Feature 1",
 			"2602011200",
 			"f1",
-			"docs/specs",
-			defaultDiscoveryConfig
+			"docs/specs"
 		);
 		const state2 = createInitialSpecState(
 			"Feature 2",
 			"2602011201",
 			"f2",
-			"docs/specs",
-			defaultDiscoveryConfig
+			"docs/specs"
 		);
 		expect(state1.id).not.toBe(state2.id);
 	});
@@ -243,8 +234,7 @@ describe("createInitialRoadmapState", () => {
 			"Warm machine pools initiative",
 			"2602071200",
 			"warm_pools",
-			"docs",
-			defaultDiscoveryConfig
+			"docs"
 		);
 		expect(state.level).toBe("roadmap");
 		expect(state.description).toBe("Warm machine pools initiative");
@@ -261,7 +251,6 @@ describe("createInitialRoadmapState", () => {
 			"2602071200",
 			"quick",
 			"docs",
-			defaultDiscoveryConfig,
 			true
 		);
 		expect(state.stage).toBe("drafting");
@@ -281,8 +270,7 @@ describe("createInitialEpicState", () => {
 			"Pool configuration",
 			"2602071200",
 			"pool_config",
-			"docs",
-			defaultDiscoveryConfig
+			"docs"
 		);
 		expect(state.level).toBe("epic");
 		expect(state.description).toBe("Pool configuration");
@@ -296,7 +284,6 @@ describe("createInitialEpicState", () => {
 			"2602071200",
 			"pool_config",
 			"docs",
-			defaultDiscoveryConfig,
 			false,
 			"md",
 			"parent123",

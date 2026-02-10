@@ -355,7 +355,6 @@ export function createInitialSpecState(
 	specTimestamp: string,
 	shortName: string,
 	specsDir: string,
-	discoveryConfig: ProjectConfig["discovery"],
 	skipDiscovery: boolean = false,
 	specFormat: string = "md"
 ): SpecState {
@@ -363,16 +362,14 @@ export function createInitialSpecState(
 	const specPath = path.join(specsDir, specFilename);
 	const now = new Date().toISOString();
 
-	const shouldSkip = skipDiscovery || !discoveryConfig.enabled;
-
 	return {
 		id: generatePipelineId(),
 		description,
-		stage: shouldSkip ? "spec_drafting" : "discovery",
+		stage: skipDiscovery ? "spec_drafting" : "discovery",
 		createdAt: now,
 		updatedAt: now,
 
-		discovery: createInitialDiscoveryState(shouldSkip),
+		discovery: createInitialDiscoveryState(skipDiscovery),
 	
 		specTimestamp,
 		specFilename,
@@ -604,7 +601,6 @@ export function createInitialRoadmapState(
 	docTimestamp: string,
 	shortName: string,
 	specsDir: string,
-	discoveryConfig: ProjectConfig["discovery"],
 	skipDiscovery: boolean = false,
 	docFormat: string = "md"
 ): RoadmapState {
@@ -612,17 +608,15 @@ export function createInitialRoadmapState(
 	const docPath = path.join(specsDir, docFilename);
 	const now = new Date().toISOString();
 
-	const shouldSkip = skipDiscovery || !discoveryConfig.enabled;
-
 	return {
 		id: generatePipelineId(),
 		level: "roadmap",
 		description,
-		stage: shouldSkip ? "drafting" : "discovery",
+		stage: skipDiscovery ? "drafting" : "discovery",
 		createdAt: now,
 		updatedAt: now,
 
-		discovery: createInitialDiscoveryState(shouldSkip),
+		discovery: createInitialDiscoveryState(skipDiscovery),
 
 		docTimestamp,
 		docFilename,
@@ -643,7 +637,6 @@ export function createInitialEpicState(
 	docTimestamp: string,
 	shortName: string,
 	specsDir: string,
-	discoveryConfig: ProjectConfig["discovery"],
 	skipDiscovery: boolean = false,
 	docFormat: string = "md",
 	parentId?: string,
@@ -653,20 +646,18 @@ export function createInitialEpicState(
 	const docPath = path.join(specsDir, docFilename);
 	const now = new Date().toISOString();
 
-	const shouldSkip = skipDiscovery || !discoveryConfig.enabled;
-
 	return {
 		id: generatePipelineId(),
 		level: "epic",
 		description,
-		stage: shouldSkip ? "drafting" : "discovery",
+		stage: skipDiscovery ? "drafting" : "discovery",
 		createdAt: now,
 		updatedAt: now,
 
 		parentId,
 		parentType,
 
-		discovery: createInitialDiscoveryState(shouldSkip),
+		discovery: createInitialDiscoveryState(skipDiscovery),
 
 		docTimestamp,
 		docFilename,

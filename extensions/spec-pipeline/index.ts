@@ -1426,7 +1426,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				specTimestamp,
 				shortName,
 				projectConfig.specsDir,
-				projectConfig.discovery,
 				isQuick,
 				projectConfig.specFormat
 			);
@@ -2379,13 +2378,13 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		if (level === "roadmap") {
 			state = createInitialRoadmapState(
 				description, docTimestamp, shortName,
-				projectConfig.specsDir, projectConfig.discovery,
+				projectConfig.specsDir,
 				isQuick, projectConfig.specFormat
 			);
 		} else {
 			state = createInitialEpicState(
 				description, docTimestamp, shortName,
-				projectConfig.specsDir, projectConfig.discovery,
+				projectConfig.specsDir,
 				isQuick, projectConfig.specFormat,
 				parentId, parentType
 			);

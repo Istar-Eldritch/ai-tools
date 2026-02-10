@@ -26,40 +26,21 @@ import {
  * These are the optimized defaults when no configuration is provided
  */
 export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
-	discoveryAgent: { model: "sonnet", thinking: "medium" },  // Question generation doesn't need Opus
-	specDrafter: { model: "opus", thinking: "high" },         // Complex synthesis task
 	planDrafter: { model: "opus", thinking: "high" },         // Complex planning task
 	implementer: { model: "opus", thinking: "high" },         // Complex code generation
 	addressReview: { model: "sonnet", thinking: "medium" },    // Fix application — issues already identified by reviewer
 	agentCommitMessageWriter: { model: "haiku", thinking: "off" },  // Fast, cheap commit message generation (R5)
-	// Hierarchy roles
-	scopingAgent: { model: "sonnet", thinking: "medium" },    // Scoping assessment doesn't need Opus
-	roadmapDrafter: { model: "opus", thinking: "high" },      // Complex decomposition task
-	epicDrafter: { model: "opus", thinking: "high" },         // Complex decomposition task
 } as const;
 
 /**
  * Default tiered configurations for reviewer roles (R14)
  */
 export const DEFAULT_TIERED_CONFIGS: Record<string, TieredModelConfig> = {
-	specReviewer: {
-		cheap: { model: "sonnet", thinking: "medium" },
-		expensive: { model: "opus", thinking: "high" },
-	},
 	planReviewer: {
 		cheap: { model: "sonnet", thinking: "medium" },
 		expensive: { model: "opus", thinking: "high" },
 	},
 	codeReviewer: {
-		cheap: { model: "sonnet", thinking: "medium" },
-		expensive: { model: "opus", thinking: "high" },
-	},
-	// Hierarchy reviewers
-	roadmapReviewer: {
-		cheap: { model: "sonnet", thinking: "medium" },
-		expensive: { model: "opus", thinking: "high" },
-	},
-	epicReviewer: {
 		cheap: { model: "sonnet", thinking: "medium" },
 		expensive: { model: "opus", thinking: "high" },
 	},
@@ -75,11 +56,8 @@ export const DEFAULT_REVIEWER_CYCLES: { cheap: number; expensive: number } = {
 } as const;
 
 export const DEFAULT_REVIEW_CYCLES: NormalizedReviewCycles = {
-	specReviewer: { ...DEFAULT_REVIEWER_CYCLES },
 	planReviewer: { ...DEFAULT_REVIEWER_CYCLES },
 	codeReviewer: { ...DEFAULT_REVIEWER_CYCLES },
-	roadmapReviewer: { ...DEFAULT_REVIEWER_CYCLES },
-	epicReviewer: { ...DEFAULT_REVIEWER_CYCLES },
 } as const;
 
 // ============================================
@@ -140,14 +118,13 @@ export function formatValidationErrors(errors: ConfigValidationError[]): string 
 
 /**
  * Check if the review cycles config is in per-reviewer format
- * Per-reviewer format has specReviewer, planReviewer, or codeReviewer keys
+ * Per-reviewer format has planReviewer or codeReviewer keys
  * Global format has cheap and expensive keys directly
  */
 function isPerReviewerFormat(config: ReviewCyclesConfig): config is PerReviewerCycles {
 	if (!config || typeof config !== "object") return false;
 	// If it has any of the reviewer keys, it's per-reviewer format
-	return "specReviewer" in config || "planReviewer" in config || "codeReviewer" in config
-		|| "roadmapReviewer" in config || "epicReviewer" in config;
+	return "planReviewer" in config || "codeReviewer" in config;
 }
 
 /**
@@ -163,10 +140,6 @@ function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined)
 	if (isPerReviewerFormat(userReviewCycles)) {
 		// Per-reviewer format - merge each reviewer with defaults
 		return {
-			specReviewer: {
-				cheap: userReviewCycles.specReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
-				expensive: userReviewCycles.specReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
-			},
 			planReviewer: {
 				cheap: userReviewCycles.planReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
 				expensive: userReviewCycles.planReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
@@ -175,14 +148,6 @@ function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined)
 				cheap: userReviewCycles.codeReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
 				expensive: userReviewCycles.codeReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
 			},
-			roadmapReviewer: {
-				cheap: userReviewCycles.roadmapReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
-				expensive: userReviewCycles.roadmapReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
-			},
-			epicReviewer: {
-				cheap: userReviewCycles.epicReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
-				expensive: userReviewCycles.epicReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
-			},
 		};
 	}
 	
@@ -190,11 +155,8 @@ function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined)
 	const globalCheap = userReviewCycles.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap;
 	const globalExpensive = userReviewCycles.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive;
 	return {
-		specReviewer: { cheap: globalCheap, expensive: globalExpensive },
 		planReviewer: { cheap: globalCheap, expensive: globalExpensive },
 		codeReviewer: { cheap: globalCheap, expensive: globalExpensive },
-		roadmapReviewer: { cheap: globalCheap, expensive: globalExpensive },
-		epicReviewer: { cheap: globalCheap, expensive: globalExpensive },
 	};
 }
 
@@ -213,21 +175,12 @@ function mergeWithDefaults(
 	// Build complete models config by merging user values with defaults
 	// Note: commitMessageWriter from userModels is intentionally not used (R5a)
 	const models: ProjectConfig["models"] = {
-		discoveryAgent: userModels?.discoveryAgent ?? DEFAULT_MODEL_CONFIGS.discoveryAgent,
-		specDrafter: userModels?.specDrafter ?? DEFAULT_MODEL_CONFIGS.specDrafter,
-		specReviewer: userModels?.specReviewer ?? DEFAULT_TIERED_CONFIGS.specReviewer,
 		planDrafter: userModels?.planDrafter ?? DEFAULT_MODEL_CONFIGS.planDrafter,
 		planReviewer: userModels?.planReviewer ?? DEFAULT_TIERED_CONFIGS.planReviewer,
 		implementer: userModels?.implementer ?? DEFAULT_MODEL_CONFIGS.implementer,
 		codeReviewer: userModels?.codeReviewer ?? DEFAULT_TIERED_CONFIGS.codeReviewer,
 		addressReview: userModels?.addressReview ?? DEFAULT_MODEL_CONFIGS.addressReview,
 		agentCommitMessageWriter: userModels?.agentCommitMessageWriter ?? DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
-		// Hierarchy roles
-		scopingAgent: userModels?.scopingAgent ?? DEFAULT_MODEL_CONFIGS.scopingAgent,
-		roadmapDrafter: userModels?.roadmapDrafter ?? DEFAULT_MODEL_CONFIGS.roadmapDrafter,
-		roadmapReviewer: userModels?.roadmapReviewer ?? DEFAULT_TIERED_CONFIGS.roadmapReviewer,
-		epicDrafter: userModels?.epicDrafter ?? DEFAULT_MODEL_CONFIGS.epicDrafter,
-		epicReviewer: userModels?.epicReviewer ?? DEFAULT_TIERED_CONFIGS.epicReviewer,
 	};
 	
 	// Normalize review cycles to per-reviewer format
@@ -588,13 +541,6 @@ function buildProjectConfig(
 		projectContext += `\n## Spec Conventions (from ${conventions.path})\n\nFollow these conventions when writing specs:\n\n\`\`\`\n${truncatedConventions}\n\`\`\`\n`;
 	}
 
-	// Discovery configuration with defaults
-	const discoveryConfig = {
-		enabled: config.discovery?.enabled ?? true,
-		maxRounds: config.discovery?.maxRounds ?? 5,
-		questionsPerRound: config.discovery?.questionsPerRound ?? 4,
-	};
-
 	// Merge model configs with defaults (R3, R5)
 	// Note: commitMessageWriter in config.models is silently ignored (R5a)
 	const { models, reviewCycles } = mergeWithDefaults(
@@ -615,7 +561,6 @@ function buildProjectConfig(
 		specConventions: conventions.content,
 		specConventionsPath: conventions.path,
 		specFormat,
-		discovery: discoveryConfig,
 		models,
 		reviewCycles,
 		skipPlanGeneration,

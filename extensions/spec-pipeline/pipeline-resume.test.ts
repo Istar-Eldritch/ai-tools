@@ -32,7 +32,6 @@ describe("Spec Pipeline Resume After Cancellation", () => {
 				"2602051400",
 				"test_feature",
 				"docs",
-				{ enabled: false, maxRounds: 5, questionsPerRound: 3 },
 				true
 			);
 			
@@ -74,7 +73,6 @@ describe("Spec Pipeline Resume After Cancellation", () => {
 				"2602051400",
 				"test_feature",
 				"docs",
-				{ enabled: false, maxRounds: 5, questionsPerRound: 3 },
 				true
 			);
 			
@@ -118,7 +116,6 @@ describe("Spec Pipeline Resume After Cancellation", () => {
 				"2602051400",
 				"test_feature",
 				"docs",
-				{ enabled: false, maxRounds: 5, questionsPerRound: 3 },
 				true
 			);
 			
@@ -159,7 +156,6 @@ describe("Spec Pipeline Resume After Cancellation", () => {
 				"2602051400",
 				"test_feature",
 				"docs",
-				{ enabled: false, maxRounds: 5, questionsPerRound: 3 },
 				true
 			);
 			
@@ -203,7 +199,6 @@ describe("Spec Pipeline Resume After Cancellation", () => {
 				"2602051400",
 				"test_feature",
 				"docs",
-				{ enabled: true, maxRounds: 5, questionsPerRound: 3 },
 				true
 			);
 			
