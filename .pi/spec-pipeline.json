@@ -1,24 +1,16 @@
 {
-  "specsDir": "./docs/",
-  "testCommand": null,
-  "contextFiles": [
-    "README.md"
-  ],
+  "specsDir": "docs",
+  "testCommand": "npm test",
+  "contextFiles": ["README.md"],
   "models": {
-    "planDrafter": { "model": "opus", "thinking": "high" },
-    "planReviewer": {
-      "cheap": { "model": "sonnet", "thinking": "off" },
-      "expensive": { "model": "opus", "thinking": "off" }
-    },
     "implementer": { "model": "opus", "thinking": "low" },
     "codeReviewer": {
       "cheap": { "model": "sonnet", "thinking": "low" },
       "expensive": { "model": "opus", "thinking": "low" }
-    },
-    "addressReview": { "model": "opus", "thinking": "off" }
+    }
   },
   "reviewCycles": {
     "planReviewer": { "cheap": 0, "expensive": 0 },
-    "codeReviewer": { "cheap": 5, "expensive": 0 }
+    "codeReviewer": { "cheap": 3, "expensive": 0 }
   }
 }
