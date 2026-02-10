@@ -633,9 +633,9 @@ The pipeline tracks detailed metrics for optimization:
     "specReviewCycles": { "cheap": 2, "expensive": 1 },
     "agentCalls": [
       {
-        "role": "discoveryAgent",
-        "model": "sonnet",
-        "thinking": "medium",
+        "role": "planDrafter",
+        "model": "opus",
+        "thinking": "high",
         "startTime": "2026-02-10T10:00:00Z",
         "endTime": "2026-02-10T10:15:00Z",
         "durationMs": 900000,

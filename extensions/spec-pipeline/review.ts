@@ -598,7 +598,7 @@ export async function retryFailedOperation(
 		modelConfig = { model: "haiku", thinking: "off" };
 	} else {
 		// Non-tiered roles: use their direct config
-		const nonTieredRole = error.role as keyof Pick<typeof projectConfig.models, "discoveryAgent" | "specDrafter" | "planDrafter" | "implementer" | "addressReview">;
+		const nonTieredRole = error.role as keyof Pick<typeof projectConfig.models, "planDrafter" | "implementer" | "addressReview">;
 		modelConfig = projectConfig.models[nonTieredRole];
 	}
 	

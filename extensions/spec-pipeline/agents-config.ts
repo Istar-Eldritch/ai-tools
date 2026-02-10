@@ -55,6 +55,10 @@ export interface SystemPromptOptions {
 /**
  * Generate system prompts with project-specific context.
  * 
+ * Note: Some prompts (specDrafter, discoveryAgent) are used in conversational
+ * contexts via pi's main conversation, not via agent invocation. They remain
+ * here for reference and potential future use.
+ * 
  * When specTemplate is provided, the specDrafter uses the project's template
  * structure instead of the hardcoded default. When specConventions is provided,
  * both specDrafter and specReviewer reference them.

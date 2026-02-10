@@ -861,7 +861,8 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		), "success");
 
 		// Create git commit scoped to the spec file only (dirty tree is OK for doc pipelines)
-		const specDrafterConfig = projectConfig.models.specDrafter;
+		// Conversational roles use hardcoded config (not user-configurable)
+		const conversationalModelConfig = { model: "opus" as const, thinking: "high" as const };
 		
 		// Extract doc name from filename for better commit messages
 		const { extractDocName } = await import("./commit-agent.ts");
@@ -869,7 +870,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		
 		const commitResult = await createAgentCommit(
 			cwd, state,
-			{ role: "specDrafter", modelConfig: specDrafterConfig, docName },
+			{ role: "specDrafter", modelConfig: conversationalModelConfig, docName },
 			projectConfig.models.agentCommitMessageWriter,
 			() => saveSpecState(cwd, state),
 			ctx.ui.notify.bind(ctx.ui),
@@ -991,8 +992,9 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		), "success");
 
 		// Create git commit scoped to the doc file only (dirty tree is OK for doc pipelines)
+		// Conversational roles use hardcoded config (not user-configurable)
+		const conversationalModelConfig = { model: "opus" as const, thinking: "high" as const };
 		const drafterRole = level === "roadmap" ? "roadmapDrafter" : "epicDrafter";
-		const drafterConfig = level === "roadmap" ? projectConfig.models.roadmapDrafter : projectConfig.models.epicDrafter;
 		
 		// Extract doc name from filename for better commit messages
 		const { extractDocName } = await import("./commit-agent.ts");
@@ -1000,7 +1002,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		
 		const commitResult = await createAgentCommit(
 			cwd, state,
-			{ role: drafterRole as any, modelConfig: drafterConfig, docName },
+			{ role: drafterRole, modelConfig: conversationalModelConfig, docName },
 			projectConfig.models.agentCommitMessageWriter,
 			() => {
 				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
