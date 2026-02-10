@@ -12,11 +12,148 @@ import type {
 	AgentResult,
 	AgentOutputEvent,
 	ToolEventData,
+	PipelineUIContext,
+	ImplementationState,
+	SpecState,
 } from "./types.ts";
 import { AGENTS, MODEL_IDENTIFIERS, READ_ONLY_ROLES, WRITE_ROLES } from "./types.ts";
+import { updateImplWidget, updateSpecWidget } from "./formatting.ts";
 
 // Re-export the AGENTS constant for legacy usage
 export { AGENTS };
+
+// ============================================
+// Progress Display Constants
+// ============================================
+
+/**
+ * Emoji mapping for tool operations (R6)
+ * Used by progress callbacks to format user-friendly notifications
+ */
+const TOOL_EMOJI: Record<string, string> = {
+	read: "📖",
+	write: "✍️",
+	edit: "✏️",
+	bash: "⚙️",
+	grep: "🔍",
+	find: "🔎",
+};
+
+/**
+ * Default emoji for unknown tool types
+ */
+const DEFAULT_TOOL_EMOJI = "🔧";
+
+// ============================================
+// Progress Callback Factory
+// ============================================
+
+/**
+ * Create a progress callback for agent execution (R5-R21)
+ * 
+ * The callback formats tool invocations into user-friendly messages and
+ * updates both notifications and the pipeline widget in real-time.
+ * 
+ * @param ctx - UI context with notify and setWidget functions
+ * @param state - Current implementation or spec state (for widget updates)
+ * @param phaseInfo - Human-readable phase context (e.g., "Phase 2/3", "Review Cycle 1")
+ * @param isImplPipeline - True for implementation widget, false for spec widget
+ * @returns Callback function that handles AgentOutputEvent
+ * 
+ * @example
+ * ```typescript
+ * const callback = createProgressCallback(
+ *   ctx,
+ *   state,
+ *   "Phase 2/3",
+ *   true
+ * );
+ * await runAgentWithConfig(
+ *   config, task, cwd, systemPrompt,
+ *   undefined, callback, "implementer"
+ * );
+ * ```
+ */
+export function createProgressCallback(
+	ctx: PipelineUIContext,
+	state: ImplementationState | SpecState,
+	phaseInfo: string,
+	isImplPipeline: boolean = true
+): (event: AgentOutputEvent) => void {
+	return (event: AgentOutputEvent) => {
+		// Handle legacy text deltas (ignore for progress display)
+		if (typeof event === "string") {
+			return;
+		}
+		
+		// Handle structured text events (ignore for progress display)
+		if (event.type === "text") {
+			return;
+		}
+		
+		// Handle tool invocation events (R2, R3, R4)
+		if (event.type === "tool") {
+			const emoji = TOOL_EMOJI[event.name] || DEFAULT_TOOL_EMOJI;
+			let message = "";
+			
+			// Format message based on tool type (R7)
+			if (event.name === "read" && event.arguments?.path) {
+				// Read: show file path (R7)
+				const path = formatPath(event.arguments.path);
+				message = `${emoji} Reading ${path}`;
+			} else if (event.name === "write" && event.arguments?.path) {
+				// Write: show file path (R7)
+				const path = formatPath(event.arguments.path);
+				message = `${emoji} Creating ${path}`;
+			} else if (event.name === "edit" && event.arguments?.path) {
+				// Edit: show file path (R7)
+				const path = formatPath(event.arguments.path);
+				message = `${emoji} Editing ${path}`;
+			} else if (event.name === "bash" && event.arguments?.command) {
+				// Bash: show truncated command (R7, R9)
+				const cmd = event.arguments.command;
+				const truncated = cmd.length > 60 ? cmd.slice(0, 60) + "..." : cmd;
+				message = `${emoji} Running: ${truncated}`;
+			} else if (event.name === "grep" && event.arguments?.pattern) {
+				// Grep: show pattern and optional path (R7)
+				const pattern = event.arguments.pattern;
+				const pathPart = event.arguments.path ? ` in ${formatPath(event.arguments.path)}` : "";
+				message = `${emoji} Searching ${pattern}${pathPart}`;
+			} else if (event.name === "find" && event.arguments?.pattern) {
+				// Find: show pattern (R7)
+				const pattern = event.arguments.pattern;
+				message = `${emoji} Finding ${pattern}`;
+			}
+			
+			// If we successfully formatted a message, send notifications (R10, R11)
+			if (message) {
+				// Add phase context (R21)
+				const contextualMessage = `${message} [${phaseInfo}]`;
+				
+				// Send notification (R10, R11)
+				ctx.ui.notify(contextualMessage, "info");
+				
+				// Update widget with current action (R13, R14, R15)
+				if (isImplPipeline) {
+					updateImplWidget(ctx as any, state as ImplementationState, contextualMessage);
+				} else {
+					updateSpecWidget(ctx as any, state as SpecState, contextualMessage);
+				}
+			}
+		}
+	};
+}
+
+/**
+ * Format file path for display (R8)
+ * Strips leading ./ and returns relative path
+ */
+function formatPath(path: string): string {
+	if (path.startsWith("./")) {
+		return path.slice(2);
+	}
+	return path;
+}
 
 /**
  * Run a pi subprocess with explicit model configuration
