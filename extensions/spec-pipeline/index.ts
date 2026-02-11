@@ -3500,11 +3500,22 @@ You MUST include ALL relevant context in the task.`,
 				ctx.cwd,
 				SYSTEM_PROMPTS[params.role as keyof typeof SYSTEM_PROMPTS],
 				signal,
-				(text) => {
-					onUpdate?.({
-						content: [{ type: "text", text }],
-						details: {},
-					});
+				(event) => {
+					// Handle different event types from Phase 1 changes
+					let text = "";
+					if (typeof event === "string") {
+						text = event;
+					} else if (event.type === "text") {
+						text = event.delta;
+					}
+					// Ignore tool events for now (Phase 2 handles these with createProgressCallback)
+					
+					if (text) {
+						onUpdate?.({
+							content: [{ type: "text", text }],
+							details: {},
+						});
+					}
 				},
 				params.role
 			);

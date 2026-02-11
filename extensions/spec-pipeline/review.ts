@@ -11,6 +11,7 @@ import type {
 	ImplementationState,
 	HierarchyState,
 	ModelConfig,
+	AgentOutputEvent,
 } from "./types.ts";
 import { runAgentWithConfig } from "./agents.ts";
 import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
@@ -123,7 +124,7 @@ export interface TieredReviewContext {
 	/** UI notification callback */
 	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
 	/** Output stream callback (optional - if not provided, output is not streamed) */
-	onOutput?: (text: string) => void;
+	onOutput?: (event: AgentOutputEvent) => void;
 	/** Optional abort signal for cancellation support */
 	signal?: AbortSignal;
 }
