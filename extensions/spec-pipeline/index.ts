@@ -17,8 +17,11 @@
  *   5. User reviews and approves the document
  *
  * IMPLEMENTATION (/implement):
- *   1. Takes a spec file path as input
- *   2. For each implementation phase (plan + implement interleaved):
+ *   1. Takes EITHER a spec file path OR a description as input
+ *      - File path: Reads spec and starts implementation
+ *      - Description: Enters discovery mode → writes summary → starts implementation
+ *   2. Discovery (if using description): Conversational — LLM proposes assumptions
+ *   3. For each implementation phase (plan + implement interleaved):
  *      - Plan Drafting: Opus drafts implementation plan
  *      - Plan Review: Tiered review (Sonnet → Opus)
  *      - Implementation: Opus implements according to plan
@@ -55,8 +58,9 @@
  *   /spec-list                                      # List spec pipelines
  *   /spec-cancel                                    # Cancel spec pipeline
  *
- *   /implement <spec-path>                          # Start implementation
- *   /implement --no-plan <spec-path>                # Skip plan generation
+ *   /implement <spec-path|description>              # Start implementation (file or discovery)
+ *   /implement --no-plan <spec-path|description>    # Skip plan generation
+ *   /implement --no-review <spec-path|description>  # Skip reviews
  *   /implement-resume                               # Resume implementation
  *   /implement-status                               # Show implementation status
  *   /implement-list                                 # List implementations

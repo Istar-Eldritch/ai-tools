@@ -51,6 +51,17 @@ The spec pipeline automates the complete software development lifecycle with a q
 # Goes straight to drafting mode
 ```
 
+### Discovery-to-Implementation (Fast Path)
+
+```bash
+# Skip formal spec creation - go straight from discovery to code
+/implement "Add rate limiting middleware"
+# AI explores codebase and proposes assumptions
+# You confirm or correct naturally
+# When ready, type /discovery-done
+# AI writes discovery summary and starts implementation
+```
+
 ### Hierarchical Planning
 
 ```bash
@@ -93,7 +104,7 @@ The spec pipeline automates the complete software development lifecycle with a q
 
 | Command | Description |
 |---------|-------------|
-| `/implement [--no-plan] <spec-path>` | Start implementing a spec (plan + code each phase) |
+| `/implement [--no-plan] [--no-review] <spec-path\|description>` | Start implementation from file or discovery mode |
 | `/implement-resume` | Resume the last active implementation |
 | `/implement-status` | Show current implementation status |
 | `/implement-list` | List all implementations with their status |
@@ -207,9 +218,66 @@ AI: Perfect! Type /spec-draft-done to proceed to approval.
 
 After `/spec-draft-done`, you'll be asked to approve or request revisions.
 
+### Discovery-to-Implementation (Fast Path)
+
+For small-to-medium changes where a full formal spec is overkill, use `/implement` with a description instead of a file path:
+
+```bash
+/implement "Add rate limiting to the API"
+```
+
+This enters the same conversational discovery mode as `/spec`, but proceeds directly to implementation instead of spec drafting:
+
+1. **Discovery conversation** - AI explores codebase, proposes assumptions
+2. **Type `/discovery-done`** - When ready to proceed
+3. **Summary written** - AI writes discovery summary to `specsDir/{timestamp}_discovery_{shortname}.md`
+4. **Implementation starts** - AI plans and implements phases (same as normal `/implement`)
+
+**Example interaction:**
+```
+User: /implement "Add rate limiting to the API"
+
+AI: I'm exploring your API routes... I see you're using Express with middleware
+    in src/middleware/. 
+    
+    Assumption: We should create a rate-limit middleware using the 'express-rate-limit'
+    package and apply it globally to all routes. Does that match your vision?
+
+User: Yes, but only apply it to public routes, not admin routes
+
+AI: Got it - public routes only. I see your route definitions in src/routes/...
+    Should the rate limit be 100 requests per 15 minutes per IP?
+
+User: Make it 50 per 10 minutes
+
+AI: Perfect. I have enough context. Type /discovery-done to proceed to implementation.
+
+User: /discovery-done
+
+[AI writes summary to docs/2602111400_discovery_rate_limiting_api.md]
+[Implementation pipeline starts - planning and coding phases]
+```
+
+**Flags work the same:**
+```bash
+/implement --no-plan "Fix null pointer in auth service"
+/implement --no-review "Add logging to user endpoints"
+/implement --no-plan --no-review "Quick bug fix"
+```
+
+**When to use:**
+- Small bug fixes that need codebase exploration
+- Medium features where formal spec is overkill
+- When you want to iterate quickly with AI before committing to a spec
+
+**When NOT to use:**
+- Large features (use `/spec` or `/plan` → `/epic` → `/spec`)
+- When you need stakeholder review of requirements
+- When the spec will be referenced by multiple implementations
+
 ### Implementation Stage
 
-The AI implements the spec with interleaved planning, coding, and review:
+The AI implements the spec (or discovery summary) with interleaved planning, coding, and review:
 
 **For each phase:**
 1. **Plan Drafting** - AI drafts implementation plan
@@ -249,6 +317,29 @@ main
      ├─ Phase 2 commit: Authentication service
      └─ Phase 3 commit: Integration tests
 ```
+
+**Discovery-to-implementation branches:**
+```
+main
+ └─ spec/2602111400-rate-limiting-impl-2602111405  [Implementation branch]
+     ├─ docs/2602111400_discovery_rate_limiting.md  [Discovery summary]
+     ├─ Phase 1 commit: Rate limiting middleware
+     └─ Phase 2 commit: Integration tests
+```
+
+Discovery summaries are committed on the implementation branch, not a separate spec branch.
+
+### Choosing Your Workflow
+
+| Workflow | Use When | Result |
+|----------|----------|--------|
+| `/spec` → `/implement` | Large features, need formal spec, stakeholder review | Full spec document → implementation |
+| `/spec --quick` → `/implement` | Medium features, skip discovery, want spec doc | Spec document (no discovery) → implementation |
+| `/implement <description>` | Small-medium changes, need discovery, no spec doc needed | Discovery summary → direct implementation |
+| `/implement --no-plan <description>` | Simple changes, need discovery, skip planning | Discovery summary → direct coding |
+| `/implement <file>` | Spec already exists | Implement existing spec |
+
+**Tip:** The discovery experience is identical across `/spec` and `/implement` - the only difference is what happens after `/discovery-done`.
 
 ## Configuration
 
@@ -432,9 +523,13 @@ $ /spec "Add password reset feature"
 
 ### ⚠️ Requires Clean Tree
 
-- `/implement` and `/implement-resume`
+- `/implement` with a **file path** - checked at invocation
+- `/implement` with a **description** - checked at `/discovery-done` (deferred)
+- `/implement-resume` - checked at resume time
 
 Implementation requires a clean tree because it uses destructive git operations (`git add -A`, `git reset --hard`) during error recovery.
+
+**Note:** When using `/implement <description>`, the git clean check happens at `/discovery-done` time (not at `/implement` invocation). This allows you to chat naturally during discovery, then commit/stash changes before proceeding.
 
 **Why?** To prevent accidental data loss during error recovery.
 
@@ -856,10 +951,20 @@ git commit -m "WIP: Preparing for implementation"
 
 ### "Dirty tree not allowed for implementation"
 
-**Problem:** Trying to run `/implement` with uncommitted changes.
+**Problem:** Trying to proceed with implementation when you have uncommitted changes.
 
-**Solution:** Commit or stash changes first:
+**When it happens:**
+- Running `/implement <file-path>` with dirty tree (checked immediately)
+- Running `/discovery-done` during implement-discovery with dirty tree (deferred check)
+
+**Solution:** Commit or stash changes before proceeding:
 ```bash
+# If you see the error during /discovery-done:
+# Your discovery session remains active - just clean up and retry
+git stash
+/discovery-done  # Discovery session continues from where it was
+
+# OR if you see it at /implement invocation with a file:
 git stash
 /implement specs/my-spec.md
 ```
