@@ -238,8 +238,8 @@ export default function (pi: ExtensionAPI) {
 	/** The pipeline state for the active conversational session (spec or hierarchy) */
 	let activePipelineState: ConversationalPipelineState | null = null;
 
-	/** Which kind of pipeline is active: "spec" or "hierarchy" */
-	let activePipelineKind: "spec" | "hierarchy" | null = null;
+	/** Which kind of pipeline is active: "spec", "hierarchy", or "implement" */
+	let activePipelineKind: "spec" | "hierarchy" | "implement" | null = null;
 
 	/** Hierarchy level when activePipelineKind === "hierarchy" */
 	let activeHierarchyLevel: HierarchyLevel | null = null;
@@ -363,10 +363,25 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
-	 * Build the discovery system prompt injection for before_agent_start.
-	 * This turns the host LLM into a discovery agent.
+	 * Build the unified discovery system prompt injection for before_agent_start.
+	 * This turns the host LLM into a discovery agent for any pipeline type.
+	 * 
+	 * @param state - The conversational pipeline state (spec, hierarchy, or implement)
+	 * @param projectConfig - The project configuration
+	 * @param doneCommand - Command to tell user (e.g., "/discovery-done")
+	 * @param sessionLabel - Label for the session type (e.g., "Spec", "Implementation", "Roadmap")
+	 * @param nextStep - What happens after discovery (e.g., "proceed to spec drafting", "proceed to implementation")
+	 * @param parentContext - Optional parent context for hierarchy pipelines
+	 * @returns The discovery system prompt injection string
 	 */
-	function buildDiscoveryPromptInjection(state: SpecState, projectConfig: ProjectConfig): string {
+	function buildUnifiedDiscoveryPrompt(
+		state: ConversationalPipelineState,
+		projectConfig: ProjectConfig,
+		doneCommand: string,
+		sessionLabel: string,
+		nextStep: string,
+		parentContext?: string
+	): string {
 		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 		const discoveryPrompt = SYSTEM_PROMPTS.discoveryAgent;
 
@@ -380,18 +395,22 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const scopingSection = state.discovery?.discoverySummary
-			? `\n\n## Prior Scoping Context\n\nThe following context was gathered during a scoping assessment before this discovery session:\n\n${state.discovery.discoverySummary}\n`
+			? `\n\n## Prior Context\n\nThe following context was gathered before this discovery session:\n\n${state.discovery.discoverySummary}\n`
+			: "";
+
+		const parentSection = parentContext
+			? `\n\n## Parent Context\n\n${parentContext}\n`
 			: "";
 
 		return `
 ${discoveryPrompt}
 
-## Active Discovery Session
+## Active ${sessionLabel} Discovery Session
 
-You are currently conducting a discovery session for this feature:
+You are currently conducting a discovery session for:
 
 ${state.description}
-${scopingSection}${conversationContext}
+${scopingSection}${parentSection}${conversationContext}
 
 ## Instructions
 
@@ -399,8 +418,8 @@ ${scopingSection}${conversationContext}
 - Reference specific files and patterns you find
 - Present ONE assumption at a time — propose the most likely solution, explain your reasoning, and ask the user to confirm or correct
 - The user will respond naturally — adapt based on their feedback and move to the next topic
-- When you feel you have enough context, tell the user they can type /spec-done to proceed to spec drafting
-${state.discovery?.discoverySummary ? "- Scoping context is available above — factor it in but don't skip exploring the codebase" : ""}
+- When you feel you have enough context, tell the user they can type ${doneCommand} to ${nextStep}
+${state.discovery?.discoverySummary ? "- Prior context is available above — factor it in but don't skip exploring the codebase" : ""}
 
 IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only propose assumptions and explore the codebase.
 `;
@@ -540,61 +559,6 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 	}
 
 	/**
-	 * Build the discovery system prompt injection for hierarchy pipelines (roadmap/epic).
-	 * Similar to spec discovery but adapted for hierarchy-level exploration.
-	 */
-	function buildHierarchyDiscoveryPromptInjection(
-		state: HierarchyState,
-		level: HierarchyLevel,
-		projectConfig: ProjectConfig,
-		parentContext?: string
-	): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
-		const discoveryPrompt = SYSTEM_PROMPTS.discoveryAgent;
-
-		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
-
-		let conversationContext = "";
-		if (state.discovery?.conversationHistory && state.discovery.conversationHistory.length > 0) {
-			conversationContext = "\n\n## Previous Discovery Exchanges\n\n";
-			for (const exchange of state.discovery.conversationHistory) {
-				conversationContext += `**User**: ${exchange.userMessage}\n\n`;
-				conversationContext += `**You**: ${exchange.assistantResponse}\n\n---\n\n`;
-			}
-		}
-
-		const parentSection = parentContext
-			? `\n\n## Parent Context\n\n${parentContext}\n`
-			: "";
-
-		return `
-${discoveryPrompt}
-
-## Active ${levelLabel} Discovery Session
-
-You are conducting a discovery session for this ${level}:
-
-${state.description}
-${parentSection}${conversationContext}
-
-## Instructions
-
-- Explore the codebase using read, bash, grep, find, ls tools to understand the project
-- Reference specific files and patterns you find
-- Present ONE assumption at a time — propose the most likely approach, explain your reasoning, and ask the user to confirm or correct
-- Focus on understanding:
-  - The scope of the initiative and its boundaries
-  - Key deliverables and how they decompose
-  - Dependencies between workstreams
-  - Critical constraints or limitations
-- The user will respond naturally — adapt based on their feedback and move to the next topic
-- When you feel you have enough context, tell the user they can type /discovery-done to proceed
-
-IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or documents. Only propose assumptions and explore the codebase.
-`;
-	}
-
-	/**
 	 * Build the drafting system prompt injection for hierarchy pipelines (roadmap/epic).
 	 * This turns the host LLM into a roadmap/epic drafter.
 	 */
@@ -687,7 +651,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 
 		if (!activePipelineState) return;
 
-		const doneCmd = activePipelineKind === "spec" ? "/spec-done" : "/discovery-done";
+		const doneCmd = "/discovery-done";  // Unified for all pipeline types
 		const draftDoneCmd = activePipelineKind === "spec" ? "/spec-draft-done" : "/draft-done";
 		const kindLabel = activePipelineKind === "hierarchy" && activeHierarchyLevel
 			? activeHierarchyLevel.charAt(0).toUpperCase() + activeHierarchyLevel.slice(1)
@@ -1097,16 +1061,28 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			customType = "spec-scoping-context";
 			contextLabel = `[SCOPING MODE ACTIVE - Assessing scope for: ${activeScopingState.description}]`;
 		} else if (pipelineMode === "discovery" && activePipelineState) {
+			let sessionLabel = "Spec";
+			let nextStep = "proceed to spec drafting";
+			
 			if (activePipelineKind === "spec") {
-				injection = buildDiscoveryPromptInjection(activePipelineState as SpecState, activeProjectConfig);
-			} else {
-				injection = buildHierarchyDiscoveryPromptInjection(
-					activePipelineState as HierarchyState,
-					activeHierarchyLevel!,
-					activeProjectConfig,
-					activeParentContext
-				);
+				sessionLabel = "Spec";
+				nextStep = "proceed to spec drafting";
+			} else if (activePipelineKind === "hierarchy") {
+				sessionLabel = activeHierarchyLevel!.charAt(0).toUpperCase() + activeHierarchyLevel!.slice(1);
+				nextStep = `proceed to ${activeHierarchyLevel} drafting`;
+			} else if (activePipelineKind === "implement") {
+				sessionLabel = "Implementation";
+				nextStep = "proceed to implementation";
 			}
+			
+			injection = buildUnifiedDiscoveryPrompt(
+				activePipelineState,
+				activeProjectConfig,
+				"/discovery-done",
+				sessionLabel,
+				nextStep,
+				activeParentContext
+			);
 			customType = "spec-discovery-context";
 			contextLabel = `[DISCOVERY MODE ACTIVE - Exploring requirements for: ${activePipelineState.description}]`;
 		} else if (pipelineMode === "drafting" && activePipelineState) {
@@ -1240,26 +1216,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	// SPEC CREATION COMMANDS
 	// ============================================
 
-	pi.registerCommand("spec-done", {
-		description: "End spec discovery and proceed to spec drafting",
-		handler: async (_args, ctx) => {
-			if (pipelineMode !== "discovery" || activePipelineKind !== "spec") {
-				ctx.ui.notify("No active spec discovery session. Use /spec to start one.", "error");
-				return;
-			}
-
-			if (exchangeCount === 0) {
-				const proceed = await ctx.ui.confirm(
-					"No Discovery Exchanges",
-					"No conversation exchanges recorded yet. Proceed to spec drafting anyway?"
-				);
-				if (!proceed) return;
-			}
-
-			await endDiscoveryAndStartDrafting(ctx);
-		},
-	});
-
 	pi.registerCommand("spec-draft-done", {
 		description: "End spec drafting and proceed to approval",
 		handler: async (_args, ctx) => {
@@ -1273,16 +1229,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	});
 
 	pi.registerCommand("discovery-done", {
-		description: "End hierarchy discovery and proceed to drafting",
+		description: "End discovery and proceed to next phase (spec drafting, hierarchy drafting, or implementation)",
 		handler: async (_args, ctx) => {
-			if (pipelineMode !== "discovery" || activePipelineKind !== "hierarchy") {
-				ctx.ui.notify("No active hierarchy discovery session. Use /roadmap or /epic to start one.", "error");
-				return;
-			}
-
-			const state = getActiveHierarchyState();
-			if (!state || !activeCwd || !activeProjectConfig) {
-				ctx.ui.notify("No active hierarchy discovery session.", "error");
+			if (pipelineMode !== "discovery" || !activePipelineKind || !activePipelineState || !activeCwd || !activeProjectConfig) {
+				ctx.ui.notify("No active discovery session.", "error");
 				return;
 			}
 
@@ -1294,59 +1244,76 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				if (!proceed) return;
 			}
 
-			// Build the discovery summary from conversation history
-			if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
-				state.discovery.discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+			// Dispatch based on pipeline kind
+			if (activePipelineKind === "spec") {
+				// Absorb /spec-done logic
+				await endDiscoveryAndStartDrafting(ctx);
+			} else if (activePipelineKind === "hierarchy") {
+				// Existing hierarchy logic
+				const state = getActiveHierarchyState();
+				if (!state) {
+					ctx.ui.notify("No active hierarchy discovery session.", "error");
+					return;
+				}
+
+				// Build the discovery summary from conversation history
+				if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
+					state.discovery.discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+				}
+
+				state.discovery!.completed = true;
+				const discoveryExchanges = exchangeCount;
+
+				const level = activeHierarchyLevel!;
+				const cwd = activeCwd;
+				const projectConfig = activeProjectConfig;
+				const parentContext = activeParentContext;
+				const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
+
+				ctx.ui.notify(formatStepBanner(
+					"DISCOVERY COMPLETE",
+					`${discoveryExchanges} exchanges recorded. Entering ${level} drafting mode...`,
+					"✅"
+				), "success");
+
+				// Initialize drafting state and transition to drafting mode
+				state.drafting = {
+					conversationHistory: [],
+					completed: false,
+				};
+				state.stage = "drafting";
+				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+				else saveEpicState(cwd, state as EpicState);
+
+				// Enter hierarchy drafting mode
+				enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
+				updateModeWidget(ctx);
+
+				ctx.ui.notify(formatStepBanner(
+					`${levelLabel.toUpperCase()} DRAFTING MODE`,
+					`The LLM will draft the ${level} document. Guide it conversationally.`,
+					"📝"
+				), "info");
+				ctx.ui.notify(`Document will be written to: ${state.docPath}`, "info");
+				ctx.ui.notify("When satisfied, type /draft-done to proceed to approval.", "info");
+
+				// Send the kickoff message
+				const fullDocPath = path.join(cwd, state.docPath);
+				const discoveryContext = state.discovery?.discoverySummary
+					? `\n\nHere is the context gathered during discovery:\n\n${state.discovery.discoverySummary}`
+					: "";
+
+				pi.sendUserMessage(
+					`Please create a ${level} document for: ${state.description}${discoveryContext}\n\n` +
+					`Write the document to this exact path: ${fullDocPath}\n` +
+					`Use document timestamp: ${state.docTimestamp}\n\n` +
+					`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`
+				);
+			} else if (activePipelineKind === "implement") {
+				// Placeholder for Phase 2 - implement discovery → implementation transition
+				ctx.ui.notify("Implement discovery completion will be added in Phase 2.", "info");
+				exitMode();
 			}
-
-			state.discovery!.completed = true;
-			const discoveryExchanges = exchangeCount;
-
-			const level = activeHierarchyLevel!;
-			const cwd = activeCwd;
-			const projectConfig = activeProjectConfig;
-			const parentContext = activeParentContext;
-			const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
-
-			ctx.ui.notify(formatStepBanner(
-				"DISCOVERY COMPLETE",
-				`${discoveryExchanges} exchanges recorded. Entering ${level} drafting mode...`,
-				"✅"
-			), "success");
-
-			// Initialize drafting state and transition to drafting mode
-			state.drafting = {
-				conversationHistory: [],
-				completed: false,
-			};
-			state.stage = "drafting";
-			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
-			else saveEpicState(cwd, state as EpicState);
-
-			// Enter hierarchy drafting mode (stay in conversational mode — don't exit)
-			enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
-			updateModeWidget(ctx);
-
-			ctx.ui.notify(formatStepBanner(
-				`${levelLabel.toUpperCase()} DRAFTING MODE`,
-				`The LLM will draft the ${level} document. Guide it conversationally.`,
-				"📝"
-			), "info");
-			ctx.ui.notify(`Document will be written to: ${state.docPath}`, "info");
-			ctx.ui.notify("When satisfied, type /draft-done to proceed to approval.", "info");
-
-			// Send the kickoff message
-			const fullDocPath = path.join(cwd, state.docPath);
-			const discoveryContext = state.discovery?.discoverySummary
-				? `\n\nHere is the context gathered during discovery:\n\n${state.discovery.discoverySummary}`
-				: "";
-
-			pi.sendUserMessage(
-				`Please create a ${level} document for: ${state.description}${discoveryContext}\n\n` +
-				`Write the document to this exact path: ${fullDocPath}\n` +
-				`Use document timestamp: ${state.docTimestamp}\n\n` +
-				`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`
-			);
 		},
 	});
 
@@ -1479,7 +1446,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					"🔍"
 				), "info");
 				ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
-				ctx.ui.notify("When you're satisfied with the discovery, type /spec-done to proceed to spec drafting.", "info");
+				ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed to spec drafting.", "info");
 
 				// Send the initial discovery message to kick off the conversation
 				const scopingNote = scopingContext
@@ -1658,7 +1625,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					`${exchangeCount} previous exchanges. Continue chatting to refine requirements.`,
 					"🔍"
 				), "info");
-				ctx.ui.notify("Type /spec-done when ready to proceed to spec drafting.", "info");
+				ctx.ui.notify("Type /discovery-done when ready to proceed to spec drafting.", "info");
 
 				// Send a resume message to kick off the conversation
 				pi.sendUserMessage(`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`);

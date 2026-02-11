@@ -81,7 +81,7 @@ The spec pipeline automates the complete software development lifecycle with a q
 |---------|-------------|
 | `/spec [--quick] <description>` | Start spec pipeline. Enters conversational discovery, then drafting |
 | `/spec-resume` | Resume the last spec pipeline (continues from where it left off) |
-| `/discovery-done` | Exit discovery mode and move to drafting |
+| `/discovery-done` | End discovery and proceed to next phase (works for spec, hierarchy, and implement) |
 | `/spec-draft-done` or `/draft-done` | Finalize the draft and proceed to approval |
 | `/spec-status` | Show current spec pipeline status |
 | `/spec-list` | List all specs with their status |
