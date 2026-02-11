@@ -268,6 +268,15 @@ export default function (pi: ExtensionAPI) {
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
 	let pendingScopingContext: string | undefined = undefined;
 
+	/** Flags for implement-discovery sessions (--no-plan, --no-review) - ephemeral, cleared on exit */
+	let pendingImplementFlags: { noPlan: boolean; noReview: boolean } | null = null;
+
+	/** Short name for implement-discovery session - ephemeral, cleared on exit */
+	let pendingImplementShortName: string | null = null;
+
+	/** Timestamp for implement-discovery session - ephemeral, cleared on exit */
+	let pendingImplementTimestamp: string | null = null;
+
 	/** Helper to get the active state as SpecState (only valid when activePipelineKind === "spec") */
 	function getActiveSpecState(): SpecState | null {
 		return activePipelineKind === "spec" ? activePipelineState as SpecState : null;
@@ -344,6 +353,35 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
+	 * Enter discovery mode for an implement pipeline (no persistent state, just ephemeral discovery)
+	 */
+	function enterImplementDiscoveryMode(
+		cwd: string,
+		projectConfig: ProjectConfig,
+		discoveryState: ConversationalPipelineState,
+		flags: { noPlan: boolean; noReview: boolean },
+		shortName: string,
+		timestamp: string
+	): void {
+		pipelineMode = "discovery";
+		activePipelineState = discoveryState;
+		activePipelineKind = "implement";
+		activeHierarchyLevel = null;
+		activeParentContext = undefined;
+		activeStateSaveFn = null;  // No persistence for implement-discovery
+		activeCwd = cwd;
+		activeProjectConfig = projectConfig;
+		activeScopingState = null;
+		lastUserMessage = "";
+		exchangeCount = discoveryState.discovery?.conversationHistory?.length ?? 0;
+		
+		// Store flags and metadata for use at /discovery-done
+		pendingImplementFlags = flags;
+		pendingImplementShortName = shortName;
+		pendingImplementTimestamp = timestamp;
+	}
+
+	/**
 	 * Exit any conversational mode and return to idle
 	 */
 	function exitMode(): { exchangeCount: number } {
@@ -359,6 +397,10 @@ export default function (pi: ExtensionAPI) {
 		activeProjectConfig = null;
 		lastUserMessage = "";
 		exchangeCount = 0;
+		// Clear implement-discovery ephemeral state
+		pendingImplementFlags = null;
+		pendingImplementShortName = null;
+		pendingImplementTimestamp = null;
 		return result;
 	}
 
@@ -655,7 +697,9 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		const draftDoneCmd = activePipelineKind === "spec" ? "/spec-draft-done" : "/draft-done";
 		const kindLabel = activePipelineKind === "hierarchy" && activeHierarchyLevel
 			? activeHierarchyLevel.charAt(0).toUpperCase() + activeHierarchyLevel.slice(1)
-			: "Spec";
+			: activePipelineKind === "implement"
+				? "Implementation"
+				: "Spec";
 
 		if (pipelineMode === "discovery") {
 			ctx.ui.setWidget("spec-pipeline-status", [
@@ -1310,9 +1354,110 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`
 				);
 			} else if (activePipelineKind === "implement") {
-				// Placeholder for Phase 2 - implement discovery → implementation transition
-				ctx.ui.notify("Implement discovery completion will be added in Phase 2.", "info");
+				// Implement-discovery → implementation transition
+				const state = activePipelineState as ConversationalPipelineState;
+				const cwd = activeCwd;
+				const projectConfig = activeProjectConfig;
+				const flags = pendingImplementFlags!;
+				const shortName = pendingImplementShortName!;
+				const timestamp = pendingImplementTimestamp!;
+				
+				// Build discovery summary
+				let discoverySummary = "";
+				if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
+					discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+				}
+				
+				const discoveryExchanges = exchangeCount;
+				
+				ctx.ui.notify(formatStepBanner(
+					"DISCOVERY COMPLETE",
+					`${discoveryExchanges} exchanges recorded. Checking git status...`,
+					"✅"
+				), "success");
+				
+				// NOW check git clean (deferred from /implement invocation)
+				const gitClean = await checkGitClean(cwd);
+				if (!gitClean.clean) {
+					ctx.ui.notify(formatStepBanner(
+						"UNCOMMITTED CHANGES DETECTED",
+						"The implementation pipeline requires a clean working tree.",
+						"⚠️"
+					), "warning");
+					ctx.ui.notify("Uncommitted changes:\n" + gitClean.status, "warning");
+					ctx.ui.notify("\nPlease commit or stash your changes, then run /discovery-done again.", "info");
+					ctx.ui.notify("Your discovery session will remain active.", "info");
+					// Do NOT exit mode - leave discovery session active
+					return;
+				}
+				
+				// Exit discovery mode (clears all state including pendingImplementFlags)
 				exitMode();
+				clearPipelineWidget(ctx);
+				
+				ctx.ui.notify("Writing discovery summary...", "info");
+				
+				// Write discovery summary file to specsDir
+				const discoveryFilename = `${timestamp}_discovery_${shortName}.md`;
+				const discoveryPath = path.join(projectConfig.specsDir, discoveryFilename);
+				const discoveryContent = discoverySummary || `# Discovery Summary\n\n${state.description}\n\nNo discovery exchanges recorded.`;
+				
+				// Ensure specsDir exists
+				const fullSpecsDir = path.isAbsolute(projectConfig.specsDir)
+					? projectConfig.specsDir
+					: path.join(cwd, projectConfig.specsDir);
+				if (!fs.existsSync(fullSpecsDir)) {
+					fs.mkdirSync(fullSpecsDir, { recursive: true });
+				}
+				
+				const fullDiscoveryPath = path.join(cwd, discoveryPath);
+				fs.writeFileSync(fullDiscoveryPath, discoveryContent, "utf-8");
+				
+				ctx.ui.notify(`Discovery summary written to: ${discoveryPath}`, "success");
+				ctx.ui.notify(formatStepBanner(
+					"STARTING IMPLEMENTATION",
+					`From discovery file: ${discoveryPath}`,
+					"🚀"
+				), "info");
+				
+				// Create implementation state (using discovery file as "spec")
+				const implTimestamp = generateTimestamp();
+				const implState = createInitialImplState(
+					discoveryPath,
+					discoveryContent,
+					implTimestamp,
+					flags.noPlan
+				);
+				
+				// Apply --no-review flag if present (set both reviewer cycles to 0)
+				if (flags.noReview) {
+					// Note: This modifies projectConfig for this implementation only
+					projectConfig.reviewCycles.planReviewer.cheap = 0;
+					projectConfig.reviewCycles.planReviewer.expensive = 0;
+					projectConfig.reviewCycles.codeReviewer.cheap = 0;
+					projectConfig.reviewCycles.codeReviewer.expensive = 0;
+				}
+				
+				implState.checkpoints = [];
+				saveImplState(cwd, implState);
+				
+				ctx.ui.notify(formatStepBanner(
+					"IMPLEMENTATION STARTED",
+					`ID: ${implState.id}`,
+					"🚀"
+				), "info");
+				ctx.ui.notify(`Spec: ${discoveryPath}`, "info");
+				if (flags.noPlan) {
+					ctx.ui.notify("⚡ Skipping plan generation (--no-plan)", "info");
+				}
+				if (flags.noReview) {
+					ctx.ui.notify("⚡ Skipping reviews (--no-review)", "info");
+				}
+				
+				updateImplWidget(ctx, implState, "Initializing...");
+				
+				// Run implementation pipeline
+				await runImplementPipeline(implState, cwd, projectConfig, ctx);
 			}
 		},
 	});
@@ -1798,7 +1943,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	// ============================================
 
 	pi.registerCommand("implement", {
-		description: "Start implementation from a spec file. Use --no-plan to skip plan generation.",
+		description: "Start implementation from a spec file or description (enters discovery mode). Use --no-plan to skip plan generation.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -1808,122 +1953,208 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			const argsStr = args || "";
 			const noPlan = argsStr.includes("--no-plan");
 			const noReview = argsStr.includes("--no-review");
-			const specPath = argsStr
+			const argWithoutFlags = argsStr
 				.replace("--no-plan", "")
 				.replace("--no-review", "")
 				.replace(/\s+/g, " ")
 				.trim();
 			
-			if (!specPath) {
-				ctx.ui.notify("Usage: /implement [--no-plan] [--no-review] <path-to-spec-file>", "error");
+			if (!argWithoutFlags) {
+				ctx.ui.notify("Usage: /implement [--no-plan] [--no-review] <spec-file-or-description>", "error");
 				return;
 			}
 
 			const cwd = ctx.cwd;
 
-			// Validate spec file exists
-			const fullSpecPath = path.isAbsolute(specPath)
-				? specPath
-				: path.join(cwd, specPath);
-			
-			if (!fs.existsSync(fullSpecPath)) {
-				ctx.ui.notify(`Spec file not found: ${specPath}`, "error");
+			// Check if argument is a file path
+			const fullPath = path.isAbsolute(argWithoutFlags)
+				? argWithoutFlags
+				: path.join(cwd, argWithoutFlags);
+			const isFile = fs.existsSync(fullPath);
+
+			// Heuristic: if it looks like a file path but doesn't exist, show error
+			const looksLikeFilePath = argWithoutFlags.includes("/") || /\.(md|typ)$/i.test(argWithoutFlags);
+			if (looksLikeFilePath && !isFile) {
+				ctx.ui.notify(`Spec file not found: ${argWithoutFlags}`, "error");
 				return;
 			}
 
-			const specContent = fs.readFileSync(fullSpecPath, "utf-8");
-			if (!specContent.trim()) {
-				ctx.ui.notify("Spec file is empty", "error");
-				return;
-			}
-
-			// Make specPath relative to cwd
-			const relativeSpecPath = path.isAbsolute(specPath)
-				? path.relative(cwd, specPath)
-				: specPath;
-
-			// Check for existing active implementation
-			const existingPipeline = getLatestActiveImplPipeline(cwd);
-			if (existingPipeline) {
-				const resume = await ctx.ui.confirm(
-					"Active Implementation Found",
-					`There's an active implementation:\n${formatImplState(existingPipeline)}\n\nStart a NEW implementation? (No = cancel)`
-				);
-				if (!resume) {
-					ctx.ui.notify("Use /implement-resume to continue the existing implementation", "info");
+			// If it's a valid file, continue with existing implementation logic
+			if (isFile) {
+				// *** EXISTING FILE-BASED IMPLEMENTATION LOGIC CONTINUES HERE ***
+				const specPath = argWithoutFlags;
+				const fullSpecPath = fullPath;
+				const specContent = fs.readFileSync(fullSpecPath, "utf-8");
+				if (!specContent.trim()) {
+					ctx.ui.notify("Spec file is empty", "error");
 					return;
 				}
-			}
 
-			// Git validation
-			const gitValidation = await validateGitRepo(cwd);
-			if (!gitValidation.valid) {
-				ctx.ui.notify(gitValidation.error!, "error");
-				return;
-			}
-			
-			const gitClean = await checkGitClean(cwd);
-			if (!gitClean.clean) {
-				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
-				if (gitClean.status) {
-					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
+				// Make specPath relative to cwd
+				const relativeSpecPath = path.isAbsolute(specPath)
+					? path.relative(cwd, specPath)
+					: specPath;
+
+				// Check for existing active implementation
+				const existingPipeline = getLatestActiveImplPipeline(cwd);
+				if (existingPipeline) {
+					const resume = await ctx.ui.confirm(
+						"Active Implementation Found",
+						`There's an active implementation:\n${formatImplState(existingPipeline)}\n\nStart a NEW implementation? (No = cancel)`
+					);
+					if (!resume) {
+						ctx.ui.notify("Use /implement-resume to continue the existing implementation", "info");
+						return;
+					}
 				}
-				return;
+
+				// Git validation
+				const gitValidation = await validateGitRepo(cwd);
+				if (!gitValidation.valid) {
+					ctx.ui.notify(gitValidation.error!, "error");
+					return;
+				}
+				
+				const gitClean = await checkGitClean(cwd);
+				if (!gitClean.clean) {
+					ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
+					if (gitClean.status) {
+						ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
+					}
+					return;
+				}
+				
+				// Load config
+				const configResult = loadPipelineConfig(cwd);
+				if (!configResult.success) {
+					ctx.ui.notify(configResult.error, "error");
+					return;
+				}
+				const projectConfig = configResult.config;
+
+				if (noPlan) {
+					projectConfig.skipPlanGeneration = true;
+				}
+
+				if (noReview) {
+					projectConfig.reviewCycles.planReviewer = { cheap: 0, expensive: 0 };
+					projectConfig.reviewCycles.codeReviewer = { cheap: 0, expensive: 0 };
+				}
+
+				ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+				
+				if (noPlan) {
+					ctx.ui.notify("⏭️ Plan generation will be skipped (--no-plan flag)", "info");
+				}
+
+				if (noReview) {
+					ctx.ui.notify("⏭️ Reviews will be skipped (--no-review flag)", "info");
+				}
+
+				ctx.ui.notify(`Starting implementation from: ${relativeSpecPath}`, "info");
+
+				// Generate timestamp and names
+				const implTimestamp = generateTimestamp();
+
+				// Create initial state
+				const state = createInitialImplState(
+					relativeSpecPath,
+					specContent,
+					implTimestamp,
+					noPlan
+				);
+				
+				state.checkpoints = [];
+				saveImplState(cwd, state);
+				
+				ctx.ui.notify(formatStepBanner(
+					"IMPLEMENTATION STARTED",
+					`ID: ${state.id}`,
+					"🚀"
+				), "info");
+				ctx.ui.notify(`Spec: ${relativeSpecPath}`, "info");
+				
+				updateImplWidget(ctx, state, "Initializing...");
+
+				await runImplementPipeline(state, cwd, projectConfig, ctx);
+			} else {
+				// *** NEW: DISCOVERY MODE ENTRY ***
+				const description = argWithoutFlags;
+				
+				// Check for existing active implement pipeline
+				const existingPipeline = getLatestActiveImplPipeline(cwd);
+				if (existingPipeline) {
+					const proceed = await ctx.ui.confirm(
+						"Active Implementation Pipeline Found",
+						`There's an active implementation pipeline:\n${formatImplState(existingPipeline)}\n\nDo you want to continue with a NEW pipeline? (No = cancel)`
+					);
+					if (!proceed) {
+						ctx.ui.notify("Use /implement-resume to continue the existing pipeline", "info");
+						return;
+					}
+				}
+				
+				// Git validation (repo must exist, but don't check clean yet - deferred to /discovery-done)
+				const gitValidation = await validateGitRepo(cwd);
+				if (!gitValidation.valid) {
+					ctx.ui.notify(gitValidation.error!, "error");
+					return;
+				}
+				
+				// Load config
+				const configResult = loadPipelineConfig(cwd);
+				if (!configResult.success) {
+					ctx.ui.notify(configResult.error, "error");
+					return;
+				}
+				const projectConfig = configResult.config;
+				
+				ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+				ctx.ui.notify("Starting implementation discovery...", "info");
+				if (projectConfig.contextFiles.length > 0) {
+					ctx.ui.notify(`Using context from: ${projectConfig.contextFiles.join(", ")}`, "info");
+				}
+				
+				// Generate timestamp and prompt for short name
+				const timestamp = generateTimestamp();
+				const { shortName } = await promptForShortName(ctx, description);
+				
+				// Create ephemeral conversational state (not persisted to disk)
+				const discoveryState: ConversationalPipelineState = {
+					id: generatePipelineId(),
+					description,
+					discovery: {
+						skipped: false,
+						conversationHistory: [],
+						completed: false,
+					},
+				};
+				
+				// Enter implement-discovery mode
+				enterImplementDiscoveryMode(cwd, projectConfig, discoveryState, { noPlan, noReview }, shortName, timestamp);
+				updateModeWidget(ctx);
+				
+				ctx.ui.notify(formatStepBanner(
+					"IMPLEMENTATION DISCOVERY MODE",
+					"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
+					"🔍"
+				), "info");
+				ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
+				ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed to implementation.", "info");
+				
+				if (noPlan) {
+					ctx.ui.notify("⚡ --no-plan flag will be applied after discovery", "info");
+				}
+				if (noReview) {
+					ctx.ui.notify("⚡ --no-review flag will be applied after discovery", "info");
+				}
+				
+				// Send the initial discovery message
+				pi.sendUserMessage(
+					`I want to implement the following: ${description}\n\n` +
+					`Please explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`
+				);
 			}
-			
-			// Load config
-			const configResult = loadPipelineConfig(cwd);
-			if (!configResult.success) {
-				ctx.ui.notify(configResult.error, "error");
-				return;
-			}
-			const projectConfig = configResult.config;
-
-			if (noPlan) {
-				projectConfig.skipPlanGeneration = true;
-			}
-
-			if (noReview) {
-				projectConfig.reviewCycles.planReviewer = { cheap: 0, expensive: 0 };
-				projectConfig.reviewCycles.codeReviewer = { cheap: 0, expensive: 0 };
-			}
-
-			ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
-			
-			if (noPlan) {
-				ctx.ui.notify("⏭️ Plan generation will be skipped (--no-plan flag)", "info");
-			}
-
-			if (noReview) {
-				ctx.ui.notify("⏭️ Reviews will be skipped (--no-review flag)", "info");
-			}
-
-			ctx.ui.notify(`Starting implementation from: ${relativeSpecPath}`, "info");
-
-			// Generate timestamp and names
-			const implTimestamp = generateTimestamp();
-
-			// Create initial state
-			const state = createInitialImplState(
-				relativeSpecPath,
-				specContent,
-				implTimestamp,
-				noPlan
-			);
-			
-			state.checkpoints = [];
-			saveImplState(cwd, state);
-			
-			ctx.ui.notify(formatStepBanner(
-				"IMPLEMENTATION STARTED",
-				`ID: ${state.id}`,
-				"🚀"
-			), "info");
-			ctx.ui.notify(`Spec: ${relativeSpecPath}`, "info");
-			
-			updateImplWidget(ctx, state, "Initializing...");
-
-			await runImplementPipeline(state, cwd, projectConfig, ctx);
 		},
 	});
 
@@ -2147,10 +2378,18 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	});
 
 	pi.registerCommand("implement-cancel", {
-		description: "Cancel an active implementation",
+		description: "Cancel an active implementation or discovery session",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+			
+			// Check if we're in implement-discovery mode (ephemeral, not persisted)
+			if (pipelineMode === "discovery" && activePipelineKind === "implement") {
+				exitMode();
+				clearPipelineWidget(ctx);
+				ctx.ui.notify("Discovery session cancelled.", "info");
 				return;
 			}
 
