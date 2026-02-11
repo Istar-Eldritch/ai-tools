@@ -1,9 +1,8 @@
 /**
- * Commit message generation — deterministic template-based approach
+ * Commit message generation using Haiku via the pi SDK for better context-aware messages.
  * 
- * Previously this spawned a pi subprocess with Haiku for each commit message.
- * Now it generates messages deterministically from context, eliminating 5-10+
- * subprocess spawns per phase.
+ * Uses a minimal SDK session with NO tools so Haiku just generates text
+ * without trying to read files or run commands.
  */
 
 import type { ModelConfig, RoleName } from "./types.ts";
@@ -127,22 +126,11 @@ function buildFileListBody(files: string[]): string {
 }
 
 /**
- * Generate a deterministic commit message based on the agent context.
- * 
- * This replaces the previous LLM-based approach, eliminating subprocess
- * spawning overhead entirely.
- * 
- * @param context - Context about the agent work and changes
- * @param _agentConfig - Unused, retained for backward compatibility
- * @param _cwd - Unused, retained for backward compatibility
- * @returns Result with type "success" (always deterministic, never fails)
+ * Generate a fallback commit message based on the agent context.
+ * Used when Haiku generation fails or times out.
  */
-export function generateCommitMessage(
-	context: CommitMessageContext,
-	_agentConfig?: ModelConfig,
-	_cwd?: string
-): CommitMessageResult {
-	const { role, files, phase, phaseName, docName, cycle, reviewFeedback } = context;
+function generateFallbackMessage(context: CommitMessageContext): string {
+	const { role, files, phase, phaseName, cycle } = context;
 	const scope = phaseScope(phase, phaseName);
 	const body = buildFileListBody(files);
 	
@@ -178,7 +166,167 @@ export function generateCommitMessage(
 			break;
 	}
 	
-	const message = body ? `${subject}\n${body}` : subject;
+	return body ? `${subject}\n${body}` : subject;
+}
+
+/**
+ * Build a prompt for Haiku to generate a contextual commit message
+ */
+function buildCommitPrompt(context: CommitMessageContext): string {
+	const { role, files, phase, phaseName, docName, cycle, reviewFeedback } = context;
 	
-	return { type: "success", message };
+	const parts: string[] = [
+		"Generate a concise git commit message following conventional commits format.",
+		"",
+		"Context:",
+	];
+	
+	// Add role context
+	switch (role) {
+		case "planDrafter":
+			parts.push(`- Role: Planning phase ${phase ?? 'N/A'}${phaseName ? ` (${phaseName})` : ''}`);
+			parts.push("- Action: Created an implementation plan document");
+			break;
+		case "implementer":
+			parts.push(`- Role: Implementing phase ${phase ?? 'N/A'}${phaseName ? ` (${phaseName})` : ''}`);
+			parts.push("- Action: Implemented code changes based on the plan");
+			break;
+		case "addressReview":
+			parts.push(`- Role: Addressing code review feedback${cycle ? ` (cycle ${cycle})` : ''}`);
+			if (reviewFeedback) {
+				parts.push(`- Feedback: ${reviewFeedback.slice(0, 200)}${reviewFeedback.length > 200 ? '...' : ''}`);
+			}
+			break;
+		case "planReviewer":
+			parts.push(`- Role: Revising plan after review`);
+			break;
+		case "codeReviewer":
+			parts.push(`- Role: Applying code review suggestions`);
+			break;
+	}
+	
+	// Add document context if available
+	if (docName) {
+		parts.push(`- Document: ${docName}`);
+	}
+	
+	// Add files context
+	parts.push("", "Files modified:");
+	if (files.length === 0) {
+		parts.push("- (no files)");
+	} else if (files.length <= 10) {
+		files.forEach(f => parts.push(`- ${f}`));
+	} else {
+		files.slice(0, 10).forEach(f => parts.push(`- ${f}`));
+		parts.push(`- ... and ${files.length - 10} more files`);
+	}
+	
+	parts.push("");
+	parts.push("Requirements:");
+	parts.push("- Use conventional commits format: <type>(<scope>): <subject>");
+	parts.push("- Type must be one of: feat, fix, docs, refactor, test, chore");
+	
+	// Suggest scope based on context
+	const scope = phaseScope(phase, phaseName);
+	parts.push(`- Scope should be: ${scope}`);
+	
+	parts.push("- Subject line should be descriptive and specific (not generic)");
+	parts.push("- Subject must be lowercase and under 72 characters");
+	parts.push("- Subject should describe WHAT was done, not just that changes were made");
+	parts.push("- Do NOT include a body with file list");
+	parts.push("- Output ONLY the commit message, nothing else");
+	
+	return parts.join("\n");
+}
+
+/**
+ * Generate a commit message using Haiku via the pi SDK.
+ * Uses a minimal session with NO tools for fast text-only generation.
+ * Falls back to template-based message if Haiku fails.
+ * 
+ * @param context - Context about the agent work and changes
+ * @param _agentConfig - Unused, retained for backward compatibility
+ * @param _cwd - Unused, retained for backward compatibility
+ * @returns Result with generated message and whether fallback was used
+ */
+export async function generateCommitMessage(
+	context: CommitMessageContext,
+	_agentConfig?: ModelConfig,
+	_cwd?: string
+): Promise<CommitMessageResult> {
+	try {
+		const prompt = buildCommitPrompt(context);
+		
+		// Dynamically import the SDK to avoid circular dependencies
+		const { createAgentSession, SessionManager, SettingsManager } = await import("@mariozechner/pi-coding-agent");
+		const { getModel } = await import("@mariozechner/pi-ai");
+		
+		// Get Haiku model
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		if (!model) {
+			return { type: "fallback", message: generateFallbackMessage(context) };
+		}
+		
+		// Create session with no tools and in-memory storage
+		const { session } = await createAgentSession({
+			model,
+			thinkingLevel: "off",
+			tools: [],              // NO tools — just text generation
+			sessionManager: SessionManager.inMemory(),
+			settingsManager: SettingsManager.inMemory({
+				compaction: { enabled: false },
+				retry: { enabled: false },
+			}),
+		});
+		
+		// Collect output
+		let output = "";
+		session.subscribe((event: any) => {
+			if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+				output += event.assistantMessageEvent.delta;
+			}
+		});
+		
+		// Run with a timeout
+		const timeoutPromise = new Promise<void>((_, reject) => 
+			setTimeout(() => reject(new Error("timeout")), 10000)
+		);
+		
+		await Promise.race([
+			session.prompt(prompt),
+			timeoutPromise,
+		]);
+		
+		session.dispose();
+		
+		// Process output
+		let message = output.trim();
+		
+		if (process.env.DEBUG_COMMIT_MESSAGES) {
+			console.error("Haiku output:", JSON.stringify(message));
+		}
+		
+		// Remove markdown code blocks if present
+		const codeBlockMatch = message.match(/```(?:\w*\n)?([\s\S]*?)```/);
+		if (codeBlockMatch) {
+			message = codeBlockMatch[1].trim();
+		}
+		
+		// Validate it looks like a conventional commit
+		if (message.match(/^(feat|fix|docs|refactor|test|chore)\([^)]+\):/)) {
+			// Take only the first line as the subject
+			const firstLine = message.split("\n")[0].trim();
+			return { type: "success", message: firstLine };
+		}
+		
+		// If output didn't look valid, use fallback
+		return { type: "fallback", message: generateFallbackMessage(context) };
+		
+	} catch (error) {
+		// On any error, use fallback
+		if (process.env.DEBUG_COMMIT_MESSAGES) {
+			console.error("Haiku error:", error);
+		}
+		return { type: "fallback", message: generateFallbackMessage(context) };
+	}
 }

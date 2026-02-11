@@ -1,10 +1,54 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { generateCommitMessage, extractPhaseName, extractDocName } from "./commit-agent.ts";
 import type { CommitMessageContext } from "./commit-agent.ts";
 
-describe("generateCommitMessage (deterministic)", () => {
-	describe("role-based templates", () => {
-		it("generates planDrafter message with phase", () => {
+// Track mock session behavior
+let mockOutput = "";
+let mockShouldThrow = false;
+
+// Mock the pi SDK
+vi.mock("@mariozechner/pi-coding-agent", () => {
+	return {
+		createAgentSession: vi.fn(async () => {
+			const listeners: ((event: any) => void)[] = [];
+			const session = {
+				subscribe: (fn: (event: any) => void) => { listeners.push(fn); return () => {}; },
+				prompt: vi.fn(async () => {
+					if (mockShouldThrow) throw new Error("SDK error");
+					// Simulate text_delta events
+					for (const listener of listeners) {
+						listener({
+							type: "message_update",
+							assistantMessageEvent: { type: "text_delta", delta: mockOutput },
+						});
+					}
+				}),
+				dispose: vi.fn(),
+			};
+			return { session };
+		}),
+		DefaultResourceLoader: vi.fn().mockImplementation(() => ({
+			reload: vi.fn(),
+		})),
+		SessionManager: { inMemory: vi.fn() },
+		SettingsManager: { inMemory: vi.fn() },
+	};
+});
+
+vi.mock("@mariozechner/pi-ai", () => ({
+	getModel: vi.fn(() => ({ id: "claude-haiku-4-5", provider: "anthropic" })),
+}));
+
+describe("generateCommitMessage (Haiku-based)", () => {
+	beforeEach(() => {
+		mockOutput = "";
+		mockShouldThrow = false;
+	});
+
+	describe("successful Haiku generation", () => {
+		it("generates message from Haiku for planDrafter", async () => {
+			mockOutput = "docs(phase-1): add implementation plan for user authentication";
+
 			const context: CommitMessageContext = {
 				role: "planDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
@@ -12,117 +56,97 @@ describe("generateCommitMessage (deterministic)", () => {
 				phase: 1,
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
 			expect(result.type).toBe("success");
-			expect(result.message).toContain("docs(phase-1): create implementation plan");
-			expect(result.message).toContain("- docs/plan-phase1.md");
+			expect(result.message).toBe("docs(phase-1): add implementation plan for user authentication");
 		});
 
-		it("generates planDrafter message without phase", () => {
+		it("handles Haiku output with code blocks", async () => {
+			mockOutput = "```\nfeat(phase-2): add user authentication endpoints\n```";
+
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/auth.ts"],
+				phase: 2,
+			};
+
+			const result = await generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toBe("feat(phase-2): add user authentication endpoints");
+		});
+
+		it("takes only first line from multi-line output", async () => {
+			mockOutput = "feat(phase-1): add auth middleware\n\nImplements session management and JWT validation.";
+
+			const context: CommitMessageContext = {
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/feature.ts"],
+				phase: 1,
+			};
+
+			const result = await generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toBe("feat(phase-1): add auth middleware");
+		});
+	});
+
+	describe("fallback on errors", () => {
+		it("falls back when Haiku output is invalid format", async () => {
+			mockOutput = "This is not a conventional commit message";
+
 			const context: CommitMessageContext = {
 				role: "planDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
 				files: ["docs/plan.md"],
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
-			expect(result.type).toBe("success");
+			expect(result.type).toBe("fallback");
 			expect(result.message).toContain("docs(pipeline): create implementation plan");
 		});
 
-		it("generates implementer message with phase", () => {
+		it("falls back when SDK throws error", async () => {
+			mockShouldThrow = true;
+
 			const context: CommitMessageContext = {
 				role: "implementer",
 				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/feature.ts", "src/feature.test.ts"],
+				files: ["src/api.ts"],
 				phase: 2,
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
-			expect(result.type).toBe("success");
+			expect(result.type).toBe("fallback");
 			expect(result.message).toContain("feat(phase-2): implement phase changes");
-			expect(result.message).toContain("- src/feature.ts");
-			expect(result.message).toContain("- src/feature.test.ts");
 		});
 
-		it("generates addressReview message with cycle", () => {
+		it("falls back when Haiku output is empty", async () => {
+			mockOutput = "";
+
 			const context: CommitMessageContext = {
 				role: "addressReview",
 				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/api.ts"],
+				files: ["src/fix.ts"],
 				phase: 1,
-				cycle: 3,
-				reviewFeedback: "Fix null check",
+				cycle: 2,
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
-			expect(result.type).toBe("success");
-			expect(result.message).toContain("fix(phase-1): address review feedback (cycle 3)");
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("fix(phase-1): address review feedback (cycle 2)");
 		});
 
-		it("generates addressReview message without cycle", () => {
-			const context: CommitMessageContext = {
-				role: "addressReview",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/api.ts"],
-				phase: 2,
-			};
+		it("falls back with file list in body", async () => {
+			mockOutput = "";
 
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-			expect(result.message).toContain("fix(phase-2): address review feedback");
-			expect(result.message).not.toContain("cycle");
-		});
-
-		it("generates planReviewer message", () => {
-			const context: CommitMessageContext = {
-				role: "planReviewer",
-				modelConfig: { model: "sonnet", thinking: "medium" },
-				files: ["docs/plan.md"],
-				phase: 3,
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-			expect(result.message).toContain("docs(phase-3): revise plan after review");
-		});
-
-		it("generates codeReviewer message", () => {
-			const context: CommitMessageContext = {
-				role: "codeReviewer",
-				modelConfig: { model: "sonnet", thinking: "medium" },
-				files: ["src/code.ts"],
-				phase: 1,
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-			expect(result.message).toContain("refactor(phase-1): apply code review changes");
-		});
-
-		it("generates fallback chore message for unknown roles", () => {
-			const context: CommitMessageContext = {
-				role: "unknownRole" as any,
-				modelConfig: { model: "sonnet", thinking: "medium" },
-				files: ["notes.md"],
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-			expect(result.message).toContain("chore(pipeline): unknownRole changes");
-		});
-	});
-
-	describe("file list in body", () => {
-		it("includes file list in body", () => {
 			const context: CommitMessageContext = {
 				role: "implementer",
 				modelConfig: { model: "opus", thinking: "high" },
@@ -130,93 +154,87 @@ describe("generateCommitMessage (deterministic)", () => {
 				phase: 1,
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
-			expect(result.type).toBe("success");
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("feat(phase-1): implement phase changes");
 			expect(result.message).toContain("- src/a.ts");
 			expect(result.message).toContain("- src/b.ts");
 			expect(result.message).toContain("- tests/a.test.ts");
 		});
-
-		it("omits body when no files", () => {
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: [],
-				phase: 1,
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-			// Should be just the subject, no newlines
-			expect(result.message).toBe("feat(phase-1): implement phase changes");
-		});
-
-		it("truncates long file list with count", () => {
-			const files = Array.from({ length: 25 }, (_, i) => `src/file${i}.ts`);
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files,
-				phase: 1,
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-			// Should list first 20 files then show truncation
-			expect(result.message).toContain("- src/file0.ts");
-			expect(result.message).toContain("- src/file19.ts");
-			expect(result.message).toContain("... and 5 more files");
-			expect(result.message).not.toContain("- src/file20.ts");
-		});
 	});
 
-	describe("always succeeds (deterministic)", () => {
-		it("always returns type success", () => {
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/feature.ts"],
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-		});
-
-		it("never returns type fallback", () => {
-			// Even with unusual input, should always succeed
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: [],
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-		});
-	});
-
-	describe("backward compatibility", () => {
-		it("accepts but ignores agentConfig parameter", () => {
-			const context: CommitMessageContext = {
+	describe("fallback role-based templates", () => {
+		it("generates planDrafter fallback", async () => {
+			mockShouldThrow = true;
+			const result = await generateCommitMessage({
 				role: "planDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
 				files: ["docs/plan.md"],
-			};
+				phase: 3,
+			});
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("docs(phase-3): create implementation plan");
+		});
 
-			// These extra params should be accepted but ignored
-			const result = generateCommitMessage(
-				context,
-				{ model: "haiku", thinking: "off" },
-				"/fake/cwd"
-			);
+		it("generates implementer fallback", async () => {
+			mockShouldThrow = true;
+			const result = await generateCommitMessage({
+				role: "implementer",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/code.ts"],
+				phase: 2,
+			});
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("feat(phase-2): implement phase changes");
+		});
 
-			expect(result.type).toBe("success");
-			expect(result.message).toContain("docs(pipeline): create implementation plan");
+		it("generates addressReview fallback with cycle", async () => {
+			mockShouldThrow = true;
+			const result = await generateCommitMessage({
+				role: "addressReview",
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["src/api.ts"],
+				phase: 1,
+				cycle: 3,
+			});
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("fix(phase-1): address review feedback (cycle 3)");
+		});
+
+		it("generates planReviewer fallback", async () => {
+			mockShouldThrow = true;
+			const result = await generateCommitMessage({
+				role: "planReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["docs/plan.md"],
+				phase: 3,
+			});
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("docs(phase-3): revise plan after review");
+		});
+
+		it("generates codeReviewer fallback", async () => {
+			mockShouldThrow = true;
+			const result = await generateCommitMessage({
+				role: "codeReviewer",
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["src/code.ts"],
+				phase: 1,
+			});
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("refactor(phase-1): apply code review changes");
+		});
+
+		it("generates chore fallback for unknown roles", async () => {
+			mockShouldThrow = true;
+			const result = await generateCommitMessage({
+				role: "unknownRole" as any,
+				modelConfig: { model: "sonnet", thinking: "medium" },
+				files: ["notes.md"],
+			});
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("chore(pipeline): unknownRole changes");
 		});
 	});
 
@@ -238,7 +256,9 @@ describe("generateCommitMessage (deterministic)", () => {
 			expect(extractPhaseName("no-phase-here.md")).toBeUndefined();
 		});
 
-		it("includes phase name in commit message scope", () => {
+		it("includes phase name in fallback scope", async () => {
+			mockShouldThrow = true;
+
 			const context: CommitMessageContext = {
 				role: "implementer",
 				modelConfig: { model: "opus", thinking: "high" },
@@ -247,13 +267,15 @@ describe("generateCommitMessage (deterministic)", () => {
 				phaseName: "backend api",
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
-			expect(result.type).toBe("success");
+			expect(result.type).toBe("fallback");
 			expect(result.message).toContain("feat(phase-1/backend api): implement phase changes");
 		});
 
-		it("truncates long phase names", () => {
+		it("truncates long phase names in fallback", async () => {
+			mockShouldThrow = true;
+
 			const context: CommitMessageContext = {
 				role: "planDrafter",
 				modelConfig: { model: "opus", thinking: "high" },
@@ -262,41 +284,51 @@ describe("generateCommitMessage (deterministic)", () => {
 				phaseName: "very long phase name that exceeds the maximum length",
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
-			expect(result.type).toBe("success");
+			expect(result.type).toBe("fallback");
 			expect(result.message).toContain("docs(phase-2/very long phase name that e...): create implementation plan");
 		});
 
-		it("uses plain phase number when phaseName is undefined", () => {
+		it("includes phase name in Haiku-generated message", async () => {
+			mockOutput = "feat(phase-1/backend api): add database models and migration scripts";
+
 			const context: CommitMessageContext = {
 				role: "implementer",
 				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/code.ts"],
-				phase: 3,
-				phaseName: undefined,
+				files: ["src/models.ts"],
+				phase: 1,
+				phaseName: "backend api",
 			};
 
-			const result = generateCommitMessage(context);
+			const result = await generateCommitMessage(context);
 
 			expect(result.type).toBe("success");
-			expect(result.message).toContain("feat(phase-3): implement phase changes");
-		});
-
-		it("uses pipeline scope when no phase number", () => {
-			const context: CommitMessageContext = {
-				role: "implementer",
-				modelConfig: { model: "opus", thinking: "high" },
-				files: ["src/code.ts"],
-				phaseName: "some name",
-			};
-
-			const result = generateCommitMessage(context);
-
-			expect(result.type).toBe("success");
-			expect(result.message).toContain("feat(pipeline): implement phase changes");
+			expect(result.message).toBe("feat(phase-1/backend api): add database models and migration scripts");
 		});
 	});
 
+	describe("document name extraction", () => {
+		it("extracts doc name from spec filename", () => {
+			expect(extractDocName("20250209_spec_user_auth.md")).toBe("user auth");
+		});
 
+		it("extracts doc name from roadmap filename", () => {
+			expect(extractDocName("2602071200_roadmap_warm_pools.md")).toBe("warm pools");
+		});
+
+		it("extracts doc name from epic filename", () => {
+			expect(extractDocName("2602071200_epic_payment_system.md")).toBe("payment system");
+		});
+
+		it("handles .typ extension", () => {
+			expect(extractDocName("20250209_spec_api_design.typ")).toBe("api design");
+		});
+
+		it("returns undefined for invalid filenames", () => {
+			expect(extractDocName("invalid.md")).toBeUndefined();
+			expect(extractDocName("spec_no_timestamp.md")).toBeUndefined();
+			expect(extractDocName("")).toBeUndefined();
+		});
+	});
 });

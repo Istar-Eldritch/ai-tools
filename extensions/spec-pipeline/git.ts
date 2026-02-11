@@ -319,7 +319,7 @@ export async function createAgentCommit(
 	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void,
 	scopeFiles?: string[]
 ): Promise<{ success: boolean; commitHash?: string; usedFallback?: boolean }> {
-	// Import generateCommitMessage (now synchronous and deterministic)
+	// Import generateCommitMessage (async, uses Haiku)
 	const { generateCommitMessage } = await import("./commit-agent.ts");
 	
 	// Step 1: Get files to commit
@@ -354,8 +354,8 @@ export async function createAgentCommit(
 		return { success: true };  // No changes to commit
 	}
 	
-	// Step 5: Generate commit message (deterministic — no subprocess needed)
-	const messageResult = generateCommitMessage({
+	// Step 5: Generate commit message using Haiku
+	const messageResult = await generateCommitMessage({
 		role: context.role as any,
 		modelConfig: context.modelConfig as any,
 		files: filesToCommit,
@@ -364,7 +364,7 @@ export async function createAgentCommit(
 		docName: context.docName,
 		cycle: context.cycle,
 		reviewFeedback: context.reviewFeedback,
-	});
+	}, agentConfig, cwd);
 	
 	// Step 6: Create the commit
 	const commitResult = await execGit(cwd, ["commit", "-m", messageResult.message]);
