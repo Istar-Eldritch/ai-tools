@@ -27,7 +27,7 @@ import {
 	formatDivider,
 	formatKeyValue,
 } from "./formatting.ts";
-import { runAgentWithConfig } from "./agents.ts";
+import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
 import { runTieredReview } from "./review.ts";
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
@@ -356,13 +356,23 @@ Explore the codebase first to understand:
 Then create a detailed, executable plan and save it to the path above.`;
 
 			const planStartTime = new Date();
+
+			// Create progress callback for plan drafting (R17)
+			const planPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length} Plan`;
+			const planProgressCallback = createProgressCallback(
+				ctx,
+				state,
+				planPhaseInfo,
+				true  // isImplPipeline
+			);
+
 			const planDraftResult = await runAgentWithConfig(
 				planDrafterConfig,
 				planTask,
 				cwd,
 				SYSTEM_PROMPTS.planDrafter,
 				undefined,
-				undefined,
+				planProgressCallback,  // ← Pass callback (R17)
 				"planDrafter"
 			);
 			recordAgentCall(metrics, "planDrafter", planDrafterConfig.model, planDrafterConfig.thinking, planStartTime, planDraftResult.exitCode, phaseIdx + 1);
@@ -419,6 +429,15 @@ Then create a detailed, executable plan and save it to the path above.`;
 			// Review plan with tiered approach
 			ctx.ui.notify("📝 Running tiered plan review...", "info");
 			
+			// Create progress callback for plan review (R19, R20)
+			const planReviewPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length} Plan Review`;
+			const planReviewProgressCallback = createProgressCallback(
+				ctx,
+				state,
+				planReviewPhaseInfo,
+				true  // isImplPipeline
+			);
+
 			const planReviewResult = await runTieredReview(
 				{
 					cwd,
@@ -429,6 +448,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 					phaseIndex: phaseIdx + 1,
 					phaseName,
 					notify: ctx.ui.notify.bind(ctx.ui),
+					onOutput: planReviewProgressCallback,  // ← Add callback (R19, R20)
 				},
 				{
 					role: "planReviewer",
@@ -529,13 +549,23 @@ ${projectConfig.testCommand ? `Run tests with: ${projectConfig.testCommand}` : "
 Address all issues raised in the review.`;
 
 			const implementStartTime = new Date();
+
+			// Create progress callback for implementation (R18)
+			const implPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length}`;
+			const implProgressCallback = createProgressCallback(
+				ctx,
+				state,
+				implPhaseInfo,
+				true  // isImplPipeline
+			);
+
 			const implementResult = await runAgentWithConfig(
 				implementerConfig,
 				implementTask,
 				cwd,
 				SYSTEM_PROMPTS.implementer,
 				undefined,
-				undefined,
+				implProgressCallback,  // ← Pass callback (R18)
 				"implementer"
 			);
 			recordAgentCall(metrics, "implementer", implementerConfig.model, implementerConfig.thinking, implementStartTime, implementResult.exitCode, phaseIdx + 1);
@@ -606,6 +636,15 @@ Address all issues raised in the review.`;
 			"💻"
 		), "info");
 		
+		// Create progress callback for code review (R19, R20)
+		const codeReviewPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length} Code Review`;
+		const codeReviewProgressCallback = createProgressCallback(
+			ctx,
+			state,
+			codeReviewPhaseInfo,
+			true  // isImplPipeline
+		);
+
 		const codeReviewResult = await runTieredReview(
 			{
 				cwd,
@@ -616,6 +655,7 @@ Address all issues raised in the review.`;
 				phaseIndex: phaseIdx + 1,
 				phaseName,
 				notify: ctx.ui.notify.bind(ctx.ui),
+				onOutput: codeReviewProgressCallback,  // ← Add callback (R19, R20)
 			},
 			{
 				role: "codeReviewer",
