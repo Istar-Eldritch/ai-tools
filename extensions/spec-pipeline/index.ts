@@ -268,13 +268,17 @@ export default function (pi: ExtensionAPI) {
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
 	let pendingScopingContext: string | undefined = undefined;
 
-	/** Flags for implement-discovery sessions (--no-plan, --no-review) - ephemeral, cleared on exit */
+	/** Flags for implement-discovery sessions (--no-plan, --no-review)
+	 * NOTE: Ephemeral (not persisted to disk) because discovery is conversational.
+	 * Flags are applied after /discovery-done when creating the implementation state. */
 	let pendingImplementFlags: { noPlan: boolean; noReview: boolean } | null = null;
 
-	/** Short name for implement-discovery session - ephemeral, cleared on exit */
+	/** Short name for implement-discovery session
+	 * NOTE: Ephemeral (not persisted) - cleared on mode exit */
 	let pendingImplementShortName: string | null = null;
 
-	/** Timestamp for implement-discovery session - ephemeral, cleared on exit */
+	/** Timestamp for implement-discovery session
+	 * NOTE: Ephemeral (not persisted) - cleared on mode exit */
 	let pendingImplementTimestamp: string | null = null;
 
 	/** Helper to get the active state as SpecState (only valid when activePipelineKind === "spec") */
@@ -1399,18 +1403,21 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				
 				// Write discovery summary file to specsDir
 				const discoveryFilename = `${timestamp}_discovery_${shortName}.md`;
-				const discoveryPath = path.join(projectConfig.specsDir, discoveryFilename);
 				const discoveryContent = discoverySummary || `# Discovery Summary\n\n${state.description}\n\nNo discovery exchanges recorded.`;
 				
-				// Ensure specsDir exists
+				// Resolve absolute path to specsDir (handle both absolute and relative configs)
 				const fullSpecsDir = path.isAbsolute(projectConfig.specsDir)
 					? projectConfig.specsDir
 					: path.join(cwd, projectConfig.specsDir);
+				
+				// Ensure specsDir exists
 				if (!fs.existsSync(fullSpecsDir)) {
 					fs.mkdirSync(fullSpecsDir, { recursive: true });
 				}
 				
-				const fullDiscoveryPath = path.join(cwd, discoveryPath);
+				// Write file to absolute path, compute relative path for display/state
+				const fullDiscoveryPath = path.join(fullSpecsDir, discoveryFilename);
+				const discoveryPath = path.relative(cwd, fullDiscoveryPath);
 				fs.writeFileSync(fullDiscoveryPath, discoveryContent, "utf-8");
 				
 				ctx.ui.notify(`Discovery summary written to: ${discoveryPath}`, "success");
@@ -1428,15 +1435,6 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					implTimestamp,
 					flags.noPlan
 				);
-				
-				// Apply --no-review flag if present (set both reviewer cycles to 0)
-				if (flags.noReview) {
-					// Note: This modifies projectConfig for this implementation only
-					projectConfig.reviewCycles.planReviewer.cheap = 0;
-					projectConfig.reviewCycles.planReviewer.expensive = 0;
-					projectConfig.reviewCycles.codeReviewer.cheap = 0;
-					projectConfig.reviewCycles.codeReviewer.expensive = 0;
-				}
 				
 				implState.checkpoints = [];
 				saveImplState(cwd, implState);
@@ -1456,8 +1454,20 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				
 				updateImplWidget(ctx, implState, "Initializing...");
 				
+				// Apply --no-review flag if present (clone config to avoid mutation)
+				let effectiveConfig = projectConfig;
+				if (flags.noReview) {
+					effectiveConfig = {
+						...projectConfig,
+						reviewCycles: {
+							planReviewer: { cheap: 0, expensive: 0 },
+							codeReviewer: { cheap: 0, expensive: 0 },
+						},
+					};
+				}
+				
 				// Run implementation pipeline
-				await runImplementPipeline(implState, cwd, projectConfig, ctx);
+				await runImplementPipeline(implState, cwd, effectiveConfig, ctx);
 			}
 		},
 	});
@@ -1943,7 +1953,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	// ============================================
 
 	pi.registerCommand("implement", {
-		description: "Start implementation from a spec file or description (enters discovery mode). Use --no-plan to skip plan generation.",
+		description: "Start implementation from a spec file OR text description (text enters discovery mode). Use --no-plan to skip plan generation, --no-review to skip reviews.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -1970,7 +1980,9 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			const fullPath = path.isAbsolute(argWithoutFlags)
 				? argWithoutFlags
 				: path.join(cwd, argWithoutFlags);
-			const isFile = fs.existsSync(fullPath);
+			
+			// Check if it's an existing file first (handles edge cases like "fix/bug-123" or files without extensions)
+			const isFile = fs.existsSync(fullPath) && fs.statSync(fullPath).isFile();
 
 			// Heuristic: if it looks like a file path but doesn't exist, show error
 			const looksLikeFilePath = argWithoutFlags.includes("/") || /\.(md|typ)$/i.test(argWithoutFlags);
@@ -2140,6 +2152,7 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 					"🔍"
 				), "info");
 				ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
+				ctx.ui.notify("(This is the same discovery process as /spec - conversational and iterative)", "info");
 				ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed to implementation.", "info");
 				
 				if (noPlan) {
