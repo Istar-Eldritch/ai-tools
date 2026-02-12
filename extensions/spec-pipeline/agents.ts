@@ -52,7 +52,7 @@ const DEFAULT_TOOL_EMOJI = "🔧";
  * Create a progress callback for agent execution (R5-R21)
  * 
  * The callback formats tool invocations into user-friendly messages and
- * updates both notifications and the pipeline widget in real-time.
+ * updates the pipeline widget in real-time. Also prints to terminal for permanent history.
  * 
  * @param ctx - UI context with notify and setWidget functions
  * @param state - Current implementation or spec state (for widget updates)
@@ -125,13 +125,10 @@ export function createProgressCallback(
 				message = `${emoji} Finding ${pattern}`;
 			}
 			
-			// If we successfully formatted a message, send notifications (R10, R11)
+			// If we successfully formatted a message, update the widget and print to history
 			if (message) {
 				// Add phase context (R21)
 				const contextualMessage = `${message} [${phaseInfo}]`;
-				
-				// Send notification (R10, R11)
-				ctx.ui.notify(contextualMessage, "info");
 				
 				// Update widget with current action (R13, R14, R15)
 				if (isImplPipeline) {
@@ -139,6 +136,9 @@ export function createProgressCallback(
 				} else {
 					updateSpecWidget(ctx, state as SpecState, contextualMessage);
 				}
+				
+				// Print to terminal for permanent history
+				console.log(`  ${contextualMessage}`);
 			}
 		}
 	};
