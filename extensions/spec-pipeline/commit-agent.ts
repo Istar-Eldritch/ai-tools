@@ -31,6 +31,8 @@ export interface CommitMessageContext {
 	cycle?: number;
 	/** Review feedback that was addressed (if applicable) */
 	reviewFeedback?: string;
+	/** The staged git diff showing actual changes */
+	diff?: string;
 }
 
 /**
@@ -173,10 +175,12 @@ function generateFallbackMessage(context: CommitMessageContext): string {
  * Build a prompt for Haiku to generate a contextual commit message
  */
 function buildCommitPrompt(context: CommitMessageContext): string {
-	const { role, files, phase, phaseName, docName, cycle, reviewFeedback } = context;
+	const { role, files, phase, phaseName, docName, cycle, reviewFeedback, diff } = context;
 	
 	const parts: string[] = [
 		"Generate a concise git commit message following conventional commits format.",
+		"The message MUST accurately describe the actual changes shown in the diff below.",
+		"Do NOT invent or hallucinate functionality that is not in the diff.",
 		"",
 		"Context:",
 	];
@@ -221,6 +225,15 @@ function buildCommitPrompt(context: CommitMessageContext): string {
 		parts.push(`- ... and ${files.length - 10} more files`);
 	}
 	
+	// Add the actual diff - this is critical for accurate commit messages
+	if (diff) {
+		parts.push("");
+		parts.push("Git diff of staged changes:");
+		parts.push("```");
+		parts.push(diff);
+		parts.push("```");
+	}
+	
 	parts.push("");
 	parts.push("Requirements:");
 	parts.push("- Use conventional commits format: <type>(<scope>): <subject>");
@@ -230,9 +243,9 @@ function buildCommitPrompt(context: CommitMessageContext): string {
 	const scope = phaseScope(phase, phaseName);
 	parts.push(`- Scope should be: ${scope}`);
 	
-	parts.push("- Subject line should be descriptive and specific (not generic)");
+	parts.push("- Subject line MUST accurately reflect what the diff actually changes");
 	parts.push("- Subject must be lowercase and under 72 characters");
-	parts.push("- Subject should describe WHAT was done, not just that changes were made");
+	parts.push("- Subject should describe WHAT was done based on the diff content");
 	parts.push("- Do NOT include a body with file list");
 	parts.push("- Output ONLY the commit message, nothing else");
 	

@@ -354,7 +354,17 @@ export async function createAgentCommit(
 		return { success: true };  // No changes to commit
 	}
 	
-	// Step 5: Generate commit message using Haiku
+	// Step 5: Get the staged diff for commit message context
+	const diffResult = await execGit(cwd, ["diff", "--cached", "--no-color"]);
+	let diff = diffResult.code === 0 ? diffResult.stdout : undefined;
+	
+	// Truncate diff if too large (keep under ~8KB to avoid overwhelming Haiku)
+	const MAX_DIFF_LENGTH = 8000;
+	if (diff && diff.length > MAX_DIFF_LENGTH) {
+		diff = diff.slice(0, MAX_DIFF_LENGTH) + "\n... (diff truncated)";
+	}
+	
+	// Step 6: Generate commit message using Haiku
 	const messageResult = await generateCommitMessage({
 		role: context.role as any,
 		modelConfig: context.modelConfig as any,
@@ -364,16 +374,17 @@ export async function createAgentCommit(
 		docName: context.docName,
 		cycle: context.cycle,
 		reviewFeedback: context.reviewFeedback,
+		diff,
 	}, agentConfig, cwd);
 	
-	// Step 6: Create the commit
+	// Step 7: Create the commit
 	const commitResult = await execGit(cwd, ["commit", "-m", messageResult.message]);
 	if (commitResult.code !== 0) {
 		notify?.("Failed to create commit", "error");
 		return { success: false };
 	}
 	
-	// Step 7: Get commit hash
+	// Step 8: Get commit hash
 	const hashResult = await execGit(cwd, ["rev-parse", "HEAD"]);
 	if (hashResult.code !== 0) {
 		notify?.("Failed to get commit hash", "error");
@@ -381,7 +392,7 @@ export async function createAgentCommit(
 	}
 	const commitHash = hashResult.stdout;
 	
-	// Step 8: Add to checkpoints array
+	// Step 9: Add to checkpoints array
 	if (!state.checkpoints) {
 		state.checkpoints = [];
 	}
