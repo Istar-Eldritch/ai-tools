@@ -17,7 +17,7 @@ import type {
 } from "./types.ts";
 import { saveImplState } from "./state.ts";
 import { createAgentCommit, createCommit, getModifiedFiles } from "./git.ts";
-import { extractPhaseName } from "./commit-agent.ts";
+import { extractPhaseName, extractDocName } from "./commit-agent.ts";
 import { handleAgentError } from "./errors.ts";
 import {
 	formatStepBanner,
@@ -236,6 +236,9 @@ async function _runImplementPipelineInner(
 	}
 	const metrics = state.metrics;
 
+	// Extract doc name from spec path for commit message scoping
+	const docName = extractDocName(state.specPath) ?? undefined;
+
 	const effectiveSkipPlanGeneration = state.skipPlanGeneration ?? projectConfig.skipPlanGeneration;
 
 	// Create specs directory if it doesn't exist
@@ -405,7 +408,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 			// Create commit after plan drafting
 			const commitResult = await createAgentCommit(
 				cwd, state,
-				{ role: "planDrafter", modelConfig: planDrafterConfig, phase: phaseIdx + 1, phaseName },
+				{ role: "planDrafter", modelConfig: planDrafterConfig, phase: phaseIdx + 1, phaseName, docName },
 				projectConfig.models.agentCommitMessageWriter,
 				save,
 				ctx.ui.notify.bind(ctx.ui)
@@ -447,6 +450,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 					saveFn: save,
 					phaseIndex: phaseIdx + 1,
 					phaseName,
+					docName,
 					notify: ctx.ui.notify.bind(ctx.ui),
 					onOutput: planReviewProgressCallback,  // ← Add callback (R19, R20)
 				},
@@ -595,6 +599,7 @@ Address all issues raised in the review.`;
 					modelConfig: implementerConfig,
 					phase: phaseIdx + 1,
 					phaseName,
+					docName,
 					cycle: 1,
 				},
 				projectConfig.models.agentCommitMessageWriter,
@@ -654,6 +659,7 @@ Address all issues raised in the review.`;
 				saveFn: save,
 				phaseIndex: phaseIdx + 1,
 				phaseName,
+				docName,
 				notify: ctx.ui.notify.bind(ctx.ui),
 				onOutput: codeReviewProgressCallback,  // ← Add callback (R19, R20)
 			},

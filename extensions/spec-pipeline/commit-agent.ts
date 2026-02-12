@@ -86,16 +86,17 @@ export function extractDocName(filename: string): string | undefined {
 	const name = filename.split("/").pop();
 	if (!name) return undefined;
 	
-	// Match pattern: TIMESTAMP_TYPE_name.ext where TYPE is spec, roadmap, or epic
-	const match = name.match(/^\d+_(spec|roadmap|epic)_(.+)\.(md|typ)$/);
+	// Match pattern: TIMESTAMP_TYPE_name.ext where TYPE is spec, roadmap, epic, discovery, etc.
+	const match = name.match(/^\d+_(?:spec|roadmap|epic|discovery|fix|guide)_(.+)\.(md|typ)$/);
 	if (!match) return undefined;
 	
 	// Convert underscores to spaces for readability
-	return match[2].replace(/_/g, " ");
+	return match[1].replace(/_/g, " ");
 }
 
 /**
- * Generate a short scope string from a phase number and optional name
+ * Generate a short scope string from a phase number and optional name.
+ * Only used for deterministic fallback messages.
  */
 function phaseScope(phase?: number, phaseName?: string): string {
 	if (phase === undefined) return "pipeline";
@@ -238,11 +239,11 @@ function buildCommitPrompt(context: CommitMessageContext): string {
 	parts.push("Requirements:");
 	parts.push("- Use conventional commits format: <type>(<scope>): <subject>");
 	parts.push("- Type must be one of: feat, fix, docs, refactor, test, chore");
-	
-	// Suggest scope based on context
-	const scope = phaseScope(phase, phaseName);
-	parts.push(`- Scope should be: ${scope}`);
-	
+	if (docName) {
+		parts.push(`- Scope MUST be: ${docName}`);
+	} else {
+		parts.push("- Scope should be a short, meaningful word or two derived from what was actually changed (e.g., 'billing', 'auth', 'api', 'jobs')");
+	}
 	parts.push("- Subject line MUST accurately reflect what the diff actually changes");
 	parts.push("- Subject must be lowercase and under 72 characters");
 	parts.push("- Subject should describe WHAT was done based on the diff content");

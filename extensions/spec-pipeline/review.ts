@@ -121,6 +121,8 @@ export interface TieredReviewContext {
 	phaseIndex?: number;
 	/** Phase name/description (for commit messages) */
 	phaseName?: string;
+	/** Document name from spec path (for commit message scoping) */
+	docName?: string;
 	/** UI notification callback */
 	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
 	/** Output stream callback (optional - if not provided, output is not streamed) */
@@ -161,7 +163,7 @@ export async function runTieredReview(
 	ctx: TieredReviewContext,
 	operation: ReviewOperation
 ): Promise<TieredReviewResult> {
-	const { cwd, projectConfig, systemPrompts, state, saveFn, phaseIndex, notify, onOutput, signal } = ctx;
+	const { cwd, projectConfig, systemPrompts, state, saveFn, phaseIndex, docName, notify, onOutput, signal } = ctx;
 	const { role, reviewTask, fixTask, runAddressReviewOnSignificantIssues = false } = operation;
 	
 	const tieredConfig = projectConfig.models[role];
@@ -309,6 +311,7 @@ export async function runTieredReview(
 					modelConfig: addressReviewConfig,
 					phase: phaseIndex,
 					phaseName: ctx.phaseName,
+					docName,
 					cycle: cycle,
 					reviewFeedback: lastReviewOutput,
 				},
@@ -484,6 +487,7 @@ export async function runTieredReview(
 				modelConfig: addressReviewConfig,
 				phase: phaseIndex,
 				phaseName: ctx.phaseName,
+				docName,
 				cycle: cheapCycles + cycle,
 				reviewFeedback: lastReviewOutput,
 			},
