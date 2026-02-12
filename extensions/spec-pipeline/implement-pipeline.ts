@@ -2,6 +2,9 @@
  * Implementation pipeline execution logic
  * 
  * Handles: Phase Extraction → Plan Generation → Plan Review → Implementation → Code Review
+ * 
+ * Note: Plan files are stored in a temporary directory and cleaned up after implementation
+ * completes to avoid polluting the repository. Only the final implementation code is committed.
  */
 
 import * as fs from "node:fs";
@@ -190,28 +193,28 @@ export async function runImplementPipeline(
 	projectConfig: ProjectConfig,
 	ctx: PipelineUIContext
 ): Promise<void> {
-	const specsDir = path.join(cwd, projectConfig.specsDir);
 	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 
 	// Helper to save state
 	const save = () => saveImplState(cwd, state);
 
-	// Write spec content to a temp file to avoid embedding large text in every agent prompt
-	const specTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-spec-"));
-	const specTmpPath = path.join(specTmpDir, "spec.md");
+	// Create temporary directory for spec and plan files
+	const pipelineTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
+	const specTmpPath = path.join(pipelineTmpDir, "spec.md");
+	const plansTmpDir = path.join(pipelineTmpDir, "plans");
+	fs.mkdirSync(plansTmpDir, { recursive: true });
 	fs.writeFileSync(specTmpPath, state.specContent, "utf-8");
 	const specFileRef = `Read the full specification from this file: ${specTmpPath}`;
 
 	// Cleanup helper for temp directory
 	const cleanupTmpDir = () => {
 		try {
-			fs.unlinkSync(specTmpPath);
-			fs.rmdirSync(specTmpDir);
+			fs.rmSync(pipelineTmpDir, { recursive: true, force: true });
 		} catch { /* ignore */ }
 	};
 
 	try {
-		return await _runImplementPipelineInner(state, cwd, projectConfig, ctx, specsDir, SYSTEM_PROMPTS, save, specTmpPath, specFileRef);
+		return await _runImplementPipelineInner(state, cwd, projectConfig, ctx, plansTmpDir, SYSTEM_PROMPTS, save, specTmpPath, specFileRef);
 	} finally {
 		cleanupTmpDir();
 	}
@@ -223,7 +226,7 @@ async function _runImplementPipelineInner(
 	cwd: string,
 	projectConfig: ProjectConfig,
 	ctx: PipelineUIContext,
-	specsDir: string,
+	plansTmpDir: string,
 	SYSTEM_PROMPTS: ReturnType<typeof createSystemPrompts>,
 	save: () => void,
 	specTmpPath: string,
@@ -240,11 +243,6 @@ async function _runImplementPipelineInner(
 	const docName = extractDocName(state.specPath) ?? undefined;
 
 	const effectiveSkipPlanGeneration = state.skipPlanGeneration ?? projectConfig.skipPlanGeneration;
-
-	// Create specs directory if it doesn't exist
-	if (!fs.existsSync(specsDir)) {
-		fs.mkdirSync(specsDir, { recursive: true });
-	}
 
 	// ============================================
 	// PHASE EXTRACTION (if phases not yet extracted)
@@ -321,7 +319,8 @@ async function _runImplementPipelineInner(
 		save();
 
 		const phasePath = state.phases[phaseIdx];
-		const fullPhasePath = path.join(specsDir, phasePath);
+		// Store plan files in temp directory instead of repository
+		const fullPhasePath = path.join(plansTmpDir, path.basename(phasePath));
 		const phaseName = extractPhaseName(phasePath);
 
 		ctx.ui.notify(formatStepBanner(
