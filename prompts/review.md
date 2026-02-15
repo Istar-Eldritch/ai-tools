@@ -1,147 +1,113 @@
-# /review - Code Review for Pull Requests
+# /review - Code Review for GitHub PRs
 
-Review a GitHub pull request or local changes and add inline comments to the code.
+Review a GitHub pull request and add inline comments to the code.
 
 ## Target
 
-**PR URL or scope:** `$1`
-**Base branch (optional):** `$2` (defaults to `main` if not provided)
+PR URL or number: `$1`
 
-If no argument is provided, review the diff between HEAD and the base branch (default: `main`) on the current repository.
+If a full URL like `https://github.com/owner/repo/pull/123` is given, parse the owner, repo, and PR number from it. If just a number is given, use the current repository.
 
 ## Workflow
 
-### For GitHub PR (when URL like `https://github.com/owner/repo/pull/123` is provided):
+1. Fetch PR details
 
-1. **Parse the PR URL**
-   - Extract owner, repo, and PR number from URL (e.g., `https://github.com/owner/repo/pull/123`)
+   Get the PR metadata, including the base branch:
+   ```bash
+   gh pr view <number> --repo <owner/repo> --json title,body,state,author,baseRefName,headRefName,files,commits,additions,deletions
+   ```
+   The `baseRefName` field tells you which branch the PR targets, so you don't need to guess or default to `main`.
 
-2. **Fetch PR Details**
-   - Use `gh pr view <number> --repo <owner/repo> --json title,body,state,author,files,commits,additions,deletions`
-   - Use `gh pr diff <number> --repo <owner/repo>` to get the full diff
+   Then grab the full diff:
+   ```bash
+   gh pr diff <number> --repo <owner/repo>
+   ```
 
-3. **Checkout the PR Branch**
-   - `gh pr checkout <number> --repo <owner/repo>`
+2. Checkout the PR branch
 
-### For Local Changes (no PR provided):
+   ```bash
+   gh pr checkout <number> --repo <owner/repo>
+   ```
 
-1. **Determine Base Branch**
-   - Use `$2` as the base branch if provided, otherwise default to `main`
-   - Store in a variable like `BASE_BRANCH="${2:-main}"`
+3. Analyze the changes
 
-2. **Get the Diff**
-   - Use `git diff ${BASE_BRANCH}...HEAD` to get the diff between base branch and current HEAD
-   - Use `git log ${BASE_BRANCH}..HEAD --oneline` to see commits being reviewed
-   - Use `git diff ${BASE_BRANCH}...HEAD --stat` to get list of changed files
+   Read each modified and added file in full. Compare with existing code in the codebase for consistency. Look for:
+   - correctness and logic errors
+   - naming consistency with the rest of the codebase
+   - missing error handling
+   - test coverage gaps
+   - documentation gaps
+   - style inconsistencies
+   - performance concerns
+   - security issues
 
-3. **Stay on Current Branch**
-   - No checkout needed, review changes in place
+4. Add comments
 
-4. **Analyze the Changes**
-   - Read each modified/added file in full
-   - Compare with existing similar code in the codebase for consistency
-   - Check for:
-     - Code correctness and logic errors
-     - Naming consistency with existing codebase
-     - Missing error handling
-     - Test coverage gaps
-     - Documentation gaps
-     - Style inconsistencies
-     - Performance concerns
-     - Security issues
+   Create a pending review with all inline comments in a single API call:
+   ```bash
+   cat << 'EOF' | gh api repos/<owner>/<repo>/pulls/<number>/reviews --method POST --input -
+   {
+     "commit_id": "<head-commit-sha>",
+     "body": "Code review summary",
+     "comments": [
+       {
+         "path": "path/to/file.java",
+         "line": 42,
+         "body": "Review comment text"
+       },
+       {
+         "path": "path/to/another/file.java",
+         "line": 15,
+         "body": "Another review comment"
+       }
+     ]
+   }
+   EOF
+   ```
 
-5. **Add Comments**
+   Don't include `"event": "PENDING"` in the payload. Omitting the event field creates a pending review by default, and including it actually causes an API error.
 
-   **For GitHub PRs:** Create a pending review with all inline comments in a single API call
-   - Use `gh api` to create a pending review with all comments at once:
-     ```bash
-     cat << 'EOF' | gh api repos/<owner>/<repo>/pulls/<number>/reviews --method POST --input -
-     {
-       "commit_id": "<head-commit-sha>",
-       "body": "Code review summary",
-       "comments": [
-         {
-           "path": "path/to/file.java",
-           "line": 42,
-           "body": "Review comment text"
-         },
-         {
-           "path": "path/to/another/file.java",
-           "line": 15,
-           "body": "Another review comment"
-         }
-       ]
-     }
-     EOF
-     ```
-   - **Important:** Do NOT include `"event": "PENDING"` - omitting the event field creates a pending review by default. Including it causes an API error.
-   - The review will be created in PENDING state with all comments attached
-   - Keep comments concise but actionable
+   The review will be created in pending state with all comments attached. Keep comments concise but actionable.
 
-   **For Local Changes:** Add inline comments in source files
-   - Add `// REVIEW:` comments directly in source files at relevant locations
-   - Format:
-     ```java
-     // REVIEW: Brief description of the issue or suggestion
-     // Consider: <suggested alternative if applicable>
-     problematicCode();
-     ```
+5. Finalize
 
-6. **Finalize**
+   Submit the review when ready:
+   ```bash
+   gh pr review <number> --comment  # or --approve / --request-changes
+   ```
 
-   **For GitHub PRs:**
-   - Submit the review when ready:
-     ```bash
-     gh pr review <number> --comment  # or --approve / --request-changes
-     ```
+## Review checklist
 
-   **For Local Changes:**
-   - Commit the review comments:
-     ```bash
-     git add -A
-     git commit -m "Code review for branch <branch-name>
+Things to watch for during the review:
 
-     Inline review comments added to source files.
+Correctness
+- logic is correct
+- edge cases handled
+- error handling present
+- no null pointer risks
 
-     Key issues found:
-     - <bullet list of key issues>"
-     ```
+Consistency
+- naming matches codebase conventions
+- similar patterns to existing code
+- import style consistent
+- logging style consistent
 
-## Checklist for Review
+Testing
+- tests cover happy path
+- tests cover edge cases
+- tests cover error conditions
+- no redundant assertions
 
-### Correctness
-- [ ] Logic is correct
-- [ ] Edge cases handled
-- [ ] Error handling present
-- [ ] No null pointer risks
+Documentation
+- public APIs documented
+- complex logic explained
+- README updated if needed
 
-### Consistency
-- [ ] Naming matches codebase conventions
-- [ ] Similar patterns to existing code
-- [ ] Import style consistent
-- [ ] Logging style consistent
-
-### Testing
-- [ ] Tests cover happy path
-- [ ] Tests cover edge cases
-- [ ] Tests cover error conditions
-- [ ] No redundant assertions
-
-### Documentation
-- [ ] Public APIs documented
-- [ ] Complex logic explained
-- [ ] README updated if needed
-
-### Performance & Security
-- [ ] No obvious performance issues
-- [ ] No security vulnerabilities
-- [ ] Resources properly closed
+Performance and security
+- no obvious performance issues
+- no security vulnerabilities
+- resources properly closed
 
 ## Output
 
-**For GitHub PRs:**
-- Pending GitHub review comments - Inline comments on the PR ready to submit
-
-**For Local Changes:**
-- Inline `// REVIEW:` comments in modified files
-- Local commit with review comments
+Pending GitHub review with inline comments on the PR, ready to submit.
