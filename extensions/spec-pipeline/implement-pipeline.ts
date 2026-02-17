@@ -394,12 +394,20 @@ Then create a detailed, executable plan and save it to the path above.`;
 			ctx.ui.notify(formatAgentSummary("planDrafter", planDrafterConfig.model, planDraftResult.output, "✅", phaseIdx + 1), "info");
 
 			if (!fs.existsSync(fullPhasePath)) {
-				const errorMsg = `Plan file was not created at ${fullPhasePath}`;
-				state.lastError = undefined;
-				save();
-				clearPipelineWidget(ctx);
-				ctx.ui.notify(errorMsg, "error");
-				return;
+				// Agent didn't use write tool — try to salvage plan from text output
+				const agentOutput = planDraftResult.output || "";
+				if (agentOutput.trim().length > 50) {
+					ctx.ui.notify("⚠️ Plan drafter didn't write file — extracting plan from agent output", "warning");
+					fs.mkdirSync(path.dirname(fullPhasePath), { recursive: true });
+					fs.writeFileSync(fullPhasePath, agentOutput, "utf-8");
+				} else {
+					const errorMsg = `Plan file was not created at ${fullPhasePath} and agent output was empty`;
+					state.lastError = errorMsg;
+					save();
+					clearPipelineWidget(ctx);
+					ctx.ui.notify(errorMsg, "error");
+					return;
+				}
 			}
 
 			const planContent = fs.readFileSync(fullPhasePath, "utf-8");
