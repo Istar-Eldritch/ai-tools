@@ -93,6 +93,22 @@ describe("generateCommitMessage (Haiku-based)", () => {
 			expect(result.type).toBe("success");
 			expect(result.message).toBe("feat(phase-1): add auth middleware");
 		});
+
+		it("generates message from Haiku for brainstormAgent", async () => {
+			mockOutput = "docs(billing redesign): capture brainstorm session on billing system";
+
+			const context: CommitMessageContext = {
+				role: "brainstormAgent" as any,
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/specs/2602171119_brainstorm_billing_redesign.md"],
+				docName: "billing redesign",
+			};
+
+			const result = await generateCommitMessage(context);
+
+			expect(result.type).toBe("success");
+			expect(result.message).toBe("docs(billing redesign): capture brainstorm session on billing system");
+		});
 	});
 
 	describe("fallback on errors", () => {
@@ -235,6 +251,17 @@ describe("generateCommitMessage (Haiku-based)", () => {
 			});
 			expect(result.type).toBe("fallback");
 			expect(result.message).toContain("chore(pipeline): unknownRole changes");
+		});
+
+		it("generates brainstormAgent fallback", async () => {
+			mockShouldThrow = true;
+			const result = await generateCommitMessage({
+				role: "brainstormAgent" as any,
+				modelConfig: { model: "opus", thinking: "high" },
+				files: ["docs/specs/2602171119_brainstorm_billing_redesign.md"],
+			});
+			expect(result.type).toBe("fallback");
+			expect(result.message).toContain("docs(pipeline): capture brainstorm session");
 		});
 	});
 

@@ -140,6 +140,10 @@ function generateFallbackMessage(context: CommitMessageContext): string {
 	let subject: string;
 	
 	switch (role) {
+		case "brainstormAgent":
+			subject = `docs(${scope}): capture brainstorm session`;
+			break;
+		
 		case "planDrafter":
 			subject = `docs(${scope}): create implementation plan`;
 			break;
@@ -188,6 +192,10 @@ function buildCommitPrompt(context: CommitMessageContext): string {
 	
 	// Add role context
 	switch (role) {
+		case "brainstormAgent":
+			parts.push("- Role: Capturing brainstorm session");
+			parts.push("- Action: Wrote brainstorm document synthesizing exploratory discussion");
+			break;
 		case "planDrafter":
 			parts.push(`- Role: Planning phase ${phase ?? 'N/A'}${phaseName ? ` (${phaseName})` : ''}`);
 			parts.push("- Action: Created an implementation plan document");
