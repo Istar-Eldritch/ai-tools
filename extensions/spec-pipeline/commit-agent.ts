@@ -87,7 +87,7 @@ export function extractDocName(filename: string): string | undefined {
 	if (!name) return undefined;
 	
 	// Match pattern: TIMESTAMP_TYPE_name.ext where TYPE is spec, roadmap, epic, discovery, etc.
-	const match = name.match(/^\d+_(?:spec|roadmap|epic|discovery|fix|guide)_(.+)\.(md|typ)$/);
+	const match = name.match(/^\d+_(?:spec|roadmap|epic|discovery|brainstorm|fix|guide)_(.+)\.(md|typ)$/);
 	if (!match) return undefined;
 	
 	// Convert underscores to spaces for readability

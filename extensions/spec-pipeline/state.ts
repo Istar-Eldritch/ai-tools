@@ -15,11 +15,13 @@ import {
 	type HierarchyState,
 	type HierarchyLevel,
 	type ChildItem,
+	type BrainstormState,
 	SPEC_STATE_DIR,
 	IMPL_STATE_DIR,
 	STATE_DIR,
 	ROADMAP_STATE_DIR,
 	EPIC_STATE_DIR,
+	BRAINSTORM_STATE_DIR,
 } from "./types.ts";
 import { classifyError } from "./errors.ts";
 
@@ -667,6 +669,119 @@ export function createInitialEpicState(
 		docIteration: 0,
 
 		children: [],
+	};
+}
+
+// ============================================
+// Brainstorm State CRUD Operations
+// ============================================
+
+/**
+ * Get the state directory for brainstorms
+ */
+export function getBrainstormStateDir(cwd: string): string {
+	return path.join(cwd, BRAINSTORM_STATE_DIR);
+}
+
+/**
+ * Get path to a specific brainstorm state file
+ */
+export function getBrainstormStatePath(cwd: string, id: string): string {
+	return path.join(getBrainstormStateDir(cwd), `${id}.json`);
+}
+
+/**
+ * Load brainstorm state by ID
+ */
+export function loadBrainstormState(cwd: string, id: string): BrainstormState | null {
+	const statePath = getBrainstormStatePath(cwd, id);
+	if (!fs.existsSync(statePath)) {
+		return null;
+	}
+	try {
+		const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as BrainstormState;
+
+		// Initialize missing fields
+		if (state.checkpoints === undefined) {
+			state.checkpoints = [];
+		}
+		if (state.conversationHistory === undefined) {
+			state.conversationHistory = [];
+		}
+
+		return state;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Save brainstorm state
+ */
+export function saveBrainstormState(cwd: string, state: BrainstormState): void {
+	const stateDir = getBrainstormStateDir(cwd);
+	if (!fs.existsSync(stateDir)) {
+		fs.mkdirSync(stateDir, { recursive: true });
+	}
+	state.updatedAt = new Date().toISOString();
+	fs.writeFileSync(getBrainstormStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+}
+
+/**
+ * List all brainstorm states, sorted by createdAt descending (most recent first)
+ */
+export function listBrainstormStates(cwd: string): BrainstormState[] {
+	const stateDir = getBrainstormStateDir(cwd);
+	if (!fs.existsSync(stateDir)) {
+		return [];
+	}
+	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
+	const states: BrainstormState[] = [];
+	for (const file of files) {
+		const id = file.replace(/\.json$/, "");
+		const state = loadBrainstormState(cwd, id);
+		if (state) {
+			states.push(state);
+		}
+	}
+	return states.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+/**
+ * Get the most recent active brainstorm pipeline (not completed or cancelled)
+ */
+export function getLatestActiveBrainstormPipeline(cwd: string): BrainstormState | null {
+	const states = listBrainstormStates(cwd);
+	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
+}
+
+/**
+ * Create initial brainstorm state
+ */
+export function createInitialBrainstormState(
+	description: string,
+	docTimestamp: string,
+	shortName: string,
+	specsDir: string,
+	specFormat: string = "md"
+): BrainstormState {
+	const docFilename = `${docTimestamp}_brainstorm_${shortName}.${specFormat}`;
+	const docPath = path.join(specsDir, docFilename);
+	const now = new Date().toISOString();
+
+	return {
+		id: generatePipelineId(),
+		description,
+		stage: "brainstorming",
+		createdAt: now,
+		updatedAt: now,
+
+		docTimestamp,
+		docFilename,
+		docPath,
+		docContent: "",
+
+		conversationHistory: [],
 	};
 }
 

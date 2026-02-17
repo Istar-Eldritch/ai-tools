@@ -272,7 +272,7 @@ export interface DraftingState {
  * - discovery: Host LLM is acting as discovery agent
  * - drafting: Host LLM is acting as spec drafter
  */
-export type PipelineMode = "idle" | "scoping" | "discovery" | "drafting";
+export type PipelineMode = "idle" | "scoping" | "discovery" | "drafting" | "brainstorm";
 
 /**
  * Ephemeral scoping state (not persisted to disk).
@@ -488,6 +488,7 @@ export interface PipelineUIContext {
 export const STATE_DIR = ".pi/spec-pipeline";
 export const SPEC_STATE_DIR = ".pi/spec-pipeline/specs";
 export const IMPL_STATE_DIR = ".pi/spec-pipeline/implementations";
+export const BRAINSTORM_STATE_DIR = ".pi/spec-pipeline/brainstorms";
 export const STATE_FILE = "state.json";
 export const MAX_SPEC_ITERATIONS = 5;
 export const PIPELINE_WIDGET_ID = "spec-pipeline-status";
@@ -635,6 +636,43 @@ export type HierarchyState = RoadmapState | EpicState;
 /** State directories for hierarchy types */
 export const ROADMAP_STATE_DIR = ".pi/spec-pipeline/roadmaps";
 export const EPIC_STATE_DIR = ".pi/spec-pipeline/epics";
+
+// ============================================
+// Brainstorm Types
+// ============================================
+
+/** Stages for brainstorm pipelines */
+export type BrainstormStage = "brainstorming" | "completed" | "cancelled";
+
+/**
+ * State for brainstorm pipelines (/brainstorm command)
+ * Stored in .pi/spec-pipeline/brainstorms/<id>.json
+ */
+export interface BrainstormState {
+	id: string;
+	description: string;
+	stage: BrainstormStage;
+	createdAt: string;
+	updatedAt: string;
+
+	// Stage before cancellation (for potential future resume)
+	stageBeforeCancellation?: BrainstormStage;
+
+	// Document details
+	docTimestamp: string;     // YYMMDDhhmm format
+	docFilename: string;      // e.g. "2602171119_brainstorm_billing_redesign.md"
+	docPath: string;          // relative path to document
+	docContent: string;       // written at completion
+
+	// Conversation history
+	conversationHistory: ConversationalExchange[];
+
+	// Git state
+	checkpoints?: string[];
+
+	// Error tracking
+	lastError?: string;
+}
 
 // ============================================
 // Agent Progress Event Types

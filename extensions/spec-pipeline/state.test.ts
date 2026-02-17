@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import {
 	generatePipelineId,
 	generateSpecTimestamp,
@@ -8,6 +11,13 @@ import {
 	createInitialImplState,
 	createInitialRoadmapState,
 	createInitialEpicState,
+	createInitialBrainstormState,
+	saveBrainstormState,
+	loadBrainstormState,
+	listBrainstormStates,
+	getLatestActiveBrainstormPipeline,
+	getBrainstormStateDir,
+	getBrainstormStatePath,
 	extractChildItems,
 } from "./state.ts";
 
@@ -363,5 +373,200 @@ Some other content.
 `;
 		const items = extractChildItems(doc);
 		expect(items).toHaveLength(1);
+	});
+});
+
+// ============================================
+// Brainstorm State Tests
+// ============================================
+
+describe("createInitialBrainstormState", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-02-17T11:19:00Z"));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("creates state with correct defaults", () => {
+		const state = createInitialBrainstormState(
+			"Redesign the billing system",
+			"2602171119",
+			"billing_redesign",
+			"docs/specs"
+		);
+		expect(state.description).toBe("Redesign the billing system");
+		expect(state.stage).toBe("brainstorming");
+		expect(state.docFilename).toBe("2602171119_brainstorm_billing_redesign.md");
+		expect(state.docPath).toBe("docs/specs/2602171119_brainstorm_billing_redesign.md");
+		expect(state.docContent).toBe("");
+		expect(state.conversationHistory).toEqual([]);
+	});
+
+	it("uses specified spec format", () => {
+		const state = createInitialBrainstormState(
+			"Billing redesign",
+			"2602171119",
+			"billing",
+			"docs",
+			"typ"
+		);
+		expect(state.docFilename).toBe("2602171119_brainstorm_billing.typ");
+	});
+
+	it("sets timestamps correctly", () => {
+		const state = createInitialBrainstormState(
+			"Test",
+			"2602171119",
+			"test",
+			"docs/specs"
+		);
+		expect(state.createdAt).toBe("2026-02-17T11:19:00.000Z");
+		expect(state.updatedAt).toBe("2026-02-17T11:19:00.000Z");
+	});
+
+	it("generates unique IDs", () => {
+		const state1 = createInitialBrainstormState("A", "2602171119", "a", "docs");
+		const state2 = createInitialBrainstormState("B", "2602171120", "b", "docs");
+		expect(state1.id).not.toBe(state2.id);
+	});
+});
+
+describe("brainstorm state CRUD", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-02-17T11:19:00Z"));
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "brainstorm-test-"));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("saves and loads brainstorm state", () => {
+		const state = createInitialBrainstormState(
+			"Test brainstorm",
+			"2602171119",
+			"test",
+			"docs"
+		);
+		saveBrainstormState(tmpDir, state);
+
+		const loaded = loadBrainstormState(tmpDir, state.id);
+		expect(loaded).not.toBeNull();
+		expect(loaded!.description).toBe("Test brainstorm");
+		expect(loaded!.stage).toBe("brainstorming");
+		expect(loaded!.docFilename).toBe("2602171119_brainstorm_test.md");
+	});
+
+	it("returns null for non-existent state", () => {
+		const loaded = loadBrainstormState(tmpDir, "nonexistent");
+		expect(loaded).toBeNull();
+	});
+
+	it("creates directory on first save", () => {
+		const stateDir = getBrainstormStateDir(tmpDir);
+		expect(fs.existsSync(stateDir)).toBe(false);
+
+		const state = createInitialBrainstormState("Test", "2602171119", "test", "docs");
+		saveBrainstormState(tmpDir, state);
+
+		expect(fs.existsSync(stateDir)).toBe(true);
+	});
+
+	it("updates updatedAt on save", () => {
+		const state = createInitialBrainstormState("Test", "2602171119", "test", "docs");
+		saveBrainstormState(tmpDir, state);
+
+		vi.setSystemTime(new Date("2026-02-17T12:00:00Z"));
+		saveBrainstormState(tmpDir, state);
+
+		const loaded = loadBrainstormState(tmpDir, state.id);
+		expect(loaded!.updatedAt).toBe("2026-02-17T12:00:00.000Z");
+	});
+
+	it("lists brainstorm states sorted by createdAt descending", () => {
+		const state1 = createInitialBrainstormState("First", "2602171100", "first", "docs");
+		vi.setSystemTime(new Date("2026-02-17T11:00:00Z"));
+		state1.createdAt = new Date().toISOString();
+		saveBrainstormState(tmpDir, state1);
+
+		vi.setSystemTime(new Date("2026-02-17T12:00:00Z"));
+		const state2 = createInitialBrainstormState("Second", "2602171200", "second", "docs");
+		state2.createdAt = new Date().toISOString();
+		saveBrainstormState(tmpDir, state2);
+
+		const states = listBrainstormStates(tmpDir);
+		expect(states).toHaveLength(2);
+		expect(states[0].description).toBe("Second");
+		expect(states[1].description).toBe("First");
+	});
+
+	it("returns empty array when no brainstorms exist", () => {
+		const states = listBrainstormStates(tmpDir);
+		expect(states).toEqual([]);
+	});
+
+	it("getLatestActiveBrainstormPipeline returns active state", () => {
+		const state = createInitialBrainstormState("Active", "2602171119", "active", "docs");
+		saveBrainstormState(tmpDir, state);
+
+		const active = getLatestActiveBrainstormPipeline(tmpDir);
+		expect(active).not.toBeNull();
+		expect(active!.description).toBe("Active");
+	});
+
+	it("getLatestActiveBrainstormPipeline skips completed states", () => {
+		const state = createInitialBrainstormState("Done", "2602171119", "done", "docs");
+		state.stage = "completed";
+		saveBrainstormState(tmpDir, state);
+
+		const active = getLatestActiveBrainstormPipeline(tmpDir);
+		expect(active).toBeNull();
+	});
+
+	it("getLatestActiveBrainstormPipeline skips cancelled states", () => {
+		const state = createInitialBrainstormState("Cancelled", "2602171119", "cancelled", "docs");
+		state.stage = "cancelled";
+		saveBrainstormState(tmpDir, state);
+
+		const active = getLatestActiveBrainstormPipeline(tmpDir);
+		expect(active).toBeNull();
+	});
+
+	it("getBrainstormStatePath returns correct path", () => {
+		const p = getBrainstormStatePath(tmpDir, "test-id");
+		expect(p).toBe(path.join(tmpDir, ".pi/spec-pipeline/brainstorms/test-id.json"));
+	});
+
+	it("initializes missing fields on load", () => {
+		const stateDir = getBrainstormStateDir(tmpDir);
+		fs.mkdirSync(stateDir, { recursive: true });
+		const minimalState = {
+			id: "minimal-test",
+			description: "Minimal",
+			stage: "brainstorming",
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			docTimestamp: "2602171119",
+			docFilename: "2602171119_brainstorm_minimal.md",
+			docPath: "docs/2602171119_brainstorm_minimal.md",
+			docContent: "",
+		};
+		fs.writeFileSync(
+			path.join(stateDir, "minimal-test.json"),
+			JSON.stringify(minimalState),
+			"utf-8"
+		);
+
+		const loaded = loadBrainstormState(tmpDir, "minimal-test");
+		expect(loaded).not.toBeNull();
+		expect(loaded!.checkpoints).toEqual([]);
+		expect(loaded!.conversationHistory).toEqual([]);
 	});
 });

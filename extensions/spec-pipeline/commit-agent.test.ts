@@ -330,5 +330,9 @@ describe("generateCommitMessage (Haiku-based)", () => {
 			expect(extractDocName("spec_no_timestamp.md")).toBeUndefined();
 			expect(extractDocName("")).toBeUndefined();
 		});
+
+		it("extracts name from brainstorm filename", () => {
+			expect(extractDocName("2602171000_brainstorm_billing_redesign.md")).toBe("billing redesign");
+		});
 	});
 });
