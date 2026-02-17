@@ -77,7 +77,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 // Import types
-import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, ConversationalExchange, ProjectConfig, PipelineMode, ScopingState, ConversationalPipelineState } from "./types.ts";
+import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, ConversationalExchange, ProjectConfig, PipelineMode, ScopingState, ConversationalPipelineState, BrainstormState } from "./types.ts";
 
 // Import config
 import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
@@ -100,6 +100,11 @@ import {
 	saveEpicState,
 	listEpicStates,
 	getLatestActiveEpicPipeline,
+	loadBrainstormState,
+	saveBrainstormState,
+	listBrainstormStates,
+	getLatestActiveBrainstormPipeline,
+	createInitialBrainstormState,
 	createInitialRoadmapState,
 	createInitialEpicState,
 	generateTimestamp,
@@ -242,8 +247,8 @@ export default function (pi: ExtensionAPI) {
 	/** The pipeline state for the active conversational session (spec or hierarchy) */
 	let activePipelineState: ConversationalPipelineState | null = null;
 
-	/** Which kind of pipeline is active: "spec", "hierarchy", or "implement" */
-	let activePipelineKind: "spec" | "hierarchy" | "implement" | null = null;
+	/** Which kind of pipeline is active: "spec", "hierarchy", "implement", or "brainstorm" */
+	let activePipelineKind: "spec" | "hierarchy" | "implement" | "brainstorm" | null = null;
 
 	/** Hierarchy level when activePipelineKind === "hierarchy" */
 	let activeHierarchyLevel: HierarchyLevel | null = null;
@@ -262,6 +267,9 @@ export default function (pi: ExtensionAPI) {
 
 	/** Ephemeral scoping state for /plan command (not persisted) */
 	let activeScopingState: ScopingState | null = null;
+
+	/** Active brainstorm state (persisted to disk) */
+	let activeBrainstormState: BrainstormState | null = null;
 
 	/** Tracks the last user message for pairing with assistant response */
 	let lastUserMessage: string = "";
@@ -390,6 +398,31 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
+	 * Enter brainstorm mode
+	 */
+	function enterBrainstormMode(cwd: string, projectConfig: ProjectConfig, brainstormState: BrainstormState): void {
+		pipelineMode = "brainstorm";
+		activePipelineState = null;
+		activePipelineKind = "brainstorm";
+		activeHierarchyLevel = null;
+		activeParentContext = undefined;
+		activeStateSaveFn = null;
+		activeCwd = cwd;
+		activeProjectConfig = projectConfig;
+		activeScopingState = null;
+		activeBrainstormState = brainstormState;
+		lastUserMessage = "";
+		exchangeCount = brainstormState.conversationHistory.length;
+	}
+
+	/**
+	 * Helper to get the active brainstorm state (only valid when activePipelineKind === "brainstorm")
+	 */
+	function getActiveBrainstormState(): BrainstormState | null {
+		return activePipelineKind === "brainstorm" ? activeBrainstormState : null;
+	}
+
+	/**
 	 * Exit any conversational mode and return to idle
 	 */
 	function exitMode(): { exchangeCount: number } {
@@ -401,6 +434,7 @@ export default function (pi: ExtensionAPI) {
 		activeParentContext = undefined;
 		activeStateSaveFn = null;
 		activeScopingState = null;
+		activeBrainstormState = null;
 		activeCwd = "";
 		activeProjectConfig = null;
 		lastUserMessage = "";
@@ -669,6 +703,53 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	}
 
 	/**
+	 * Build the brainstorm system prompt injection for before_agent_start.
+	 * This turns the host LLM into a brainstorming thought partner.
+	 */
+	function buildBrainstormPromptInjection(brainstormState: BrainstormState, projectConfig: ProjectConfig): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+		const brainstormPrompt = SYSTEM_PROMPTS.brainstormAgent;
+
+		let conversationContext = "";
+		if (brainstormState.conversationHistory.length > 0) {
+			conversationContext = "\n\n## Previous Brainstorm Exchanges\n\n";
+			for (const exchange of brainstormState.conversationHistory) {
+				conversationContext += `**User**: ${exchange.userMessage}\n\n`;
+				conversationContext += `**You**: ${exchange.assistantResponse}\n\n---\n\n`;
+			}
+		}
+
+		const fullDocPath = path.join(activeCwd, brainstormState.docPath);
+
+		return `
+${brainstormPrompt}
+
+## Active Brainstorm Session
+
+You are brainstorming the following topic:
+
+${brainstormState.description}
+${conversationContext}
+
+## Session Details
+
+- **Document timestamp**: ${brainstormState.docTimestamp}
+- **Document file path**: ${fullDocPath}
+
+## Instructions
+
+- Explore the codebase freely using read, bash, grep, find, ls tools
+- Propose multiple directions and angles — do NOT narrow to a single solution
+- Ask open-ended questions that expand the design space
+- Surface tradeoffs, risks, and opportunities the user may not have considered
+- Do NOT write specifications, plans, or code — only explore ideas
+- When the user feels ready to capture the ideas, they will type /brainstorm-done
+
+IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not convergent requirements gathering.
+`;
+	}
+
+	/**
 	 * Get the spec file size for widget display
 	 */
 	function getSpecFileInfo(cwd: string, specPath: string): string {
@@ -695,6 +776,18 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				"",
 				"Chat naturally to help assess scope.",
 				"Type /plan-done when ready to proceed.",
+			]);
+			return;
+		}
+
+		if (pipelineMode === "brainstorm" && activeBrainstormState) {
+			ctx.ui.setWidget("spec-pipeline-status", [
+				"🧠 Brainstorm Mode",
+				"────────────────────────────────────",
+				`Exchanges: ${exchangeCount}`,
+				"",
+				"Chat freely to explore ideas.",
+				"Type /brainstorm-done when ready.",
 			]);
 			return;
 		}
@@ -1150,6 +1243,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			}
 			customType = "spec-drafting-context";
 			contextLabel = `[DRAFTING MODE ACTIVE - Creating ${activePipelineKind === "spec" ? "spec" : activeHierarchyLevel} for: ${activePipelineState.description}]`;
+		} else if (pipelineMode === "brainstorm" && activeBrainstormState) {
+			injection = buildBrainstormPromptInjection(activeBrainstormState, activeProjectConfig);
+			customType = "spec-brainstorm-context";
+			contextLabel = `[BRAINSTORM MODE ACTIVE - Exploring: ${activeBrainstormState.description}]`;
 		} else {
 			return undefined;
 		}
@@ -1219,6 +1316,10 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				activeScopingState.conversationHistory.push(exchange);
 				exchangeCount = activeScopingState.conversationHistory.length;
 				// No need to persist — scoping state is ephemeral
+			} else if (pipelineMode === "brainstorm" && activeBrainstormState) {
+				activeBrainstormState.conversationHistory.push(exchange);
+				exchangeCount = activeBrainstormState.conversationHistory.length;
+				saveBrainstormState(activeCwd, activeBrainstormState);
 			} else if (pipelineMode === "discovery" && activePipelineState) {
 				if (!activePipelineState.discovery!.conversationHistory) {
 					activePipelineState.discovery!.conversationHistory = [];
@@ -1258,6 +1359,9 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				}
 				if (m.customType === "spec-drafting-context") {
 					return pipelineMode === "drafting";
+				}
+				if (m.customType === "spec-brainstorm-context") {
+					return pipelineMode === "brainstorm";
 				}
 				return true;
 			}),
@@ -1493,6 +1597,11 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			if (pipelineMode === "brainstorm") {
+				ctx.ui.notify("Cannot start /spec while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
 				return;
 			}
 
@@ -1961,6 +2070,11 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			if (pipelineMode === "brainstorm") {
+				ctx.ui.notify("Cannot start /implement while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
 				return;
 			}
 
@@ -2910,6 +3024,11 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 				return;
 			}
 
+			if (pipelineMode === "brainstorm") {
+				ctx.ui.notify("Cannot start /plan while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
+				return;
+			}
+
 			const cwd = ctx.cwd;
 
 			// Load config
@@ -3092,6 +3211,11 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			if (pipelineMode === "brainstorm") {
+				ctx.ui.notify("Cannot start /roadmap while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
 				return;
 			}
 
@@ -3280,6 +3404,11 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			if (pipelineMode === "brainstorm") {
+				ctx.ui.notify("Cannot start /epic while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
 				return;
 			}
 
@@ -3671,6 +3800,366 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 			}
 		}
 	}
+
+	// ============================================
+	// BRAINSTORM COMMANDS
+	// ============================================
+
+	pi.registerCommand("brainstorm", {
+		description: "Start a brainstorming session for open-ended idea exploration.",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			const description = (args || "").trim();
+			if (!description) {
+				ctx.ui.notify("Usage: /brainstorm <description of what you want to explore>", "error");
+				return;
+			}
+
+			// Check for mode conflicts — reject if any pipeline mode is active
+			if (pipelineMode !== "idle") {
+				const modeLabels: Record<PipelineMode, string> = {
+					idle: "",
+					scoping: "scoping session (/plan)",
+					discovery: "discovery session",
+					drafting: "drafting session",
+					brainstorm: "brainstorm session",
+				};
+				ctx.ui.notify(
+					`Cannot start brainstorm: a ${modeLabels[pipelineMode]} is already active.\n` +
+					`Finish or cancel the current session first.`,
+					"error"
+				);
+				return;
+			}
+
+			const cwd = ctx.cwd;
+
+			// Check for existing active brainstorm pipeline
+			const existingPipeline = getLatestActiveBrainstormPipeline(cwd);
+			if (existingPipeline) {
+				const proceed = await ctx.ui.confirm(
+					"Active Brainstorm Found",
+					`There's an active brainstorm:\n` +
+					`  Description: ${existingPipeline.description.slice(0, 60)}${existingPipeline.description.length > 60 ? "..." : ""}\n` +
+					`  Stage: ${existingPipeline.stage}\n` +
+					`  Exchanges: ${existingPipeline.conversationHistory.length}\n\n` +
+					`Start a NEW brainstorm? (No = cancel)`
+				);
+				if (!proceed) {
+					ctx.ui.notify("Existing brainstorm is still active. Cancel it with /brainstorm-cancel if needed.", "info");
+					return;
+				}
+			}
+
+			// Git validation (repo must exist, but dirty state is OK for doc pipelines)
+			const gitValidation = await validateGitRepo(cwd);
+			if (!gitValidation.valid) {
+				ctx.ui.notify(gitValidation.error!, "error");
+				return;
+			}
+
+			// Load config
+			const configResult = loadPipelineConfig(cwd);
+			if (!configResult.success) {
+				ctx.ui.notify(configResult.error, "error");
+				return;
+			}
+			const projectConfig = configResult.config;
+
+			// Prompt for short name
+			const docTimestamp = generateTimestamp();
+			const { shortName } = await promptForShortName(ctx, description);
+
+			// Create initial brainstorm state
+			const state = createInitialBrainstormState(
+				description,
+				docTimestamp,
+				shortName,
+				projectConfig.specsDir,
+				projectConfig.specFormat
+			);
+			saveBrainstormState(cwd, state);
+
+			ctx.ui.notify(formatStepBanner(
+				"BRAINSTORM STARTED",
+				`ID: ${state.id}`,
+				"🧠"
+			), "info");
+
+			// Enter brainstorm mode
+			enterBrainstormMode(cwd, projectConfig, state);
+
+			// Show widget
+			updateModeWidget(ctx);
+
+			ctx.ui.notify("Explore ideas freely. The LLM will propose multiple directions and ask open-ended questions.", "info");
+			ctx.ui.notify("Type /brainstorm-done when you're ready to capture the ideas.", "info");
+
+			// Send the initial brainstorm message to kick off the session
+			pi.sendUserMessage(
+				`I want to brainstorm the following idea: ${description}\n\n` +
+				`Please explore the codebase to understand the current state, then propose several different directions or angles we could explore. ` +
+				`Ask open-ended questions to help us think through the problem space.`
+			);
+		},
+	});
+
+	pi.registerCommand("brainstorm-done", {
+		description: "End brainstorm session and capture ideas to a document",
+		handler: async (_args, ctx) => {
+			const brainstormState = getActiveBrainstormState();
+			if (pipelineMode !== "brainstorm" || !brainstormState || !activeCwd || !activeProjectConfig) {
+				ctx.ui.notify("No active brainstorm session. Use /brainstorm to start one.", "error");
+				return;
+			}
+
+			const state = brainstormState;
+			const cwd = activeCwd;
+			const projectConfig = activeProjectConfig;
+			const fullDocPath = path.join(cwd, state.docPath);
+
+			// Check if the document has already been written (second invocation after synthesis)
+			if (fs.existsSync(fullDocPath)) {
+				const docContent = fs.readFileSync(fullDocPath, "utf-8");
+				if (docContent.trim()) {
+					// Document exists — finalize the brainstorm
+					state.docContent = docContent;
+					state.stage = "completed";
+					saveBrainstormState(cwd, state);
+
+					const brainstormExchanges = exchangeCount;
+
+					// Exit brainstorm mode
+					exitMode();
+					clearPipelineWidget(ctx);
+
+					ctx.ui.notify(formatStepBanner(
+						"BRAINSTORM CAPTURED",
+						`${brainstormExchanges} exchanges. Creating commit...`,
+						"✅"
+					), "info");
+
+					// Create git commit scoped to the brainstorm file
+					const conversationalModelConfig = { model: "opus" as const, thinking: "high" as const };
+					const { extractDocName } = await import("./commit-agent.ts");
+					const docName = extractDocName(state.docFilename);
+
+					const commitResult = await createAgentCommit(
+						cwd, state,
+						{ role: "brainstormAgent" as any, modelConfig: conversationalModelConfig, docName },
+						projectConfig.models.agentCommitMessageWriter,
+						() => saveBrainstormState(cwd, state),
+						ctx.ui.notify.bind(ctx.ui) as any,
+						[state.docPath]
+					);
+
+					if (!commitResult.success) {
+						ctx.ui.notify("Warning: Failed to create commit for brainstorm document", "warning");
+					}
+
+					// Success notification — no approval dialog
+					ctx.ui.notify(formatStepBanner(
+						"🎉 Brainstorm Complete!",
+						`Document: ${state.docPath}`,
+						"✅"
+					), "info");
+					ctx.ui.notify(`You can reference this document in /spec, /epic, or /roadmap commands.`, "info");
+					return;
+				}
+			}
+
+			// Document doesn't exist yet — send synthesis message
+			ctx.ui.notify(formatStepBanner(
+				"SYNTHESIZING BRAINSTORM",
+				"The LLM will now capture the ideas into a document...",
+				"📝"
+			), "info");
+
+			// Send synthesis message to the LLM — it will write the file
+			pi.sendUserMessage(
+				`Please synthesize our brainstorm conversation into a document and write it to this exact path: ${fullDocPath}\n\n` +
+				`Use the brainstorm document format with these sections:\n` +
+				`- Problem / Opportunity\n` +
+				`- Context & Background\n` +
+				`- Proposed Directions (with tradeoffs for each option)\n` +
+				`- Out of Scope\n` +
+				`- Open Questions\n` +
+				`- Rough Scope Assessment\n\n` +
+				`Use timestamp: ${state.docTimestamp}\n` +
+				`Title: ${state.description}\n\n` +
+				`Write the complete document to the file now.\n\n` +
+				`After writing the file, the user will type /brainstorm-done again to finalize.`
+			);
+
+			ctx.ui.notify("Once the LLM finishes writing, type /brainstorm-done again to finalize.", "info");
+		},
+	});
+
+	pi.registerCommand("brainstorm-status", {
+		description: "Show status of the latest brainstorm session",
+		handler: async (args, ctx) => {
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: BrainstormState | null;
+			if (pipelineId) {
+				state = loadBrainstormState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Brainstorm not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveBrainstormPipeline(cwd);
+				if (!state) {
+					const states = listBrainstormStates(cwd);
+					if (states.length === 0) {
+						ctx.ui.notify("No brainstorm sessions found. Use /brainstorm to start one.", "info");
+						return;
+					}
+					state = states[0];
+				}
+			}
+
+			const lines: string[] = [];
+			lines.push(formatDivider(50));
+			lines.push(`  Brainstorm: ${state.id || "unknown"}`);
+			lines.push(formatDivider(50));
+			lines.push("");
+			lines.push("📋 Basic Information");
+			const description = state.description || "(no description)";
+			lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
+
+			const stageLabels: Record<string, string> = {
+				brainstorming: "🧠 Brainstorming",
+				completed: "✅ Completed",
+				cancelled: "❌ Cancelled",
+			};
+			lines.push(formatKeyValue("  Stage", stageLabels[state.stage] || state.stage));
+			lines.push(formatKeyValue("  Created", state.createdAt));
+			lines.push(formatKeyValue("  Updated", state.updatedAt));
+			lines.push(formatKeyValue("  Exchanges", String(state.conversationHistory.length)));
+			lines.push(formatKeyValue("  Document", state.docFilename));
+
+			if (state.stage === "completed") {
+				lines.push(formatKeyValue("  Doc Path", state.docPath));
+			}
+
+			lines.push("");
+			lines.push(formatDivider(50));
+
+			ctx.ui.notify(lines.join("\n"), "info");
+
+			if (state.stage === "completed") {
+				ctx.ui.notify(`\n✅ Brainstorm completed. Document at: ${state.docPath}`, "info");
+			} else if (state.stage === "cancelled") {
+				ctx.ui.notify("\n🚫 Cancelled.", "info");
+			} else {
+				ctx.ui.notify("\n▶️ Active brainstorm session.", "info");
+			}
+		},
+	});
+
+	pi.registerCommand("brainstorm-list", {
+		description: "List all brainstorm sessions",
+		handler: async (_args, ctx) => {
+			const cwd = ctx.cwd;
+			const states = listBrainstormStates(cwd);
+
+			if (states.length === 0) {
+				ctx.ui.notify("No brainstorm sessions found. Use /brainstorm to start one.", "info");
+				return;
+			}
+
+			const lines: string[] = [];
+			lines.push(formatDivider(60));
+			lines.push(`  🧠 Brainstorm Sessions (${states.length} total)`);
+			lines.push(formatDivider(60));
+			lines.push("");
+
+			for (const state of states) {
+				let statusIcon = "  ";
+				if (state.stage === "completed") statusIcon = "✅";
+				else if (state.stage === "cancelled") statusIcon = "🚫";
+				else statusIcon = "▶️";
+
+				lines.push(`${statusIcon} ${state.id || "unknown"}`);
+				const desc = state.description || "(no description)";
+				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
+
+				const stageLabels: Record<string, string> = {
+					brainstorming: "🧠 Brainstorming",
+					completed: "✅ Completed",
+					cancelled: "❌ Cancelled",
+				};
+				lines.push(`   Stage: ${stageLabels[state.stage] || state.stage}`);
+				lines.push(`   Exchanges: ${state.conversationHistory.length}`);
+				lines.push(`   Created: ${state.createdAt}`);
+				lines.push("");
+			}
+
+			lines.push(formatDivider(60));
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
+
+	pi.registerCommand("brainstorm-cancel", {
+		description: "Cancel the active brainstorm session",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+				return;
+			}
+
+			// If we're currently in brainstorm mode, exit immediately
+			if (pipelineMode === "brainstorm" && activeBrainstormState) {
+				const state = activeBrainstormState;
+				const cwd = activeCwd;
+
+				state.stageBeforeCancellation = state.stage;
+				state.stage = "cancelled";
+				saveBrainstormState(cwd, state);
+
+				exitMode();
+				clearPipelineWidget(ctx);
+				ctx.ui.notify("Brainstorm session cancelled.", "info");
+				return;
+			}
+
+			// Otherwise, look up by ID or latest active
+			const cwd = ctx.cwd;
+			const pipelineId = (args || "").trim();
+
+			let state: BrainstormState | null;
+			if (pipelineId) {
+				state = loadBrainstormState(cwd, pipelineId);
+				if (!state) {
+					ctx.ui.notify(`Brainstorm not found: ${pipelineId}`, "error");
+					return;
+				}
+			} else {
+				state = getLatestActiveBrainstormPipeline(cwd);
+				if (!state) {
+					ctx.ui.notify("No active brainstorm session to cancel.", "info");
+					return;
+				}
+			}
+
+			if (state.stage === "completed" || state.stage === "cancelled") {
+				ctx.ui.notify("Brainstorm session is already finished.", "info");
+				return;
+			}
+
+			state.stageBeforeCancellation = state.stage;
+			state.stage = "cancelled";
+			saveBrainstormState(cwd, state);
+
+			ctx.ui.notify("Brainstorm session cancelled.", "info");
+		},
+	});
 
 	// ============================================
 	// SHARED TOOL (programmatic access)

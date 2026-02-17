@@ -3,10 +3,10 @@
  */
 
 import { spawn } from "node:child_process";
-import type { SpecState, ImplementationState, HierarchyState } from "./types.ts";
+import type { SpecState, ImplementationState, HierarchyState, BrainstormState } from "./types.ts";
 
 // Union type for any state that has git fields
-type GitState = SpecState | ImplementationState | HierarchyState;
+type GitState = SpecState | ImplementationState | HierarchyState | BrainstormState;
 
 // ============================================
 // Git Command Execution
