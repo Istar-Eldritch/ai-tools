@@ -3957,7 +3957,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 						{ role: "brainstormAgent", modelConfig: conversationalModelConfig, docName },
 						projectConfig.models.agentCommitMessageWriter,
 						() => saveBrainstormState(cwd, state),
-						ctx.ui.notify.bind(ctx.ui),
+						ctx.ui.notify.bind(ctx.ui) as (msg: string, type: "info" | "error" | "success" | "warning") => void,
 						[state.docPath]
 					);
 
@@ -3976,7 +3976,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 			}
 
-			// Document doesn't exist yet — send synthesis message
+			// Document not ready yet — send synthesis message
 			ctx.ui.notify(formatStepBanner(
 				"SYNTHESIZING BRAINSTORM",
 				"The LLM will now capture the ideas into a document...",
@@ -4058,7 +4058,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			ctx.ui.notify(lines.join("\n"), "info");
 
 			if (state.stage === "completed") {
-				ctx.ui.notify(`\n✅ Brainstorm completed. Document at: ${state.docPath}`, "success");
+				ctx.ui.notify(`\n✅ Brainstorm completed. Document at: ${state.docPath}`, "info");
 			} else if (state.stage === "cancelled") {
 				ctx.ui.notify("\n🚫 Cancelled.", "info");
 			} else {
