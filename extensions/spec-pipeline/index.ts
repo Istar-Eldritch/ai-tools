@@ -3910,6 +3910,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 	pi.registerCommand("brainstorm-done", {
 		description: "End brainstorm session and capture ideas to a document",
+		// Two-step invocation design: first /brainstorm-done triggers synthesis (sends a message to the LLM
+		// to write the document file); second invocation (after the LLM writes the file) finalizes and commits.
+		// The plan's original await-agent_end approach was impractical inside a command handler since command
+		// handlers must return synchronously — they cannot await async pi events.
 		handler: async (_args, ctx) => {
 			const brainstormState = getActiveBrainstormState();
 			if (pipelineMode !== "brainstorm" || !brainstormState || !activeCwd || !activeProjectConfig) {
@@ -3950,10 +3954,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 					const commitResult = await createAgentCommit(
 						cwd, state,
-						{ role: "brainstormAgent" as any, modelConfig: conversationalModelConfig, docName },
+						{ role: "brainstormAgent", modelConfig: conversationalModelConfig, docName },
 						projectConfig.models.agentCommitMessageWriter,
 						() => saveBrainstormState(cwd, state),
-						ctx.ui.notify.bind(ctx.ui) as any,
+						ctx.ui.notify.bind(ctx.ui),
 						[state.docPath]
 					);
 
@@ -4054,7 +4058,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			ctx.ui.notify(lines.join("\n"), "info");
 
 			if (state.stage === "completed") {
-				ctx.ui.notify(`\n✅ Brainstorm completed. Document at: ${state.docPath}`, "info");
+				ctx.ui.notify(`\n✅ Brainstorm completed. Document at: ${state.docPath}`, "success");
 			} else if (state.stage === "cancelled") {
 				ctx.ui.notify("\n🚫 Cancelled.", "info");
 			} else {

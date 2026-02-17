@@ -206,7 +206,8 @@ export type RoleName =
 	| "implementer"
 	| "codeReviewer"
 	| "addressReview"
-	| "commitMessageWriter"; // Role for tool restrictions (read-only for both old and new commit agents)
+	| "commitMessageWriter"
+	| "brainstormAgent"; // Role for tool restrictions (read-only for both old and new commit agents)
 
 export interface ErrorDetails {
 	timestamp: string;           // ISO timestamp of error
