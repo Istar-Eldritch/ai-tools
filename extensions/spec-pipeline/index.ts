@@ -739,13 +739,13 @@ ${conversationContext}
 ## Instructions
 
 - Explore the codebase freely using read, bash, grep, find, ls tools
-- Propose multiple directions and angles — do NOT narrow to a single solution
-- Ask open-ended questions that expand the design space
+- Focus each message on ONE concept or problem — you may explore multiple angles within it, but don't jump between unrelated topics
+- Ask open-ended questions that expand the design space within the current topic
 - Surface tradeoffs, risks, and opportunities the user may not have considered
 - Do NOT write specifications, plans, or code — only explore ideas
 - When the user feels ready to capture the ideas, they will type /brainstorm-done
 
-IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not convergent requirements gathering.
+IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not convergent requirements gathering. Go deep on one concept at a time before moving to the next.
 `;
 	}
 
@@ -3896,14 +3896,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			// Show widget
 			updateModeWidget(ctx);
 
-			ctx.ui.notify("Explore ideas freely. The LLM will propose multiple directions and ask open-ended questions.", "info");
+			ctx.ui.notify("Explore ideas freely. The LLM will ask one question at a time to help you think things through.", "info");
 			ctx.ui.notify("Type /brainstorm-done when you're ready to capture the ideas.", "info");
 
 			// Send the initial brainstorm message to kick off the session
 			pi.sendUserMessage(
 				`I want to brainstorm the following idea: ${description}\n\n` +
-				`Please explore the codebase to understand the current state, then propose several different directions or angles we could explore. ` +
-				`Ask open-ended questions to help us think through the problem space.`
+				`Please explore the codebase to understand the current state, then start with ONE question or angle to kick things off. ` +
+				`We'll explore the problem space one step at a time.`
 			);
 		},
 	});
