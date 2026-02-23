@@ -74,13 +74,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-
 // Import types
 import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, ConversationalExchange, ProjectConfig, PipelineMode, ScopingState, ConversationalPipelineState, BrainstormState } from "./types.ts";
 
 // Import config
-import { loadPipelineConfig, detectProjectConfig } from "./config.ts";
+import { loadPipelineConfig } from "./config.ts";
 
 // Import state management
 import {
@@ -154,7 +152,7 @@ import {
 } from "./formatting.ts";
 
 // Import agents
-import { runAgent } from "./agents.ts";
+
 
 // Import review
 import { retryFailedOperation } from "./review.ts";
@@ -4165,87 +4163,4 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		},
 	});
 
-	// ============================================
-	// SHARED TOOL (programmatic access)
-	// ============================================
-
-	pi.registerTool({
-		name: "run_spec_agent",
-		label: "Run Spec Agent",
-		description: `Run a specialized agent for the spec pipeline.
-
-IMPORTANT: The subagent runs in a completely isolated context with NO memory of prior conversation.
-The 'task' parameter is the ONLY input the subagent receives.
-You MUST include ALL relevant context in the task.`,
-		parameters: Type.Object({
-			agent: Type.Union([Type.Literal("opus"), Type.Literal("sonnet"), Type.Literal("haiku")], {
-				description: "Agent to run (opus for complex tasks, sonnet for reviews, haiku for simple tasks)",
-			}),
-			role: Type.Union(
-				[
-					Type.Literal("planDrafter"),
-					Type.Literal("planReviewer"),
-					Type.Literal("implementer"),
-					Type.Literal("codeReviewer"),
-					Type.Literal("commitMessageWriter"),
-					Type.Literal("addressReview"),
-				],
-				{ description: "Role/system prompt to use" }
-			),
-			task: Type.String({ 
-				description: "Complete task description including ALL context" 
-			}),
-		}),
-		async execute(_id, params, onUpdate, ctx, signal) {
-			let projectConfig;
-			try {
-				projectConfig = detectProjectConfig(ctx.cwd);
-			} catch (e) {
-				const error = e instanceof Error ? e.message : "Configuration error";
-				return {
-					content: [{ type: "text", text: error }],
-					details: { error },
-					isError: true,
-				};
-			}
-			const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
-			
-			const result = await runAgent(
-				params.agent as "opus" | "sonnet" | "haiku",
-				params.task,
-				ctx.cwd,
-				SYSTEM_PROMPTS[params.role as keyof typeof SYSTEM_PROMPTS],
-				signal,
-				(event) => {
-					// Handle different event types from Phase 1 changes
-					let text = "";
-					if (typeof event === "string") {
-						text = event;
-					} else if (event.type === "text") {
-						text = event.delta;
-					}
-					// Ignore tool events for now (Phase 2 handles these with createProgressCallback)
-					
-					if (text) {
-						onUpdate?.({
-							content: [{ type: "text", text }],
-							details: {},
-						});
-					}
-				},
-				params.role
-			);
-
-			return {
-				content: [{ type: "text", text: result.output }],
-				details: {
-					agent: params.agent,
-					role: params.role,
-					exitCode: result.exitCode,
-					error: result.error,
-				},
-				isError: result.exitCode !== 0,
-			};
-		},
-	});
 }
