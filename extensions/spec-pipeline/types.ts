@@ -12,11 +12,7 @@ import { Type, type Static } from "@sinclair/typebox";
 // Model Configuration Schemas
 // ============================================
 
-export const ModelNameSchema = Type.Union([
-	Type.Literal("opus"),
-	Type.Literal("sonnet"),
-	Type.Literal("haiku"),
-]);
+export const ModelNameSchema = Type.String({ minLength: 1 });
 
 export const ThinkingLevelSchema = Type.Union([
 	Type.Literal("high"),
@@ -117,7 +113,7 @@ export interface NormalizedReviewCycles {
  */
 export interface AgentCallMetrics {
 	role: RoleName;
-	model: "opus" | "sonnet" | "haiku";
+	model: string;
 	thinking: ThinkingLevel;
 	startTime: string;      // ISO timestamp
 	endTime: string;        // ISO timestamp
@@ -404,25 +400,7 @@ export interface ImplementationState {
 // Agent Types
 // ============================================
 
-/**
- * Legacy agent configurations
- */
-export const AGENTS = {
-	opus: {
-		model: "claude-opus-4-6",
-		thinking: "high",
-	},
-	sonnet: {
-		model: "claude-sonnet-4-5",
-		thinking: "medium",
-	},
-	haiku: {
-		model: "claude-haiku-4-5",
-		thinking: "off",
-	},
-} as const;
-
-export type AgentName = keyof typeof AGENTS;
+export type AgentName = string;
 
 export interface AgentResult {
 	output: string;
@@ -499,14 +477,7 @@ export const WRITE_ROLES = new Set(["planDrafter", "implementer", "addressReview
 // Roles that only need to read and analyze (no write/edit access)
 export const READ_ONLY_ROLES = new Set(["planReviewer", "codeReviewer", "commitMessageWriter"]);
 
-/**
- * Map model name to actual model identifier
- */
-export const MODEL_IDENTIFIERS: Record<"opus" | "sonnet" | "haiku", string> = {
-	opus: "claude-opus-4-6",
-	sonnet: "claude-sonnet-4-5",
-	haiku: "claude-haiku-4-5",
-} as const;
+
 
 // ============================================
 // Hierarchy Types (Roadmaps & Epics)

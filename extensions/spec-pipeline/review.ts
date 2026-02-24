@@ -238,7 +238,7 @@ export async function runTieredReview(
 			// Note: handleAgentError handles stashing changes internally
 			await handleAgentError(
 				cwd, state, reviewResult,
-				tieredConfig.cheap.model,  // model is "opus" | "sonnet" | "haiku" which matches AgentName
+				tieredConfig.cheap.model,
 				role,
 				reviewTask,
 				phaseIndex,
@@ -599,8 +599,8 @@ export async function retryFailedOperation(
 		modelConfig = tieredConfig.expensive;
 		ctx.ui.notify(`Retrying ${error.role} with expensive tier (${modelConfig.model})`, "info");
 	} else if (error.role === "commitMessageWriter") {
-		// Fixed model for commit messages - always Haiku
-		modelConfig = { model: "haiku", thinking: "off" };
+		// Use configured commit message writer model
+		modelConfig = projectConfig.models.agentCommitMessageWriter;
 	} else {
 		// Non-tiered roles: use their direct config
 		const nonTieredRole = error.role as keyof Pick<typeof projectConfig.models, "planDrafter" | "implementer" | "addressReview">;

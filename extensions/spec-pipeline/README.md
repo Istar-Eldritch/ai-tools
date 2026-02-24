@@ -353,7 +353,7 @@ Create `.pi/spec-pipeline.json` in your project root:
   "testCommand": "npm test",
   "contextFiles": ["CONTRIBUTING.md", "docs/architecture.md"],
   "models": {
-    "implementer": { "model": "opus", "thinking": "high" }
+    "implementer": { "model": "claude-opus-4-6", "thinking": "high" }
   },
   "reviewCycles": {
     "codeReviewer": { "cheap": 3, "expensive": 2 }
@@ -396,17 +396,17 @@ Configure models per-role to optimize cost and quality:
 ```json
 {
   "models": {
-    "planDrafter": { "model": "opus", "thinking": "high" },
+    "planDrafter": { "model": "claude-opus-4-6", "thinking": "high" },
     "planReviewer": {
-      "cheap": { "model": "sonnet", "thinking": "medium" },
-      "expensive": { "model": "opus", "thinking": "high" }
+      "cheap": { "model": "claude-sonnet-4-5", "thinking": "medium" },
+      "expensive": { "model": "claude-opus-4-6", "thinking": "high" }
     },
-    "implementer": { "model": "opus", "thinking": "high" },
+    "implementer": { "model": "claude-opus-4-6", "thinking": "high" },
     "codeReviewer": {
-      "cheap": { "model": "sonnet", "thinking": "medium" },
-      "expensive": { "model": "opus", "thinking": "high" }
+      "cheap": { "model": "claude-sonnet-4-5", "thinking": "medium" },
+      "expensive": { "model": "claude-opus-4-6", "thinking": "high" }
     },
-    "addressReview": { "model": "sonnet", "thinking": "medium" }
+    "addressReview": { "model": "claude-sonnet-4-5", "thinking": "medium" }
   }
 }
 ```
@@ -417,24 +417,28 @@ Configure models per-role to optimize cost and quality:
 
 | Role | Default Model | Default Thinking | Purpose |
 |------|---------------|------------------|---------|
-| `planDrafter` | opus | high | Draft implementation plan for each phase |
-| `implementer` | opus | high | Write code for each phase |
-| `addressReview` | sonnet | medium | Apply fixes based on review feedback |
-| `agentCommitMessageWriter` | haiku | off | Generate commit messages |
+| `planDrafter` | claude-opus-4-6 | high | Draft implementation plan for each phase |
+| `implementer` | claude-opus-4-6 | high | Write code for each phase |
+| `addressReview` | claude-sonnet-4-5 | medium | Apply fixes based on review feedback |
+| `agentCommitMessageWriter` | claude-haiku-4-5 | off | Generate commit messages |
 
 **Tiered Review Roles (used in `/implement`):**
 
 | Role | Default Cheap | Default Expensive | Purpose |
 |------|---------------|-------------------|---------|
-| `planReviewer` | sonnet/medium | opus/high | Review implementation plans (tiered) |
-| `codeReviewer` | sonnet/medium | opus/high | Review code changes (tiered) |
+| `planReviewer` | claude-sonnet-4-5/medium | claude-opus-4-6/high | Review implementation plans (tiered) |
+| `codeReviewer` | claude-sonnet-4-5/medium | claude-opus-4-6/high | Review code changes (tiered) |
 
 #### Model Options
 
 **Available models:**
-- `opus` - Claude Opus 4 (most capable, most expensive)
-- `sonnet` - Claude Sonnet 4.5 (balanced capability/cost)
-- `haiku` - Claude Haiku 4.5 (fast, cheap)
+
+The `model` field accepts any model identifier supported by the pi CLI. Use the same model names you would pass to `pi --model`. For example:
+- `claude-opus-4-6` - Claude Opus 4 (most capable, most expensive)
+- `claude-sonnet-4-5` - Claude Sonnet 4.5 (balanced capability/cost)
+- `claude-haiku-4-5` - Claude Haiku 4.5 (fast, cheap)
+
+Any model supported by pi can be used (e.g., `gpt-5.1-codex`, `gemini-2.5-pro`, etc.).
 
 **Thinking levels:**
 - `high` - Extended reasoning (best quality)
@@ -698,7 +702,7 @@ Errors are tracked in state with full context:
 {
   "lastError": {
     "timestamp": "2026-02-10T10:30:00Z",
-    "agent": "opus",
+    "agent": "claude-opus-4-6",
     "role": "implementer",
     "phase": 2,
     "exitCode": 1,
@@ -729,7 +733,7 @@ The pipeline tracks detailed metrics for optimization:
     "agentCalls": [
       {
         "role": "planDrafter",
-        "model": "opus",
+        "model": "claude-opus-4-6",
         "thinking": "high",
         "startTime": "2026-02-10T10:00:00Z",
         "endTime": "2026-02-10T10:15:00Z",

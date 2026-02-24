@@ -32,15 +32,15 @@ describe("validateConfig", () => {
 				testCommand: "npm test",
 				contextFiles: ["README.md", "CONTRIBUTING.md"],
 				models: {
-					planDrafter: { model: "opus", thinking: "high" },
-					implementer: { model: "opus", thinking: "high" },
+					planDrafter: { model: "claude-opus-4-6", thinking: "high" },
+					implementer: { model: "claude-opus-4-6", thinking: "high" },
 					planReviewer: {
-						cheap: { model: "sonnet", thinking: "medium" },
-						expensive: { model: "opus", thinking: "high" },
+						cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
+						expensive: { model: "claude-opus-4-6", thinking: "high" },
 					},
 					codeReviewer: {
-						cheap: { model: "sonnet", thinking: "medium" },
-						expensive: { model: "opus", thinking: "high" },
+						cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
+						expensive: { model: "claude-opus-4-6", thinking: "high" },
 					},
 				},
 				reviewCycles: {
@@ -81,7 +81,7 @@ describe("validateConfig", () => {
 		it("accepts commitMessageWriter in config (silently ignored)", () => {
 			const config = {
 				models: {
-					commitMessageWriter: { model: "haiku", thinking: "off" },
+					commitMessageWriter: { model: "claude-haiku-4-5", thinking: "off" },
 				},
 			};
 			expect(validateConfig(config)).toEqual([]);
@@ -103,14 +103,14 @@ describe("validateConfig", () => {
 	});
 
 	describe("invalid configurations", () => {
-		it("rejects invalid model name", () => {
+		it("accepts any model name string", () => {
 			const config = {
 				models: {
 					implementer: { model: "gpt-4", thinking: "high" },
 				},
 			};
 			const errors = validateConfig(config);
-			expect(errors.length).toBeGreaterThan(0);
+			expect(errors).toEqual([]);
 		});
 
 		it("rejects invalid thinking level", () => {
@@ -183,36 +183,36 @@ describe("default configurations", () => {
 	describe("DEFAULT_MODEL_CONFIGS", () => {
 		it("has planDrafter config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.planDrafter).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.planDrafter.model).toBe("opus");
+			expect(DEFAULT_MODEL_CONFIGS.planDrafter.model).toBe("claude-opus-4-6");
 		});
 
 		it("has implementer config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.implementer).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.implementer.model).toBe("opus");
+			expect(DEFAULT_MODEL_CONFIGS.implementer.model).toBe("claude-opus-4-6");
 		});
 
 		it("has addressReview config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.addressReview).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.addressReview.model).toBe("sonnet");
+			expect(DEFAULT_MODEL_CONFIGS.addressReview.model).toBe("claude-sonnet-4-5");
 		});
 
 		it("has agentCommitMessageWriter config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe("haiku");
+			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe("claude-haiku-4-5");
 		});
 	});
 
 	describe("DEFAULT_TIERED_CONFIGS", () => {
 		it("has planReviewer tiered config", () => {
 			const config = DEFAULT_TIERED_CONFIGS.planReviewer;
-			expect(config.cheap.model).toBe("sonnet");
-			expect(config.expensive.model).toBe("opus");
+			expect(config.cheap.model).toBe("claude-sonnet-4-5");
+			expect(config.expensive.model).toBe("claude-opus-4-6");
 		});
 
 		it("has codeReviewer tiered config", () => {
 			const config = DEFAULT_TIERED_CONFIGS.codeReviewer;
-			expect(config.cheap.model).toBe("sonnet");
-			expect(config.expensive.model).toBe("opus");
+			expect(config.cheap.model).toBe("claude-sonnet-4-5");
+			expect(config.expensive.model).toBe("claude-opus-4-6");
 		});
 	});
 

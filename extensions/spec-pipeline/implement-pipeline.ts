@@ -74,7 +74,7 @@ function initializeImplMetrics(skipPlanGeneration: boolean): ImplementationMetri
 function recordAgentCall(
 	metrics: ImplementationMetrics,
 	role: RoleName,
-	model: "opus" | "sonnet" | "haiku",
+	model: string,
 	thinking: string,
 	startTime: Date,
 	exitCode: number,

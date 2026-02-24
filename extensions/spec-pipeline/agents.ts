@@ -8,7 +8,6 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type {
 	ModelConfig,
-	AgentName,
 	AgentResult,
 	AgentOutputEvent,
 	ToolEventData,
@@ -16,11 +15,8 @@ import type {
 	ImplementationState,
 	SpecState,
 } from "./types.ts";
-import { AGENTS, MODEL_IDENTIFIERS, READ_ONLY_ROLES, WRITE_ROLES } from "./types.ts";
+import { READ_ONLY_ROLES, WRITE_ROLES } from "./types.ts";
 import { updateImplWidget, updateSpecWidget } from "./formatting.ts";
-
-// Re-export the AGENTS constant for legacy usage
-export { AGENTS };
 
 // ============================================
 // Progress Display Constants
@@ -174,7 +170,7 @@ export async function runAgentWithConfig(
 		"-p",
 		"--no-session",
 		"--model",
-		MODEL_IDENTIFIERS[modelConfig.model],
+		modelConfig.model,
 		"--thinking",
 		modelConfig.thinking,
 	];
@@ -289,27 +285,4 @@ export async function runAgentWithConfig(
 	}
 }
 
-/**
- * Run a pi subprocess with specific agent configuration (legacy wrapper)
- * 
- * This is a convenience wrapper around runAgentWithConfig that looks up
- * the model configuration from the AGENTS constant by agent name.
- */
-export async function runAgent(
-	agentName: AgentName,
-	task: string,
-	cwd: string,
-	systemPrompt: string,
-	signal?: AbortSignal,
-	onOutput?: (event: AgentOutputEvent) => void,
-	role?: string
-): Promise<AgentResult> {
-	const config = AGENTS[agentName];
-	// Create ModelConfig from AGENTS entry
-	// agentName is "opus" | "sonnet" | "haiku" which matches ModelConfig.model
-	const modelConfig: ModelConfig = {
-		model: agentName,
-		thinking: config.thinking as ModelConfig["thinking"],
-	};
-	return runAgentWithConfig(modelConfig, task, cwd, systemPrompt, signal, onOutput, role);
-}
+

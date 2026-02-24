@@ -968,16 +968,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		), "success");
 
 		// Create git commit scoped to the spec file only (dirty tree is OK for doc pipelines)
-		// Conversational roles use hardcoded config (not user-configurable)
-		const conversationalModelConfig = { model: "opus" as const, thinking: "high" as const };
-		
 		// Extract doc name from filename for better commit messages
 		const { extractDocName } = await import("./commit-agent.ts");
 		const docName = extractDocName(state.specFilename);
 		
 		const commitResult = await createAgentCommit(
 			cwd, state,
-			{ role: "specDrafter", modelConfig: conversationalModelConfig, docName },
+			{ role: "specDrafter", modelConfig: projectConfig.models.planDrafter, docName },
 			projectConfig.models.agentCommitMessageWriter,
 			() => saveSpecState(cwd, state),
 			ctx.ui.notify.bind(ctx.ui),
@@ -1099,8 +1096,6 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		), "success");
 
 		// Create git commit scoped to the doc file only (dirty tree is OK for doc pipelines)
-		// Conversational roles use hardcoded config (not user-configurable)
-		const conversationalModelConfig = { model: "opus" as const, thinking: "high" as const };
 		const drafterRole = level === "roadmap" ? "roadmapDrafter" : "epicDrafter";
 		
 		// Extract doc name from filename for better commit messages
@@ -1109,7 +1104,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		
 		const commitResult = await createAgentCommit(
 			cwd, state,
-			{ role: drafterRole, modelConfig: conversationalModelConfig, docName },
+			{ role: drafterRole, modelConfig: projectConfig.models.planDrafter, docName },
 			projectConfig.models.agentCommitMessageWriter,
 			() => {
 				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
@@ -3946,13 +3941,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					), "info");
 
 					// Create git commit scoped to the brainstorm file
-					const conversationalModelConfig = { model: "opus" as const, thinking: "high" as const };
 					const { extractDocName } = await import("./commit-agent.ts");
 					const docName = extractDocName(state.docFilename);
 
 					const commitResult = await createAgentCommit(
 						cwd, state,
-						{ role: "brainstormAgent", modelConfig: conversationalModelConfig, docName },
+						{ role: "brainstormAgent", modelConfig: projectConfig.models.planDrafter, docName },
 						projectConfig.models.agentCommitMessageWriter,
 						() => saveBrainstormState(cwd, state),
 						ctx.ui.notify.bind(ctx.ui) as (msg: string, type: "info" | "error" | "success" | "warning") => void,

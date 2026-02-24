@@ -112,7 +112,7 @@ export function loadSpecState(cwd: string, id: string): SpecState | null {
 			const legacyError = state.lastError as unknown as string;
 			state.lastError = {
 				timestamp: state.updatedAt || new Date().toISOString(),
-				agent: "opus",
+				agent: "unknown",
 				role: "specDrafter",
 				exitCode: 1,
 				stderr: legacyError,
@@ -206,7 +206,7 @@ export function loadImplState(cwd: string, id: string): ImplementationState | nu
 			const legacyError = state.lastError as unknown as string;
 			state.lastError = {
 				timestamp: state.updatedAt || new Date().toISOString(),
-				agent: "opus",
+				agent: "unknown",
 				role: "implementer",
 				exitCode: 1,
 				stderr: legacyError,

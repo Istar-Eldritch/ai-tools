@@ -4,19 +4,11 @@
  * Generic version - adapts to any project structure
  */
 
-export const MODELS = {
+export const DEFAULT_MODELS = {
 	opus: "claude-opus-4-6",
 	sonnet: "claude-sonnet-4-5",
 	haiku: "claude-haiku-4-5",
 } as const;
-
-export const THINKING_LEVELS = {
-	opus: "high",
-	sonnet: "medium",
-	haiku: "off",
-} as const;
-
-export type AgentName = keyof typeof MODELS;
 
 /**
  * Build SystemPromptOptions from a ProjectConfig.

@@ -23,13 +23,14 @@ import {
 
 /**
  * Default model configurations per role (R14)
- * These are the optimized defaults when no configuration is provided
+ * These are the optimized defaults when no configuration is provided.
+ * Model values are actual model identifiers passed directly to the pi CLI.
  */
 export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
-	planDrafter: { model: "opus", thinking: "high" },         // Complex planning task
-	implementer: { model: "opus", thinking: "high" },         // Complex code generation
-	addressReview: { model: "sonnet", thinking: "medium" },    // Fix application — issues already identified by reviewer
-	agentCommitMessageWriter: { model: "haiku", thinking: "off" },  // Fast, cheap commit message generation (R5)
+	planDrafter: { model: "claude-opus-4-6", thinking: "high" },         // Complex planning task
+	implementer: { model: "claude-opus-4-6", thinking: "high" },         // Complex code generation
+	addressReview: { model: "claude-sonnet-4-5", thinking: "medium" },    // Fix application — issues already identified by reviewer
+	agentCommitMessageWriter: { model: "claude-haiku-4-5", thinking: "off" },  // Fast, cheap commit message generation (R5)
 } as const;
 
 /**
@@ -37,12 +38,12 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
  */
 export const DEFAULT_TIERED_CONFIGS: Record<string, TieredModelConfig> = {
 	planReviewer: {
-		cheap: { model: "sonnet", thinking: "medium" },
-		expensive: { model: "opus", thinking: "high" },
+		cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
+		expensive: { model: "claude-opus-4-6", thinking: "high" },
 	},
 	codeReviewer: {
-		cheap: { model: "sonnet", thinking: "medium" },
-		expensive: { model: "opus", thinking: "high" },
+		cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
+		expensive: { model: "claude-opus-4-6", thinking: "high" },
 	},
 } as const;
 

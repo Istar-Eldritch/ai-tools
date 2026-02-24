@@ -142,26 +142,26 @@ describe("formatImplStage", () => {
 
 describe("formatModelConfig", () => {
 	it("formats model with thinking level", () => {
-		expect(formatModelConfig({ model: "opus", thinking: "high" })).toBe("opus/high");
+		expect(formatModelConfig({ model: "claude-opus-4-6", thinking: "high" })).toBe("claude-opus-4-6/high");
 	});
 
 	it("formats sonnet with medium thinking", () => {
-		expect(formatModelConfig({ model: "sonnet", thinking: "medium" })).toBe("sonnet/medium");
+		expect(formatModelConfig({ model: "claude-sonnet-4-5", thinking: "medium" })).toBe("claude-sonnet-4-5/medium");
 	});
 
 	it("formats haiku with off thinking", () => {
-		expect(formatModelConfig({ model: "haiku", thinking: "off" })).toBe("haiku/off");
+		expect(formatModelConfig({ model: "claude-haiku-4-5", thinking: "off" })).toBe("claude-haiku-4-5/off");
 	});
 });
 
 describe("formatTieredConfig", () => {
 	it("formats tiered config with cheap and expensive", () => {
 		const config = {
-			cheap: { model: "sonnet" as const, thinking: "medium" as const },
-			expensive: { model: "opus" as const, thinking: "high" as const },
+			cheap: { model: "claude-sonnet-4-5", thinking: "medium" as const },
+			expensive: { model: "claude-opus-4-6", thinking: "high" as const },
 		};
 		expect(formatTieredConfig(config)).toBe(
-			"cheap=sonnet/medium, expensive=opus/high"
+			"cheap=claude-sonnet-4-5/medium, expensive=claude-opus-4-6/high"
 		);
 	});
 });
