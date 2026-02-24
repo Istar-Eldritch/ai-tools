@@ -3,14 +3,21 @@
   "testCommand": "npm test",
   "contextFiles": ["README.md"],
   "models": {
-    "implementer": { "model": "opus", "thinking": "low" },
+    "planDrafter": { "model": "claude-opus-4-6", "thinking": "low" },
+    "planReviewer": {
+      "cheap": { "model": "claude-sonnet-4-6", "thinking": "low" },
+      "expensive": { "model": "claude-opus-4-6", "thinking": "low" }
+    },
+    "implementer": { "model": "claude-opus-4-6", "thinking": "low" },
     "codeReviewer": {
-      "cheap": { "model": "sonnet", "thinking": "low" },
-      "expensive": { "model": "opus", "thinking": "low" }
-    }
+      "cheap": { "model": "claude-sonnet-4-6", "thinking": "low" },
+      "expensive": { "model": "claude-opus-4-6", "thinking": "low" }
+    },
+    "addressReview": { "model": "claude-sonnet-4-6", "thinking": "off" },
+    "agentCommitMessageWriter": { "model": "claude-haiku-4-5", "thinking": "off" }
   },
   "reviewCycles": {
     "planReviewer": { "cheap": 0, "expensive": 0 },
-    "codeReviewer": { "cheap": 3, "expensive": 0 }
+    "codeReviewer": { "cheap": 5, "expensive": 0 }
   }
 }
