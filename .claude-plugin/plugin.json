@@ -1,0 +1,10 @@
+{
+  "name": "ai-tools",
+  "version": "1.0.0",
+  "description": "Skills for GitHub, Jira, Linear, Kagi search, browser automation, deep research, screenshots, presentations, and more.",
+  "author": {
+    "name": "Mario Zechner"
+  },
+  "repository": "https://github.com/user/ai_tools",
+  "license": "MIT"
+}

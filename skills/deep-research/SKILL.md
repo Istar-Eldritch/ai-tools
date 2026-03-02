@@ -1,7 +1,7 @@
 ---
 name: deep-research
 description: Comprehensive web research combining Kagi search and browser automation. Use when the user needs in-depth research on a topic, investigating multiple sources, fact-checking, comparing information, synthesizing findings, or creating detailed reports with citations.
-allowed-tools: Bash(agent-browser:*), Bash(~/.pi/agent/skills/kagi-search/*)
+allowed-tools: Bash(agent-browser:*), Bash(kagi-search:*)
 ---
 
 # Deep Research

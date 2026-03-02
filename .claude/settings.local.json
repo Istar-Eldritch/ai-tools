@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(plane-cli cycle:*)",
+      "Bash(plane-cli state:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(bash:*)"
+    ]
+  }
+}
