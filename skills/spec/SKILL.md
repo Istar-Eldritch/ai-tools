@@ -7,6 +7,14 @@ description: "Create and manage technical specifications via discovery + draftin
 
 Create technical specifications through a structured discovery → drafting → approval workflow, and condense implemented specs to preserve architectural value.
 
+## Prerequisites
+
+**Before executing any command**, read the core protocols:
+> Read `skills/spec-pipeline-core/CORE.md`
+
+Configuration, state management, discovery mode, git operations, and shared prompts are defined there.
+This file only contains spec-specific workflow and prompts.
+
 ## 1. Command Reference
 
 | Command | Description | Key Flags |
@@ -20,104 +28,7 @@ Create technical specifications through a structured discovery → drafting → 
 | `/discovery-done` | End discovery phase, proceed to drafting | |
 | `/spec-draft-done` | End spec drafting, request user approval | |
 
-## 2. Configuration
-
-Configuration is stored in `.claude/spec-pipeline.json`. All fields are optional — sensible defaults are used when absent.
-
-### Schema
-
-```json
-{
-  "specsDir": "docs/specs",
-  "testCommand": "npm test",
-  "contextFiles": ["README.md", "ARCHITECTURE.md"],
-  "specTemplatePath": "docs/specs/TEMPLATE.md",
-  "specConventionsPath": "docs/SPEC_CONVENTIONS.md",
-  "specFormat": "md",
-  "models": {
-    "commitMessageWriter": { "model": "haiku", "thinking": "off" }
-  }
-}
-```
-
-### Default Behavior
-
-When no config file exists:
-- **specsDir**: Auto-detect by checking `docs/specs` → `docs` → `specs` → `.` (first that exists)
-- **testCommand**: Auto-detect from: `npm test`, `cargo test`, `pytest`, `go test`, `make test`, `./scripts/test.sh`
-- **specFormat**: `"md"` (or inferred from template file extension)
-- **models**: Use the defaults shown above
-
-### Loading Config
-
-At the start of any command:
-1. Check if `.claude/spec-pipeline.json` exists — if so, read it
-2. Auto-detect `specsDir` and `testCommand` if not configured
-3. Discover spec template: search specsDir for files matching `/template/i` with extensions `.md`, `.typ`, `.txt`, `.rst`, `.adoc`
-4. Discover spec conventions: search for files matching `/guide.*spec/i`, `/spec.*guide/i`, `/spec.*convention/i`
-5. Gather project context from: `README.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `AGENTS.md`
-6. Merge any user-specified models with defaults (user config overrides)
-
-### Model Mapping for Agent Tool
-
-When delegating to agents, map model identifiers to the `Agent` tool's `model` parameter:
-- `"opus"` → `model: "opus"`
-- `"sonnet"` → `model: "sonnet"`
-- `"haiku"` → `model: "haiku"`
-
-## 3. State Management
-
-All state is persisted as JSON files in `.claude/spec-pipeline/`.
-
-### Directory Structure
-
-```
-.claude/spec-pipeline/
-├── specs/              # Spec pipeline states
-│   └── <id>.json
-```
-
-### Initialize State Directory
-
-Before first use, run:
-```bash
-bash skills/spec-pipeline-core/state.sh init
-```
-
-### ID Generation
-
-Pipeline IDs use format `YYMMDDhhmmss_XXXX` where XXXX is random hex. Generate via:
-```bash
-bash skills/spec-pipeline-core/state.sh generate-id
-```
-
-Timestamps for filenames use `YYMMDDhhmm` format:
-```bash
-bash skills/spec-pipeline-core/state.sh generate-timestamp
-```
-
-### State Operations
-
-- **Read state**: Use the `Read` tool to read `.claude/spec-pipeline/specs/<id>.json`
-- **Write state**: Use the `Write` tool to write the full JSON state
-- **List states**: `bash skills/spec-pipeline-core/state.sh list specs`
-- **Find active**: `bash skills/spec-pipeline-core/state.sh find-active specs`
-
-### Save Protocol
-
-Save state at EVERY stage transition and after EVERY significant operation:
-1. Update `stage` field
-2. Update `updatedAt` to ISO timestamp
-3. Write the full state JSON via `Write` tool
-
-### Resume Protocol
-
-When resuming (`/spec-resume`):
-1. Run `bash skills/spec-pipeline-core/state.sh find-active specs`
-2. If an ID is returned, read its state file
-3. Resume from the current `stage` — follow the corresponding section's instructions from that point
-
-### Spec State Schema
+## 2. Spec State Schema
 
 ```json
 {
@@ -149,68 +60,13 @@ When resuming (`/spec-resume`):
 
 **Stages**: `"discovery"` → `"spec_drafting"` → `"user_approval"` → `"completed"` | `"cancelled"`
 
-## 4. Discovery Mode
-
-Discovery is a conversational protocol for gathering requirements before writing a spec. It uses the **Assume & Confirm** approach: one assumption at a time.
-
-### Protocol
-
-1. **Explore the codebase** first — find similar features, understand patterns, identify constraints
-2. **Identify the most important ambiguity** in the user's description
-3. **Propose your best assumption** with reasoning grounded in the codebase
-4. **Ask the user to confirm or correct** — one assumption per exchange
-5. **Record each exchange** in state: `{ "assumption": "...", "response": "..." }`
-6. Continue until all important aspects are covered (typically 3-7 exchanges)
-
-### Discovery Categories
-
-Use these to guide which assumptions to surface:
-- **Functional Requirements** — behaviors, inputs/outputs, user workflows
-- **Edge Cases & Error Handling** — failure modes, boundary conditions
-- **Non-Functional Requirements** — performance, security, scalability
-- **Integration & Dependencies** — existing features, external dependencies
-- **Scope & Constraints** — what's out of scope, MVP vs. nice-to-have
-
-### Exchange Format
-
-Each exchange with the user should follow this pattern:
-
-> Based on my exploration of the codebase, I see that [observation about existing patterns].
->
-> **My assumption**: [Concrete proposal for how this aspect should work].
->
-> **Reasoning**: [Why this makes sense — references to existing code, patterns, best practices].
->
-> Does this match what you have in mind, or would you prefer a different approach?
-
-### Ending Discovery
-
-When the user types `/discovery-done` or you've covered all important aspects:
-1. Generate a discovery summary from all exchanges
-2. Save the summary to `state.discovery.summary`
-3. Transition to the next stage (drafting for specs)
-
-### Summary Generation
-
-Combine all exchanges into a markdown summary:
-```markdown
-## Discovery Summary
-
-### Assumption 1: [topic]
-**Proposed**: [assumption text]
-**Decision**: [user's response]
-
-### Assumption 2: [topic]
-...
-```
-
-## 5. Spec Creation (`/spec`)
+## 3. Spec Creation (`/spec`)
 
 ### Entry Points
 
 - `/spec <description>` — Full flow: discovery → drafting → approval
 - `/spec --quick <description>` — Skip discovery, go directly to drafting
-- `/spec-resume` — Resume an active spec pipeline
+- `/spec-resume` — Resume an active spec pipeline (see CORE.md §2 Resume Protocol)
 - `/spec-status` — Show status of all spec pipelines
 - `/spec-list` — List all spec state IDs
 - `/spec-cancel` — Cancel the active spec pipeline
@@ -219,23 +75,30 @@ Combine all exchanges into a markdown summary:
 
 #### Step 1: Initialize
 
-1. Load configuration (Section 2)
+1. Load configuration:
+   ```bash
+   bash skills/spec-pipeline-core/config.sh load-config --needs-test-command --needs-template
+   ```
 2. Initialize state directory: `bash skills/spec-pipeline-core/state.sh init`
-3. Generate pipeline ID and timestamp
-4. Derive a short name from the description:
-   - Extract 1-4 content words (remove stop words: a, an, the, and, or, for, of, in, on, to, with, is, are, be, its, this, that, from, by, at)
-   - Join with underscores, lowercase
-   - Example: "Add user authentication" → `user_authentication`
-5. Construct spec filename: `{timestamp}_{short_name}.{format}`
-6. Construct spec path: `{specsDir}/{filename}`
+3. Generate pipeline ID: `bash skills/spec-pipeline-core/state.sh generate-id`
+4. Generate timestamp: `bash skills/spec-pipeline-core/state.sh generate-timestamp`
+5. Derive short name:
+   ```bash
+   bash skills/spec-pipeline-core/config.sh derive-short-name "<description>"
+   ```
+6. Construct spec path:
+   ```bash
+   bash skills/spec-pipeline-core/config.sh construct-paths \
+     --specs-dir {specsDir} --timestamp {timestamp} \
+     --short-name {short_name} --format {specFormat} --type spec
+   ```
 7. Create initial spec state and save it
 
-Use `TaskCreate` to track progress:
-- Task: "Create spec: {description}"
+Use `TaskCreate` to track progress: "Create spec: {description}"
 
 #### Step 2: Discovery (skip if `--quick`)
 
-Enter discovery mode (Section 4). For each exchange:
+Follow CORE.md §3 Discovery Mode. For each exchange:
 1. Follow the discovery protocol
 2. After each user response, save the exchange to `state.discovery.exchanges`
 3. Save state after each exchange
@@ -282,20 +145,17 @@ Present the spec to the user. They can:
 
 #### Step 5: Commit
 
-When approved:
-1. Stage the spec file: `git add {specPath}`
-2. Generate a commit message via Agent:
-   ```
-   Agent(model: haiku, prompt: <commitMessageWriter prompt + diff>)
-   ```
-3. Commit: `git commit -m "{message}"`
-4. Update task as completed
+When approved, commit using git-helpers (see CORE.md §4):
+```bash
+bash skills/spec-pipeline-core/git-helpers.sh scoped-commit --files "{specPath}" --message "{commitMsg}"
+```
+Generate commit message via `Agent(model: haiku, prompt: <commitMessageWriter prompt + diff>)` — see CORE.md §5 for the prompt.
 
 ### Quick Mode (`/spec --quick`)
 
 Same as above but skip Step 2 entirely. Go directly from initialization to drafting.
 
-## 6. Condense Spec (`/condense-spec`)
+## 4. Condense Spec (`/condense-spec`)
 
 Condense a specification by removing implementation details while preserving architectural value.
 
@@ -459,91 +319,7 @@ If in doubt, ask: "Does this help someone understand the architecture?"
 - If yes → keep
 - If no → remove
 
-## 7. Git Operations
-
-### Branching
-
-The pipeline operates on the current branch. No automatic branch creation — the user manages branches.
-
-### Scoped Commits
-
-Commits are scoped to specific file sets, not `git add -A`:
-1. Get modified files: `git status --porcelain`
-2. Stage specific files: `git add <file1> <file2> ...`
-3. For agent commits, scope to files the agent actually modified
-4. For final phase commits, use `git add -A` for any remaining changes
-
-### Commit Message Generation
-
-For automated commits, delegate to a haiku agent:
-
-```
-Agent(model: haiku, prompt: <commitMessageWriter prompt + diff content>)
-```
-
-**Diff truncation**: Limit diff content to 8000 characters to avoid overwhelming the model.
-
-**Message format**:
-```
-<type>(<scope>): <subject>
-
-<body>
-```
-
-- **type**: `feat` | `fix` | `docs` | `refactor` | `test` | `chore`
-- **scope**: Component/area affected, derived from spec name or phase
-- **subject**: Imperative mood, lowercase, no period, max 50 chars
-- **body**: Explain what and why, wrap at 72 chars
-
-### Conventional Commit Types by Role
-
-| Role | Default Type | Example |
-|------|-------------|---------|
-| specDrafter | `docs` | `docs(specs): add user authentication specification` |
-
-## 8. System Prompts
-
-These are the role-specific prompts used when delegating to Agent tool invocations. Include the relevant prompt as the agent's instructions.
-
-### Discovery Agent
-
-```
-You are a requirements discovery expert helping to gather information before writing a technical specification.
-
-Your task is to identify ambiguities and gaps, then propose the most likely solution for each — one at a time — for the user to confirm or correct.
-
-{projectContext}
-
-## Your Role
-
-You are conducting a discovery session to understand the user's requirements better. Your goal is to:
-1. Identify ambiguities and gaps in the initial description
-2. Uncover edge cases and error scenarios
-3. Understand non-functional requirements (performance, security, scalability)
-4. Clarify integration points with existing systems
-5. Define success criteria and acceptance conditions
-
-## Approach: Assume & Confirm (One at a Time)
-
-Instead of asking open-ended questions, you should:
-1. Explore the codebase to understand the context
-2. Identify the most important ambiguity or gap
-3. Propose your best assumption for how it should work
-4. Explain your reasoning — why you think this is the right approach
-5. Ask the user to confirm or correct your assumption
-
-Present ONE assumption per exchange. Prioritize the most impactful decisions first.
-
-## Discovery Categories
-
-1. Functional Requirements — expected behaviors, inputs/outputs, user workflows
-2. Edge Cases & Error Handling — failure modes, invalid inputs, boundary conditions
-3. Non-Functional Requirements — performance, security, scalability constraints
-4. Integration & Dependencies — interaction with existing features, external dependencies
-5. Scope & Constraints — what's out of scope, MVP vs. nice-to-have
-
-Always ground your assumptions in codebase evidence or established best practices. Do NOT write specification content yet.
-```
+## 5. System Prompts
 
 ### Spec Drafter
 
@@ -583,23 +359,4 @@ Bad: "Add cancel_job method to JobManager class"
 ## Output Format
 
 After creating the spec content, use the write tool to save it to the EXACT path provided in your task. Do NOT output the spec as text.
-```
-
-### Commit Message Writer
-
-```
-You are writing git commit messages.
-
-Format:
-<type>(<scope>): <subject>
-
-<body>
-
-Rules:
-- type: feat | fix | docs | refactor | test | chore
-- scope: Component/area affected
-- subject: Imperative mood, lowercase, no period, max 50 chars
-- body: Explain what and why (not how), wrap at 72 chars
-
-Output ONLY the commit message, nothing else.
 ```

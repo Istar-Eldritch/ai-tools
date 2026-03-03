@@ -8,6 +8,7 @@
 #   find-active <type>      Find most recent non-completed state ID
 #   generate-id             Generate a unique pipeline ID (YYMMDDhhmmss_XXXX)
 #   generate-timestamp      Generate a timestamp (YYMMDDhhmm)
+#   reset-phase-state <file> Reset per-phase state fields, output updated JSON to stdout
 
 set -euo pipefail
 
@@ -78,6 +79,40 @@ cmd_generate_timestamp() {
   date -u +"%y%m%d%H%M"
 }
 
+cmd_reset_phase_state() {
+  local state_file="${1:?Usage: state.sh reset-phase-state <state-file>}"
+
+  if [ ! -f "$state_file" ]; then
+    echo "Error: state file not found: $state_file" >&2
+    exit 1
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq is required. Install with: sudo apt install jq (Debian/Ubuntu), brew install jq (macOS)" >&2
+    exit 2
+  fi
+
+  # Read current state
+  local state
+  state=$(cat "$state_file")
+
+  # Get current phase index and increment
+  local current_index
+  current_index=$(echo "$state" | jq -r '.currentPhaseIndex // 0')
+  local new_index=$((current_index + 1))
+
+  # Reset per-phase fields and increment currentPhaseIndex
+  # Output to stdout — caller (LLM) writes via Write tool
+  echo "$state" | jq \
+    --argjson idx "$new_index" \
+    '.currentReviewCycle = 0
+     | .previousReview = ""
+     | .reviewCyclesCompleted = 0
+     | .implementerCompletedForPhase = false
+     | .currentPhaseIndex = $idx
+     | .updatedAt = (now | strftime("%Y-%m-%dT%H:%M:%SZ"))'
+}
+
 # Main dispatcher
 case "${1:-help}" in
   init)             cmd_init ;;
@@ -85,6 +120,7 @@ case "${1:-help}" in
   find-active)      cmd_find_active "${2:-}" ;;
   generate-id)      cmd_generate_id ;;
   generate-timestamp) cmd_generate_timestamp ;;
+  reset-phase-state) cmd_reset_phase_state "${2:-}" ;;
   help|--help|-h)
     echo "Usage: bash state.sh <command> [args...]"
     echo ""
@@ -94,6 +130,7 @@ case "${1:-help}" in
     echo "  find-active <type>      Find most recent non-completed state ID"
     echo "  generate-id             Generate a unique pipeline ID"
     echo "  generate-timestamp      Generate a timestamp (YYMMDDhhmm)"
+    echo "  reset-phase-state <f>   Reset per-phase state, output JSON to stdout"
     ;;
   *)
     echo "Unknown command: $1" >&2

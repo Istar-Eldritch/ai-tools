@@ -7,6 +7,14 @@ description: "Hierarchical planning for software projects: scoping assessment (/
 
 Hierarchical planning that decomposes large initiatives into roadmaps, epics, and feature specs through structured discovery and drafting workflows.
 
+## Prerequisites
+
+**Before executing any command**, read the core protocols:
+> Read `skills/spec-pipeline-core/CORE.md`
+
+Configuration, state management, discovery mode, git operations, and shared prompts are defined there.
+This file only contains planning-specific workflow and prompts.
+
 ## 1. Command Reference
 
 | Command | Description | Key Flags |
@@ -17,95 +25,7 @@ Hierarchical planning that decomposes large initiatives into roadmaps, epics, an
 | `/epic <description>` | Create an epic (decomposes into feature specs) | |
 | `/draft-done` | End hierarchy (roadmap/epic) drafting, request approval | |
 
-## 2. Configuration
-
-Configuration is stored in `.claude/spec-pipeline.json`. All fields are optional — sensible defaults are used when absent.
-
-### Schema
-
-```json
-{
-  "specsDir": "docs/specs",
-  "contextFiles": ["README.md", "ARCHITECTURE.md"],
-  "specFormat": "md",
-  "models": {
-    "commitMessageWriter": { "model": "haiku", "thinking": "off" }
-  }
-}
-```
-
-### Default Behavior
-
-When no config file exists:
-- **specsDir**: Auto-detect by checking `docs/specs` → `docs` → `specs` → `.` (first that exists)
-- **specFormat**: `"md"` (or inferred from template file extension)
-- **models**: Use the defaults shown above
-
-### Loading Config
-
-At the start of any command:
-1. Check if `.claude/spec-pipeline.json` exists — if so, read it
-2. Auto-detect `specsDir` if not configured
-3. Gather project context from: `README.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `AGENTS.md`
-4. Merge any user-specified models with defaults (user config overrides)
-
-### Model Mapping for Agent Tool
-
-When delegating to agents, map model identifiers to the `Agent` tool's `model` parameter:
-- `"opus"` → `model: "opus"`
-- `"sonnet"` → `model: "sonnet"`
-- `"haiku"` → `model: "haiku"`
-
-## 3. State Management
-
-All state is persisted as JSON files in `.claude/spec-pipeline/`.
-
-### Directory Structure
-
-```
-.claude/spec-pipeline/
-├── specs/              # Referenced for plan-overview
-│   └── <id>.json
-├── roadmaps/           # Roadmap states
-│   └── <id>.json
-└── epics/              # Epic states
-    └── <id>.json
-```
-
-### Initialize State Directory
-
-Before first use, run:
-```bash
-bash skills/spec-pipeline-core/state.sh init
-```
-
-### ID Generation
-
-Pipeline IDs use format `YYMMDDhhmmss_XXXX` where XXXX is random hex. Generate via:
-```bash
-bash skills/spec-pipeline-core/state.sh generate-id
-```
-
-Timestamps for filenames use `YYMMDDhhmm` format:
-```bash
-bash skills/spec-pipeline-core/state.sh generate-timestamp
-```
-
-### State Operations
-
-- **Read state**: Use the `Read` tool to read `.claude/spec-pipeline/<type>/<id>.json`
-- **Write state**: Use the `Write` tool to write the full JSON state
-- **List states**: `bash skills/spec-pipeline-core/state.sh list <type>`
-- **Find active**: `bash skills/spec-pipeline-core/state.sh find-active <type>`
-
-### Save Protocol
-
-Save state at EVERY stage transition and after EVERY significant operation:
-1. Update `stage` field
-2. Update `updatedAt` to ISO timestamp
-3. Write the full state JSON via `Write` tool
-
-### Hierarchy State Schema (Roadmap/Epic)
+## 2. Hierarchy State Schema (Roadmap/Epic)
 
 ```json
 {
@@ -128,62 +48,7 @@ Save state at EVERY stage transition and after EVERY significant operation:
 
 **Stages**: `"discovery"` → `"drafting"` → `"user_approval"` → `"child_extraction"` → `"completed"` | `"cancelled"`
 
-## 4. Discovery Mode
-
-Discovery is a conversational protocol for gathering requirements before writing a roadmap or epic. It uses the **Assume & Confirm** approach: one assumption at a time.
-
-### Protocol
-
-1. **Explore the codebase** first — find similar features, understand patterns, identify constraints
-2. **Identify the most important ambiguity** in the user's description
-3. **Propose your best assumption** with reasoning grounded in the codebase
-4. **Ask the user to confirm or correct** — one assumption per exchange
-5. **Record each exchange** in state: `{ "assumption": "...", "response": "..." }`
-6. Continue until all important aspects are covered (typically 3-7 exchanges)
-
-### Discovery Categories
-
-Use these to guide which assumptions to surface:
-- **Functional Requirements** — behaviors, inputs/outputs, user workflows
-- **Edge Cases & Error Handling** — failure modes, boundary conditions
-- **Non-Functional Requirements** — performance, security, scalability
-- **Integration & Dependencies** — existing features, external dependencies
-- **Scope & Constraints** — what's out of scope, MVP vs. nice-to-have
-
-### Exchange Format
-
-Each exchange with the user should follow this pattern:
-
-> Based on my exploration of the codebase, I see that [observation about existing patterns].
->
-> **My assumption**: [Concrete proposal for how this aspect should work].
->
-> **Reasoning**: [Why this makes sense — references to existing code, patterns, best practices].
->
-> Does this match what you have in mind, or would you prefer a different approach?
-
-### Ending Discovery
-
-When the user types `/discovery-done` or you've covered all important aspects:
-1. Generate a discovery summary from all exchanges
-2. Save the summary to `state.discovery.summary`
-3. Transition to the next stage (drafting)
-
-### Summary Generation
-
-Combine all exchanges into a markdown summary:
-```markdown
-## Discovery Summary
-
-### Assumption 1: [topic]
-**Proposed**: [assumption text]
-**Decision**: [user's response]
-
-### Assumption 2: [topic]
-...
-```
-
-## 5. Scoping Assessment (`/plan`)
+## 3. Scoping Assessment (`/plan`)
 
 The `/plan` command helps determine the right level for the user's work.
 
@@ -215,7 +80,7 @@ The `/plan` command helps determine the right level for the user's work.
 
 4. User confirms or overrides → proceed to the appropriate workflow
 
-## 6. Plan Overview (`/plan-overview`)
+## 4. Plan Overview (`/plan-overview`)
 
 Show the full hierarchy of existing plans:
 
@@ -232,12 +97,12 @@ Roadmap: Platform Modernization (260302_abc)
   +- Epic: Frontend Migration (260302_mno) [pending]
 ```
 
-## 7. Roadmap Creation (`/roadmap`)
+## 5. Roadmap Creation (`/roadmap`)
 
 ### Workflow
 
-1. **Initialize**: Generate ID, timestamp, short name. Create state with `level: "roadmap"`.
-2. **Discovery**: Same as discovery (Section 4) but focused on initiative scope.
+1. **Initialize**: Load config via `bash skills/spec-pipeline-core/config.sh load-config`. Generate ID, timestamp, short name. Construct paths with `--type roadmap`. Create state with `level: "roadmap"`.
+2. **Discovery**: Follow CORE.md §3 Discovery Mode, focused on initiative scope.
 3. **Drafting**: Delegate to Agent:
    ```
    Agent(model: opus, prompt: <roadmapDrafter system prompt + discovery summary + project context>)
@@ -256,126 +121,35 @@ Roadmap: Platform Modernization (260302_abc)
    ```
 
 4. **User Approval**: Present document, user approves or requests changes.
-5. **Child Extraction**: Parse the child items table from the approved document.
-   - Match table rows with columns: #, Item, Description, Priority, Dependencies
-   - Extract each row as a child item
-   - Save to `state.childItems[]`
-6. **Commit**: Stage and commit the roadmap document.
+5. **Child Extraction**: Parse child items from the approved document:
+   ```bash
+   bash skills/spec-pipeline-core/parse.sh extract-child-items "{docPath}"
+   ```
+   Save result to `state.childItems[]`.
+6. **Commit**: Use `bash skills/spec-pipeline-core/git-helpers.sh scoped-commit --files "{docPath}" --message "{commitMsg}"`. Generate commit message via haiku agent — see CORE.md §4-5.
 7. **Next Steps**: Inform user they can now create epics for each child item:
    ```
    To create an epic for item 1: /epic "Epic name - Brief description"
    ```
 
-## 8. Epic Creation (`/epic`)
+## 6. Epic Creation (`/epic`)
 
 Same workflow as roadmap but:
 - Uses `epicDrafter` and `epicReviewer` prompts instead
+- Construct paths with `--type epic`
 - Document structure:
   - PART I: Epic Overview (goal, requirements, success criteria, scope)
   - PART II: Feature Decomposition (child items table)
   - PART III: Technical Considerations
 - Child items decompose into feature specs (not epics)
-- After approval, inform user they can create specs:
+- After approval, extract child items: `bash skills/spec-pipeline-core/parse.sh extract-child-items "{docPath}"`
+- Inform user they can create specs:
   ```
   To create a spec for item 1: /spec "Feature name - Brief description"
   ```
 - If this epic is a child of a roadmap, record `parentId` in state
 
-### Child Item Extraction
-
-Parse a markdown table to extract child items:
-
-1. Find table with columns: `#`, `Item`, `Description`, `Priority`, `Dependencies`
-2. For each data row:
-   - Extract: number, item name, description, priority (High/Medium/Low)
-   - Parse dependencies as comma-separated numbers
-3. Return as array of child items
-
-## 9. Git Operations
-
-### Branching
-
-The pipeline operates on the current branch. No automatic branch creation — the user manages branches.
-
-### Scoped Commits
-
-Commits are scoped to specific file sets, not `git add -A`:
-1. Get modified files: `git status --porcelain`
-2. Stage specific files: `git add <file1> <file2> ...`
-3. For agent commits, scope to files the agent actually modified
-4. For final phase commits, use `git add -A` for any remaining changes
-
-### Commit Message Generation
-
-For automated commits, delegate to a haiku agent:
-
-```
-Agent(model: haiku, prompt: <commitMessageWriter prompt + diff content>)
-```
-
-**Diff truncation**: Limit diff content to 8000 characters to avoid overwhelming the model.
-
-**Message format**:
-```
-<type>(<scope>): <subject>
-
-<body>
-```
-
-- **type**: `feat` | `fix` | `docs` | `refactor` | `test` | `chore`
-- **scope**: Component/area affected, derived from spec name or phase
-- **subject**: Imperative mood, lowercase, no period, max 50 chars
-- **body**: Explain what and why, wrap at 72 chars
-
-### Conventional Commit Types by Role
-
-| Role | Default Type | Example |
-|------|-------------|---------|
-| specDrafter | `docs` | `docs(specs): add user authentication specification` |
-
-## 10. System Prompts
-
-These are the role-specific prompts used when delegating to Agent tool invocations. Include the relevant prompt as the agent's instructions.
-
-### Discovery Agent
-
-```
-You are a requirements discovery expert helping to gather information before writing a technical specification.
-
-Your task is to identify ambiguities and gaps, then propose the most likely solution for each — one at a time — for the user to confirm or correct.
-
-{projectContext}
-
-## Your Role
-
-You are conducting a discovery session to understand the user's requirements better. Your goal is to:
-1. Identify ambiguities and gaps in the initial description
-2. Uncover edge cases and error scenarios
-3. Understand non-functional requirements (performance, security, scalability)
-4. Clarify integration points with existing systems
-5. Define success criteria and acceptance conditions
-
-## Approach: Assume & Confirm (One at a Time)
-
-Instead of asking open-ended questions, you should:
-1. Explore the codebase to understand the context
-2. Identify the most important ambiguity or gap
-3. Propose your best assumption for how it should work
-4. Explain your reasoning — why you think this is the right approach
-5. Ask the user to confirm or correct your assumption
-
-Present ONE assumption per exchange. Prioritize the most impactful decisions first.
-
-## Discovery Categories
-
-1. Functional Requirements — expected behaviors, inputs/outputs, user workflows
-2. Edge Cases & Error Handling — failure modes, invalid inputs, boundary conditions
-3. Non-Functional Requirements — performance, security, scalability constraints
-4. Integration & Dependencies — interaction with existing features, external dependencies
-5. Scope & Constraints — what's out of scope, MVP vs. nice-to-have
-
-Always ground your assumptions in codebase evidence or established best practices. Do NOT write specification content yet.
-```
+## 7. System Prompts
 
 ### Scoping Agent
 
@@ -513,23 +287,4 @@ You are a senior technical reviewer evaluating an epic document.
 5. Child Items Table Format — MUST have: #, Item, Description, Priority, Dependencies
 
 **Verdict**: APPROVED | NEEDS_CHANGES
-```
-
-### Commit Message Writer
-
-```
-You are writing git commit messages.
-
-Format:
-<type>(<scope>): <subject>
-
-<body>
-
-Rules:
-- type: feat | fix | docs | refactor | test | chore
-- scope: Component/area affected
-- subject: Imperative mood, lowercase, no period, max 50 chars
-- body: Explain what and why (not how), wrap at 72 chars
-
-Output ONLY the commit message, nothing else.
 ```

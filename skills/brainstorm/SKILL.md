@@ -7,6 +7,14 @@ description: "Open-ended divergent exploration and brainstorming sessions with s
 
 Open-ended divergent exploration sessions that surface tradeoffs, risks, and opportunities — then synthesize findings into a structured document.
 
+## Prerequisites
+
+**Before executing any command**, read the core protocols:
+> Read `skills/spec-pipeline-core/CORE.md`
+
+Configuration, state management, git operations, and shared prompts are defined there.
+This file only contains brainstorm-specific workflow and prompts.
+
 ## 1. Command Reference
 
 | Command | Description |
@@ -14,89 +22,7 @@ Open-ended divergent exploration sessions that surface tradeoffs, risks, and opp
 | `/brainstorm <description>` | Start a brainstorming session |
 | `/brainstorm-done` | Synthesize the brainstorm into a document |
 
-## 2. Configuration
-
-Configuration is stored in `.claude/spec-pipeline.json`. All fields are optional — sensible defaults are used when absent.
-
-### Relevant Fields
-
-```json
-{
-  "specsDir": "docs/specs",
-  "specFormat": "md",
-  "models": {
-    "commitMessageWriter": { "model": "haiku", "thinking": "off" }
-  }
-}
-```
-
-### Default Behavior
-
-When no config file exists:
-- **specsDir**: Auto-detect by checking `docs/specs` → `docs` → `specs` → `.` (first that exists)
-- **specFormat**: `"md"` (or inferred from template file extension)
-- **models**: Use the defaults shown above
-
-### Loading Config
-
-At the start of any command:
-1. Check if `.claude/spec-pipeline.json` exists — if so, read it
-2. Auto-detect `specsDir` if not configured
-3. Gather project context from: `README.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `AGENTS.md`
-
-### Model Mapping for Agent Tool
-
-When delegating to agents, map model identifiers to the `Agent` tool's `model` parameter:
-- `"opus"` → `model: "opus"`
-- `"sonnet"` → `model: "sonnet"`
-- `"haiku"` → `model: "haiku"`
-
-## 3. State Management
-
-All state is persisted as JSON files in `.claude/spec-pipeline/`.
-
-### Directory Structure
-
-```
-.claude/spec-pipeline/
-└── brainstorms/        # Brainstorm states
-    └── <id>.json
-```
-
-### Initialize State Directory
-
-Before first use, run:
-```bash
-bash skills/spec-pipeline-core/state.sh init
-```
-
-### ID Generation
-
-Pipeline IDs use format `YYMMDDhhmmss_XXXX` where XXXX is random hex. Generate via:
-```bash
-bash skills/spec-pipeline-core/state.sh generate-id
-```
-
-Timestamps for filenames use `YYMMDDhhmm` format:
-```bash
-bash skills/spec-pipeline-core/state.sh generate-timestamp
-```
-
-### State Operations
-
-- **Read state**: Use the `Read` tool to read `.claude/spec-pipeline/brainstorms/<id>.json`
-- **Write state**: Use the `Write` tool to write the full JSON state
-- **List states**: `bash skills/spec-pipeline-core/state.sh list brainstorms`
-- **Find active**: `bash skills/spec-pipeline-core/state.sh find-active brainstorms`
-
-### Save Protocol
-
-Save state at EVERY stage transition and after EVERY significant operation:
-1. Update `stage` field
-2. Update `updatedAt` to ISO timestamp
-3. Write the full state JSON via `Write` tool
-
-### Brainstorm State Schema
+## 2. Brainstorm State Schema
 
 ```json
 {
@@ -112,18 +38,17 @@ Save state at EVERY stage transition and after EVERY significant operation:
 
 **Stages**: `"brainstorming"` → `"synthesis"` → `"completed"` | `"cancelled"`
 
-## 4. Brainstorming Workflow (`/brainstorm`)
-
-### Entry Points
-
-- `/brainstorm <description>` — Start a brainstorming session
-- `/brainstorm-done` — Synthesize the brainstorm into a document
+## 3. Brainstorming Workflow (`/brainstorm`)
 
 ### Step 1: Initialize
 
-1. Generate brainstorm ID and timestamp
-2. Create initial brainstorm state with `stage: "brainstorming"`
-3. Save state
+1. Load configuration: `bash skills/spec-pipeline-core/config.sh load-config`
+2. Initialize state directory: `bash skills/spec-pipeline-core/state.sh init`
+3. Generate pipeline ID: `bash skills/spec-pipeline-core/state.sh generate-id`
+4. Generate timestamp: `bash skills/spec-pipeline-core/state.sh generate-timestamp`
+5. Derive short name: `bash skills/spec-pipeline-core/config.sh derive-short-name "<description>"`
+6. Create initial brainstorm state with `stage: "brainstorming"`
+7. Save state
 
 ### Step 2: Brainstorming Session
 
@@ -190,51 +115,20 @@ When the user types `/brainstorm-done`:
 [Feature, epic, or roadmap-level effort — and why]
 ```
 
-3. Write the document to `{specsDir}/{timestamp}_brainstorm_{short_name}.md`
-4. Stage and commit the document
-5. Set `state.synthesisPath` to the file path
-6. Set `state.stage = "completed"`
-7. Save state
+3. Construct the output path:
+   ```bash
+   bash skills/spec-pipeline-core/config.sh construct-paths \
+     --specs-dir {specsDir} --timestamp {timestamp} \
+     --short-name {short_name} --format {specFormat} --type brainstorm
+   ```
+4. Write the document to the constructed path
+5. Commit: `bash skills/spec-pipeline-core/git-helpers.sh scoped-commit --files "{docPath}" --message "{commitMsg}"`
+   Generate commit message via `Agent(model: haiku, prompt: <commitMessageWriter prompt + diff>)` — see CORE.md §5 for the prompt.
+6. Set `state.synthesisPath` to the file path
+7. Set `state.stage = "completed"`
+8. Save state
 
-## 5. Git Operations
-
-### Scoped Commits
-
-Commits are scoped to specific file sets, not `git add -A`:
-1. Get modified files: `git status --porcelain`
-2. Stage specific files: `git add <file1> <file2> ...`
-
-### Commit Message Generation
-
-For automated commits, delegate to a haiku agent:
-
-```
-Agent(model: haiku, prompt: <commitMessageWriter prompt + diff content>)
-```
-
-**Diff truncation**: Limit diff content to 8000 characters to avoid overwhelming the model.
-
-**Message format**:
-```
-<type>(<scope>): <subject>
-
-<body>
-```
-
-- **type**: `feat` | `fix` | `docs` | `refactor` | `test` | `chore`
-- **scope**: Component/area affected
-- **subject**: Imperative mood, lowercase, no period, max 50 chars
-- **body**: Explain what and why, wrap at 72 chars
-
-### Conventional Commit Types by Role
-
-| Role | Default Type | Example |
-|------|-------------|---------|
-| brainstormAgent | `docs` | `docs(brainstorm): capture brainstorm session` |
-
-## 6. System Prompts
-
-These are the role-specific prompts used when delegating to Agent tool invocations. Include the relevant prompt as the agent's instructions.
+## 4. System Prompts
 
 ### Brainstorm Agent
 
@@ -261,23 +155,4 @@ You are a creative thought partner helping to explore and brainstorm ideas befor
 - Reference the codebase: Ground proposals in what actually exists
 
 Do NOT write specifications, plans, or code. Encourage exploration, not convergence.
-```
-
-### Commit Message Writer
-
-```
-You are writing git commit messages.
-
-Format:
-<type>(<scope>): <subject>
-
-<body>
-
-Rules:
-- type: feat | fix | docs | refactor | test | chore
-- scope: Component/area affected
-- subject: Imperative mood, lowercase, no period, max 50 chars
-- body: Explain what and why (not how), wrap at 72 chars
-
-Output ONLY the commit message, nothing else.
 ```
