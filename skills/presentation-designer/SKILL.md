@@ -24,7 +24,7 @@ There are two versions of the designer:
 ### Version 2 (Recommended) - Smart & Iterative
 
 ```bash
-node /home/rpaz/code/ai_tools/skills/presentation-designer/designer-v2.js
+node skills/presentation-designer/designer-v2.js
 ```
 
 **Features:**
@@ -38,7 +38,7 @@ node /home/rpaz/code/ai_tools/skills/presentation-designer/designer-v2.js
 ### Version 1 - Direct & Straightforward
 
 ```bash
-node /home/rpaz/code/ai_tools/skills/presentation-designer/designer.js
+node skills/presentation-designer/designer.js
 ```
 
 **Features:**
@@ -338,7 +338,7 @@ Using the design document in presentation-design.yaml, create a Typst presentati
 If you get a "module not found" error, install dependencies:
 
 ```bash
-cd /home/rpaz/code/ai_tools/skills/presentation-designer
+cd skills/presentation-designer
 npm install
 ```
 

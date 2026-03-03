@@ -36,16 +36,16 @@ sudo apt install maim              # Debian/Ubuntu (maim)
 
 ```bash
 # Capture full screen
-~/.pi/agent/skills/screenshot/screenshot.sh
+skills/screenshot/screenshot.sh
 
 # Capture to specific file
-~/.pi/agent/skills/screenshot/screenshot.sh output.png
+skills/screenshot/screenshot.sh output.png
 
 # Capture specific region (interactive selection)
-~/.pi/agent/skills/screenshot/screenshot.sh --region output.png
+skills/screenshot/screenshot.sh --region output.png
 
 # Capture with delay (useful for capturing menus)
-~/.pi/agent/skills/screenshot/screenshot.sh --delay 3 output.png
+skills/screenshot/screenshot.sh --delay 3 output.png
 ```
 
 ## Options
@@ -61,22 +61,22 @@ sudo apt install maim              # Debian/Ubuntu (maim)
 
 ### Full screen capture
 ```bash
-~/.pi/agent/skills/screenshot/screenshot.sh screenshot.png
+skills/screenshot/screenshot.sh screenshot.png
 ```
 
 ### Capture after delay (for menus, tooltips)
 ```bash
-~/.pi/agent/skills/screenshot/screenshot.sh --delay 5 menu.png
+skills/screenshot/screenshot.sh --delay 5 menu.png
 ```
 
 ### Select region to capture
 ```bash
-~/.pi/agent/skills/screenshot/screenshot.sh --region selection.png
+skills/screenshot/screenshot.sh --region selection.png
 ```
 
 ### Capture specific window
 ```bash
-~/.pi/agent/skills/screenshot/screenshot.sh --window window.png
+skills/screenshot/screenshot.sh --window window.png
 ```
 
 ## Output

@@ -190,8 +190,8 @@ Each example demonstrates different presentation types:
 - [Touying Framework](https://github.com/touying-typ/touying)
 
 ### Pi Documentation
-- Pi skills: `/home/rpaz/.local/opt/node/lib/node_modules/@mariozechner/pi-coding-agent/docs/skills.md`
-- Pi README: `/home/rpaz/.local/opt/node/lib/node_modules/@mariozechner/pi-coding-agent/README.md`
+- Pi skills: See Pi coding agent documentation for skills reference
+- Pi README: See Pi coding agent README
 
 ## ✅ Verification
 

@@ -18,55 +18,55 @@ Convert PDF, images, PPTX, DOCX, XLSX, HTML, and EPUB files to markdown, JSON, H
 
 ```bash
 # Basic conversion to markdown
-~/.pi/agent/skills/marker/convert.sh document.pdf
+skills/marker/convert.sh document.pdf
 
 # Convert to JSON
-~/.pi/agent/skills/marker/convert.sh document.pdf --json
+skills/marker/convert.sh document.pdf --json
 
 # Use LLM for higher accuracy
-~/.pi/agent/skills/marker/convert.sh document.pdf --use-llm
+skills/marker/convert.sh document.pdf --use-llm
 
 # Convert specific pages
-~/.pi/agent/skills/marker/convert.sh document.pdf --page-range "0-5,10"
+skills/marker/convert.sh document.pdf --page-range "0-5,10"
 
 # Force OCR (good for scanned docs or inline math)
-~/.pi/agent/skills/marker/convert.sh scanned.pdf --force-ocr
+skills/marker/convert.sh scanned.pdf --force-ocr
 
 # Specify output directory
-~/.pi/agent/skills/marker/convert.sh document.pdf --output-dir ./output
+skills/marker/convert.sh document.pdf --output-dir ./output
 ```
 
 ### batch-convert.sh - Batch Conversion
 
 ```bash
 # Convert all documents in a folder
-~/.pi/agent/skills/marker/batch-convert.sh ./pdfs ./output
+skills/marker/batch-convert.sh ./pdfs ./output
 
 # With parallel workers
-~/.pi/agent/skills/marker/batch-convert.sh ./documents --workers 4
+skills/marker/batch-convert.sh ./documents --workers 4
 
 # Batch convert to JSON
-~/.pi/agent/skills/marker/batch-convert.sh ./papers ./json --output-format json
+skills/marker/batch-convert.sh ./papers ./json --output-format json
 ```
 
 ### extract-tables.sh - Table Extraction
 
 ```bash
 # Extract tables from PDF (outputs JSON with bounding boxes)
-~/.pi/agent/skills/marker/extract-tables.sh document.pdf
+skills/marker/extract-tables.sh document.pdf
 
 # Extract with LLM for better accuracy
-~/.pi/agent/skills/marker/extract-tables.sh spreadsheet.png --use-llm
+skills/marker/extract-tables.sh spreadsheet.png --use-llm
 ```
 
 ### ocr.sh - OCR Only Mode
 
 ```bash
 # Run OCR without document structure
-~/.pi/agent/skills/marker/ocr.sh scanned.pdf
+skills/marker/ocr.sh scanned.pdf
 
 # Keep character-level bounding boxes
-~/.pi/agent/skills/marker/ocr.sh image.png --keep-chars
+skills/marker/ocr.sh image.png --keep-chars
 ```
 
 ## Options Reference

@@ -367,7 +367,7 @@ This tool represents a complete solution for systematic presentation design:
 
 **Quick Start:**
 ```bash
-cd /home/rpaz/code/ai_tools/skills/presentation-designer
+cd skills/presentation-designer
 ./quick-start.sh
 ```
 

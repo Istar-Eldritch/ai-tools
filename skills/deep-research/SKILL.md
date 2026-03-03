@@ -20,7 +20,7 @@ Perform thorough web research by combining Kagi search for discovery with browse
 
 ### Kagi Search (Discovery)
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "query" --limit 10
+skills/kagi-search/search.sh "query" --limit 10
 ```
 
 ### Browser (Deep Reading)
@@ -41,11 +41,11 @@ Start with broad searches to understand the landscape:
 
 ```bash
 # Primary search
-~/.pi/agent/skills/kagi-search/search.sh "main topic query" --limit 10
+skills/kagi-search/search.sh "main topic query" --limit 10
 
 # Related searches for context
-~/.pi/agent/skills/kagi-search/search.sh "topic background history"
-~/.pi/agent/skills/kagi-search/search.sh "topic recent developments 2025"
+skills/kagi-search/search.sh "topic background history"
+skills/kagi-search/search.sh "topic recent developments 2025"
 ```
 
 ### Step 2: Source Evaluation
@@ -92,10 +92,10 @@ agent-browser pdf "research/source-name.pdf"
 For factual claims:
 ```bash
 # Search for corroborating sources
-~/.pi/agent/skills/kagi-search/search.sh "specific claim fact check"
+skills/kagi-search/search.sh "specific claim fact check"
 
 # Check multiple authoritative sources
-~/.pi/agent/skills/kagi-search/search.sh "claim site:gov OR site:edu"
+skills/kagi-search/search.sh "claim site:gov OR site:edu"
 ```
 
 ### Step 5: Fill Knowledge Gaps
@@ -103,7 +103,7 @@ For factual claims:
 If initial research reveals gaps:
 ```bash
 # Search for missing information
-~/.pi/agent/skills/kagi-search/search.sh "specific subtopic needed"
+skills/kagi-search/search.sh "specific subtopic needed"
 
 # Follow references from existing sources
 agent-browser click @e5  # Click citation/link
@@ -114,38 +114,38 @@ agent-browser snapshot -s "main"
 
 ### For Current Events
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "topic 2025" --limit 15
-~/.pi/agent/skills/kagi-search/search.sh "topic latest news"
+skills/kagi-search/search.sh "topic 2025" --limit 15
+skills/kagi-search/search.sh "topic latest news"
 ```
 
 ### For Technical Topics
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "topic documentation"
-~/.pi/agent/skills/kagi-search/search.sh "topic tutorial guide"
-~/.pi/agent/skills/kagi-search/search.sh "topic best practices"
+skills/kagi-search/search.sh "topic documentation"
+skills/kagi-search/search.sh "topic tutorial guide"
+skills/kagi-search/search.sh "topic best practices"
 ```
 
 ### For Controversial Topics
 Research multiple perspectives:
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "topic pros advantages"
-~/.pi/agent/skills/kagi-search/search.sh "topic cons disadvantages"
-~/.pi/agent/skills/kagi-search/search.sh "topic criticism"
-~/.pi/agent/skills/kagi-search/search.sh "topic expert opinion"
+skills/kagi-search/search.sh "topic pros advantages"
+skills/kagi-search/search.sh "topic cons disadvantages"
+skills/kagi-search/search.sh "topic criticism"
+skills/kagi-search/search.sh "topic expert opinion"
 ```
 
 ### For Historical Research
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "topic history timeline"
-~/.pi/agent/skills/kagi-search/search.sh "topic origin background"
-~/.pi/agent/skills/kagi-search/search.sh "topic primary sources"
+skills/kagi-search/search.sh "topic history timeline"
+skills/kagi-search/search.sh "topic origin background"
+skills/kagi-search/search.sh "topic primary sources"
 ```
 
 ### For Comparisons
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "A vs B comparison"
-~/.pi/agent/skills/kagi-search/search.sh "A advantages over B"
-~/.pi/agent/skills/kagi-search/search.sh "B advantages over A"
+skills/kagi-search/search.sh "A vs B comparison"
+skills/kagi-search/search.sh "A advantages over B"
+skills/kagi-search/search.sh "B advantages over A"
 ```
 
 ## Output Format
@@ -193,24 +193,24 @@ Structure research findings as:
 
 ```bash
 # 1. Overview search
-~/.pi/agent/skills/kagi-search/search.sh "WebGPU technology overview" --limit 10
+skills/kagi-search/search.sh "WebGPU technology overview" --limit 10
 
 # 2. Official documentation
 agent-browser open "https://www.w3.org/TR/webgpu/"
 agent-browser snapshot -s "main"
 
 # 3. Current state and adoption
-~/.pi/agent/skills/kagi-search/search.sh "WebGPU browser support 2025"
-~/.pi/agent/skills/kagi-search/search.sh "WebGPU adoption statistics"
+skills/kagi-search/search.sh "WebGPU browser support 2025"
+skills/kagi-search/search.sh "WebGPU adoption statistics"
 
 # 4. Practical applications
-~/.pi/agent/skills/kagi-search/search.sh "WebGPU real world applications examples"
+skills/kagi-search/search.sh "WebGPU real world applications examples"
 
 # 5. Expert opinions
-~/.pi/agent/skills/kagi-search/search.sh "WebGPU review expert opinion"
+skills/kagi-search/search.sh "WebGPU review expert opinion"
 
 # 6. Comparisons
-~/.pi/agent/skills/kagi-search/search.sh "WebGPU vs WebGL comparison"
+skills/kagi-search/search.sh "WebGPU vs WebGL comparison"
 
 # 7. Deep dive into promising source
 agent-browser open "https://developer.chrome.com/docs/web-platform/webgpu"

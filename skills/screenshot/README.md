@@ -18,7 +18,7 @@ Capture screenshots of the screen, windows, or regions using native screenshot u
 
 2. Take a screenshot:
    ```bash
-   ~/.pi/agent/skills/screenshot/screenshot.sh
+   skills/screenshot/screenshot.sh
    ```
 
 ## Features

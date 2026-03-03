@@ -22,9 +22,9 @@ Get an API key from: https://kagi.com/settings/api
 ## Usage
 
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "your search query"
-~/.pi/agent/skills/kagi-search/search.sh "query" --limit 5
-~/.pi/agent/skills/kagi-search/search.sh "query" --json
+skills/kagi-search/search.sh "your search query"
+skills/kagi-search/search.sh "query" --limit 5
+skills/kagi-search/search.sh "query" --json
 ```
 
 ## Options
@@ -39,12 +39,12 @@ Get an API key from: https://kagi.com/settings/api
 
 Search for documentation:
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "rust async await tutorial"
+skills/kagi-search/search.sh "rust async await tutorial"
 ```
 
 Quick fact lookup:
 ```bash
-~/.pi/agent/skills/kagi-search/search.sh "population of france 2024" --limit 3
+skills/kagi-search/search.sh "population of france 2024" --limit 3
 ```
 
 ## Output Format

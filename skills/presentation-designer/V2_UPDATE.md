@@ -309,7 +309,7 @@ Version 2 transforms the Presentation Designer from a simple questionnaire into 
 **Ready to try V2?**
 
 ```bash
-cd /home/rpaz/code/ai_tools/skills/presentation-designer
+cd skills/presentation-designer
 ./quick-start.sh
 # Choose option 1: Smart designer
 ```

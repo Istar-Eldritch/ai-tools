@@ -32,7 +32,7 @@ You → "Perfect!" ✨
 
 ```bash
 # Navigate to the skill directory
-cd /home/rpaz/code/ai_tools/skills/presentation-designer
+cd skills/presentation-designer
 
 # Run the quick-start helper
 ./quick-start.sh
@@ -308,7 +308,7 @@ pi "Update presentation using v2.yaml"
 
 ### "Module not found"
 ```bash
-cd /home/rpaz/code/ai_tools/skills/presentation-designer
+cd skills/presentation-designer
 npm install
 ```
 

@@ -16,7 +16,7 @@ An interactive tool for systematically designing presentations before writing th
 
 ```bash
 # Run with intelligent suggestions
-node /home/rpaz/code/ai_tools/skills/presentation-designer/designer-v2.js
+node skills/presentation-designer/designer-v2.js
 
 # Quick start with type
 node designer-v2.js --type workshop --duration 120
@@ -29,7 +29,7 @@ node designer-v2.js --input my-design.yaml
 
 ```bash
 # Run straightforward Q&A
-node /home/rpaz/code/ai_tools/skills/presentation-designer/designer.js
+node skills/presentation-designer/designer.js
 
 # With options
 node designer.js --type conference --duration 20 --output my-talk.yaml
@@ -123,7 +123,7 @@ The design document maps directly to Typst/Polylux features:
 
 ```bash
 # Install dependencies
-cd /home/rpaz/code/ai_tools/skills/presentation-designer
+cd skills/presentation-designer
 npm install
 
 # Make executable

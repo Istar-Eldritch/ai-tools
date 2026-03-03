@@ -168,7 +168,7 @@ Potential enhancements:
 ## Skill Discovery
 
 This skill will be automatically discovered by pi when placed in:
-- `~/.pi/agent/skills/presentation-designer/`
+- `skills/presentation-designer/`
 - `.pi/skills/presentation-designer/` (project-local)
 - Any path in settings.json `skills` array
 

@@ -18,14 +18,14 @@ Securely execute commands with secrets from [pass](https://www.passwordstore.org
 
 ```bash
 # List available secrets (safe - only shows paths, not values)
-~/.pi/agent/skills/pass-secrets/pass-run.sh list
-~/.pi/agent/skills/pass-secrets/pass-run.sh list api/
+skills/pass-secrets/pass-run.sh list
+skills/pass-secrets/pass-run.sh list api/
 
 # Run command with ONE secret
-~/.pi/agent/skills/pass-secrets/pass-run.sh exec <pass-path> <ENV_VAR> -- <command> [args...]
+skills/pass-secrets/pass-run.sh exec <pass-path> <ENV_VAR> -- <command> [args...]
 
 # Run command with MULTIPLE secrets
-~/.pi/agent/skills/pass-secrets/pass-run.sh multi <path1:VAR1> [path2:VAR2 ...] -- <command> [args...]
+skills/pass-secrets/pass-run.sh multi <path1:VAR1> [path2:VAR2 ...] -- <command> [args...]
 ```
 
 ## Examples
@@ -33,35 +33,35 @@ Securely execute commands with secrets from [pass](https://www.passwordstore.org
 ### List available secrets
 ```bash
 # List all secrets
-~/.pi/agent/skills/pass-secrets/pass-run.sh list
+skills/pass-secrets/pass-run.sh list
 
 # List secrets under a prefix
-~/.pi/agent/skills/pass-secrets/pass-run.sh list api/
-~/.pi/agent/skills/pass-secrets/pass-run.sh list work/databases/
+skills/pass-secrets/pass-run.sh list api/
+skills/pass-secrets/pass-run.sh list work/databases/
 ```
 
 ### Single secret
 ```bash
 # GitHub CLI with token
-~/.pi/agent/skills/pass-secrets/pass-run.sh exec github/token GITHUB_TOKEN -- gh pr list
+skills/pass-secrets/pass-run.sh exec github/token GITHUB_TOKEN -- gh pr list
 
 # API call with key
-~/.pi/agent/skills/pass-secrets/pass-run.sh exec api/openai OPENAI_API_KEY -- python query_gpt.py
+skills/pass-secrets/pass-run.sh exec api/openai OPENAI_API_KEY -- python query_gpt.py
 
 # Docker registry login
-~/.pi/agent/skills/pass-secrets/pass-run.sh exec docker/registry DOCKER_PASSWORD -- docker login -u user --password-stdin
+skills/pass-secrets/pass-run.sh exec docker/registry DOCKER_PASSWORD -- docker login -u user --password-stdin
 ```
 
 ### Multiple secrets
 ```bash
 # Database connection with user and password
-~/.pi/agent/skills/pass-secrets/pass-run.sh multi db/user:DB_USER db/pass:DB_PASS -- ./connect-db.sh
+skills/pass-secrets/pass-run.sh multi db/user:DB_USER db/pass:DB_PASS -- ./connect-db.sh
 
 # Multi-provider AI script
-~/.pi/agent/skills/pass-secrets/pass-run.sh multi api/openai:OPENAI_API_KEY api/anthropic:ANTHROPIC_API_KEY -- python multi_llm.py
+skills/pass-secrets/pass-run.sh multi api/openai:OPENAI_API_KEY api/anthropic:ANTHROPIC_API_KEY -- python multi_llm.py
 
 # AWS credentials
-~/.pi/agent/skills/pass-secrets/pass-run.sh multi aws/access-key:AWS_ACCESS_KEY_ID aws/secret-key:AWS_SECRET_ACCESS_KEY -- aws s3 ls
+skills/pass-secrets/pass-run.sh multi aws/access-key:AWS_ACCESS_KEY_ID aws/secret-key:AWS_SECRET_ACCESS_KEY -- aws s3 ls
 ```
 
 ## How It Works
