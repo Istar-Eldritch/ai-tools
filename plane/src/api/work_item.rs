@@ -1,13 +1,22 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug)]
-pub struct EmptyObject {}
+pub struct SearchWorkItemResponse {
+    #[serde(default)]
+    pub issues: Vec<SearchWorkItemResult>,
+}
 
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum SearchWorkItemResponse {
-    Results(Vec<WorkItemResponseData>),
-    NoResults(EmptyObject),
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SearchWorkItemResult {
+    pub id: String,
+    pub name: String,
+    pub sequence_id: u64,
+    #[serde(rename = "project__identifier")]
+    pub project_identifier: Option<String>,
+    pub project_id: String,
+    #[serde(rename = "workspace__slug")]
+    pub workspace_slug: Option<String>,
+    pub type_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

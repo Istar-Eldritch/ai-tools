@@ -190,20 +190,23 @@ async fn test_search_work_items() {
     let search_work_items_mock = server.mock(|when, then| {
         when.method(GET)
             .path("/api/v1/workspaces/test-workspace/work-items/search/")
-            .query_param("query", "bug")
+            .query_param("search", "bug")
             .query_param("project", "test-project-id");
         then.status(200)
             .header("content-type", "application/json")
-            .json_body(json!([
-                {
-                    "id": "item-bug",
-                    "name": "Fix Bug",
-                    "state": "Todo",
-                    "project": "test-project-id",
-                    "created_at": "2023-10-27T10:00:00Z",
-                    "updated_at": "2023-10-27T10:00:00Z"
-                }
-            ]));
+            .json_body(json!({
+                "issues": [
+                    {
+                        "id": "item-bug",
+                        "name": "Fix Bug",
+                        "sequence_id": 42,
+                        "project__identifier": "TEST",
+                        "project_id": "test-project-id",
+                        "workspace__slug": "test-workspace",
+                        "type_id": null
+                    }
+                ]
+            }));
     });
 
     let mut cmd = Command::cargo_bin("plane-cli").unwrap();

@@ -12,8 +12,9 @@ use super::{
     state::{CreateStatePayload, State, StateListResponse},
     user::User,
     work_item::{
-        CreateWorkItemRequest, CreateWorkItemResponse, GetWorkItemResponse, SearchWorkItemResponse,
-        UpdateWorkItemRequest, UpdateWorkItemResponse, WorkItemListResponse, WorkItemResponseData,
+        CreateWorkItemRequest, CreateWorkItemResponse, GetWorkItemResponse,
+        SearchWorkItemResponse, SearchWorkItemResult, UpdateWorkItemRequest,
+        UpdateWorkItemResponse, WorkItemListResponse,
     },
 };
 use crate::{
@@ -117,13 +118,13 @@ impl Client {
         workspace_slug: &str,
         search: &str,
         project: Option<&str>,
-    ) -> AppResult<Vec<WorkItemResponseData>> {
+    ) -> AppResult<Vec<SearchWorkItemResult>> {
         let mut url = self.base_url.join(&format!(
             "/api/v1/workspaces/{}/work-items/search/",
             workspace_slug
         ))?;
 
-        url.query_pairs_mut().append_pair("query", search);
+        url.query_pairs_mut().append_pair("search", search);
 
         if let Some(project_id) = project {
             url.query_pairs_mut().append_pair("project", project_id);
@@ -133,10 +134,7 @@ impl Client {
 
         if response.status().is_success() {
             let search_response = response.json::<SearchWorkItemResponse>().await?;
-            match search_response {
-                SearchWorkItemResponse::Results(items) => Ok(items),
-                SearchWorkItemResponse::NoResults(_) => Ok(vec![]),
-            }
+            Ok(search_response.issues)
         } else {
             let error_message = response.text().await?;
             Err(AppError::General(error_message))
