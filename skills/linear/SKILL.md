@@ -146,14 +146,23 @@ linear issue view ENG-123 --no-pager
 
 ### Create Issue
 
+> **IMPORTANT:** Always use `--description-file` for multi-line descriptions. Passing multi-line content via `--description` causes shell escaping issues that result in literal `\n` strings being stored instead of real newlines, breaking rendering in the Linear UI.
+
 ```bash
 # Minimal creation (interactive mode fills in the rest)
 linear issue create --title "Fix login bug"
 
-# Full creation
+# Full creation — write description to a temp file first, then pass with --description-file
+cat > /tmp/issue-description.md << 'EOF'
+Add OAuth 2.0 support for Google and GitHub.
+
+## Acceptance Criteria
+- Google login works
+- GitHub login works
+EOF
 linear issue create \
   --title "Implement OAuth login" \
-  --description "Add OAuth 2.0 support for Google and GitHub" \
+  --description-file /tmp/issue-description.md \
   --assignee self \
   --priority 1 \
   --state "In Progress" \
@@ -165,8 +174,8 @@ linear issue create \
   --estimate 3 \
   --parent ENG-100
 
-# Read description from file (preferred for markdown)
-linear issue create --title "Feature spec" --description-file spec.md
+# Single-line descriptions only — safe to use --description inline
+linear issue create --title "Fix login bug" --description "Simple one-liner description"
 
 # Create and start working (creates branch)
 linear issue create --title "Quick fix" --start
@@ -984,7 +993,7 @@ linear issue view ENG-123 --json | jq -r '"\(.identifier): \(.title)"'
 4. **`--start` creates a branch** — `linear issue create --start` or `linear issue start` creates a git branch and assigns you
 5. **Labels are by name** — Use `--label "Bug"` not label IDs
 6. **States are by name** — Use `--state "In Progress"` or type like `started`
-7. **Description from file** — Use `--description-file` for markdown content to avoid shell escaping issues
+7. **Always use `--description-file`** — Never use `--description` for multi-line content; shell escaping will store literal `\n` strings instead of newlines, breaking rendering. Write to `/tmp/` and use `--description-file`. Only use `--description` for single-line strings.
 8. **Commit integration** — Use `linear issue describe` to generate commit message trailers
 9. **PR creation** — `linear issue pr` creates GitHub PRs pre-filled with issue details
 10. **Multiple workspaces** — Use `-w <slug>` to target a different workspace
