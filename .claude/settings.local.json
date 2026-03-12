@@ -6,7 +6,16 @@
       "Bash(wc:*)",
       "Bash(grep:*)",
       "Bash(ls:*)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "WebSearch",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:developers.miro.com)",
+      "Bash(cargo init:*)",
+      "Bash(cd /home/istar/code/ai_tools/miro && cargo build 2>&1)",
+      "Bash(cargo run:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo install:*)",
+      "Bash(miro-cli:*)"
     ]
   }
 }
