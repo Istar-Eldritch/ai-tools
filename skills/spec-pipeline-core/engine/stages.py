@@ -10,22 +10,12 @@ Stage types: conversation, agent, approval, review, commit, loop
 
 from __future__ import annotations
 
+import shlex
 from typing import Optional
 
 from . import instructions as inst
 from . import context as ctx
 from .config import Config, build_agent_context
-
-
-def _engine_cmd(workflow_name: str, command: str, state_id: str,
-                **kwargs) -> str:
-    """Build an engine CLI command string for the 'then' field."""
-    base = f"python3 skills/spec-pipeline-core/engine.py {workflow_name} {command} --id {state_id}"
-    for k, v in kwargs.items():
-        base += f" --{k}"
-        if v is not True:  # Flag-only args (like --output) have no value in then
-            base += f" {v}"
-    return base
 
 
 def _engine_then(workflow_name: str, command: str, state_id: str,
@@ -209,10 +199,17 @@ def handle_approval(stage: dict, state: dict, config: Config,
     current_iteration = state.get(iteration_field, 0)
 
     if command in ("start", "next", "resume"):
+        # Include draft content so the user can see what they're approving
+        draft_field = stage.get("draftStateField", stage.get("outputStateField", "specDraft"))
+        draft_content = state.get(draft_field, "")
+        review_text = ""
+        if draft_content:
+            review_text = f"## Draft\n\n{draft_content}\n\n---\n\n"
+        review_text += ("Please review the draft above. Reply with:\n"
+                       "- **approve** to accept\n"
+                       "- Or describe the changes you'd like to see")
         return inst.AskUser(
-            text="Please review the draft above. Reply with:\n"
-                 "- **approve** to accept\n"
-                 "- Or describe the changes you'd like to see",
+            text=review_text,
             then=_engine_then(workflow_name, "user-responded", state_id, "input"),
         )
 
@@ -360,8 +357,17 @@ def handle_commit(stage: dict, state: dict, config: Config,
     files_str = " ".join(resolved_files)
 
     if command in ("start", "next", "resume"):
-        if commit_phase == "generate_message":
-            # Generate commit message via haiku
+        # Dispatch based on commit_phase for proper resume support
+        if commit_phase == "writing_message":
+            # Crashed after getting diff but before haiku finished — re-request haiku
+            diff_content = state.get("_staged_diff", "(no diff)")
+            return _emit_commit_message_agent(workflow_name, state_id, diff_content)
+        elif commit_phase == "committing":
+            # Crashed after haiku finished but before commit completed — re-commit
+            commit_msg = state.get("_commit_message", f"docs: update {commit_role} artifacts")
+            return _emit_commit_command(workflow_name, state_id, files_str, commit_msg)
+        else:
+            # generate_message: start by getting the diff
             state["_commit_phase"] = "generate_message"
             diff_cmd = "bash skills/spec-pipeline-core/git-helpers.sh staged-diff --max-chars 8000"
             return inst.RunCommand(
@@ -374,21 +380,7 @@ def handle_commit(stage: dict, state: dict, config: Config,
             # Got the diff, now generate commit message via haiku
             state["_commit_phase"] = "writing_message"
             state["_staged_diff"] = command_output or ""
-            prompt = (
-                "You are writing git commit messages.\n\n"
-                "Format:\n<type>(<scope>): <subject>\n\n<body>\n\n"
-                "Rules:\n- type: feat | fix | docs | refactor | test | chore\n"
-                "- scope: Component/area affected\n"
-                "- subject: Imperative mood, lowercase, no period, max 50 chars\n"
-                "- body: Explain what and why (not how), wrap at 72 chars\n\n"
-                "Output ONLY the commit message, nothing else.\n\n"
-                f"Diff:\n```\n{command_output or '(no diff)'}\n```"
-            )
-            return inst.CallAgent(
-                model="haiku",
-                prompt=prompt,
-                then=_engine_then(workflow_name, "agent-done", state_id, "output"),
-            )
+            return _emit_commit_message_agent(workflow_name, state_id, command_output or "(no diff)")
         elif commit_phase == "committing":
             # Commit done
             state.pop("_commit_phase", None)
@@ -406,16 +398,44 @@ def handle_commit(stage: dict, state: dict, config: Config,
             commit_msg = agent_output or f"docs: update {commit_role} artifacts"
             state["_commit_phase"] = "committing"
             state["_commit_message"] = commit_msg
-            commit_cmd = (
-                f'bash skills/spec-pipeline-core/git-helpers.sh scoped-commit '
-                f'--files "{files_str}" --message "{commit_msg}"'
-            )
-            return inst.RunCommand(
-                command=commit_cmd,
-                then=_engine_then(workflow_name, "command-done", state_id, "output"),
-            )
+            return _emit_commit_command(workflow_name, state_id, files_str, commit_msg)
 
     return inst.Error(message=f"Unexpected command '{command}' for commit stage")
+
+
+def _emit_commit_message_agent(workflow_name: str, state_id: str,
+                                diff_content: str) -> inst.Instruction:
+    """Emit a call_agent instruction to generate a commit message via haiku."""
+    prompt = (
+        "You are writing git commit messages.\n\n"
+        "Format:\n<type>(<scope>): <subject>\n\n<body>\n\n"
+        "Rules:\n- type: feat | fix | docs | refactor | test | chore\n"
+        "- scope: Component/area affected\n"
+        "- subject: Imperative mood, lowercase, no period, max 50 chars\n"
+        "- body: Explain what and why (not how), wrap at 72 chars\n\n"
+        "Output ONLY the commit message, nothing else.\n\n"
+        f"Diff:\n```\n{diff_content}\n```"
+    )
+    return inst.CallAgent(
+        model="haiku",
+        prompt=prompt,
+        then=_engine_then(workflow_name, "agent-done", state_id, "output"),
+    )
+
+
+def _emit_commit_command(workflow_name: str, state_id: str,
+                          files_str: str, commit_msg: str) -> inst.Instruction:
+    """Emit a run_command instruction for git commit with proper shell escaping."""
+    safe_msg = shlex.quote(commit_msg)
+    safe_files = shlex.quote(files_str) if files_str else '""'
+    commit_cmd = (
+        f'bash skills/spec-pipeline-core/git-helpers.sh scoped-commit '
+        f'--files {safe_files} --message {safe_msg}'
+    )
+    return inst.RunCommand(
+        command=commit_cmd,
+        then=_engine_then(workflow_name, "command-done", state_id, "output"),
+    )
 
 
 def handle_loop(stage: dict, state: dict, config: Config,
