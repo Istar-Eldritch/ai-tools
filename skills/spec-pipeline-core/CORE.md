@@ -352,3 +352,67 @@ Rules:
 
 Output ONLY the commit message, nothing else.
 ```
+
+## 6. Engine Instruction Protocol
+
+When a skill uses the workflow engine, the LLM acts as a dispatcher: it calls the engine, receives a JSON instruction, executes it, and loops.
+
+### Engine Location
+
+```
+python3 skills/spec-pipeline-core/engine.py <workflow> <command> [args] [flags]
+```
+
+### Instruction Envelope
+
+Every engine call prints one JSON object to stdout:
+
+```json
+{
+  "action": "<instruction_type>",
+  "then": "python3 skills/spec-pipeline-core/engine.py <workflow> <next-command> --id <id> [--result-arg]",
+  ...action-specific fields...
+}
+```
+
+### Instruction Execution Mapping
+
+Execute each instruction type as follows:
+
+| Instruction | Fields | LLM Execution |
+|---|---|---|
+| `call_agent` | `model`, `prompt`, `then` | Use the **Agent** tool with the given `model` and `prompt`. Capture the agent's text output. Pass to `then` as `--output "<text>"` (or write to a temp file and use `--output-file <path>` if output exceeds 10000 characters). |
+| `ask_user` | `text`, `then` | Display `text` to the user as markdown. Wait for their reply. Pass the reply to `then` as `--input "<text>"`. |
+| `present` | `text`, `then` | Display `text` to the user as markdown. Immediately call `then` (no user input needed). |
+| `write_file` | `path`, `content`, `then` | Use the **Write** tool to write `content` to `path`. Then call `then`. |
+| `read_file` | `path`, `then` | Use the **Read** tool to read `path`. Pass file contents to `then` as `--content "<text>"` (or `--content-file`). |
+| `run_command` | `command`, `then` | Use the **Bash** tool to execute `command`. Pass stdout to `then` as `--output "<text>"` (or `--output-file`). |
+| `done` | `text` | Display `text` to the user. **Stop** -- no further engine calls. |
+| `error` | `message` | Display `message` as an error to the user. **Stop** -- no further engine calls. |
+
+### Large Output Handling
+
+When an instruction's result exceeds 10000 characters:
+1. Write the result to a temporary file (e.g., `/tmp/engine_result_<random>.txt`)
+2. Use the `-file` variant of the argument flag (e.g., `--output-file /tmp/engine_result_abc.txt` instead of `--output "..."`)
+3. The engine reads the file content and deletes the temp file
+
+### Execution Loop
+
+```
+1. Parse the user's command and flags
+2. Run the matching engine call (see skill's command table)
+3. Parse the JSON instruction from engine stdout
+4. Execute the instruction per the table above
+5. If the instruction has a `then` field:
+   - Substitute the result into the `then` command
+   - Run that command
+   - Go to step 3
+6. If no `then` field (done or error): stop
+```
+
+### Error Handling
+
+- If the engine prints invalid JSON, display the raw output as an error and stop.
+- If a `run_command` fails (non-zero exit), still pass stdout/stderr to `then` -- the engine decides how to handle failures.
+- If an `Agent` tool call fails, pass the error message to `then` as `--output "ERROR: <message>"`.

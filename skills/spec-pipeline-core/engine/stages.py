@@ -63,7 +63,9 @@ def handle_conversation(stage: dict, state: dict, config: Config,
             extra = {
                 "project_context": project_context,
                 "projectContext": project_context,
-                "exchange_history": ctx.format_exchange_history(exchanges),
+                "exchange_history": ctx.format_exchange_history(
+                    exchanges, style=stage.get("exchangeStyle", "discovery")
+                ),
             }
             prompt = ctx.render_prompt(prompt_template, state, config.data, extra)
         else:
@@ -87,9 +89,11 @@ def handle_conversation(stage: dict, state: dict, config: Config,
 
     elif command == "user-responded":
         # Record the exchange
+        agent_key = stage.get("agentOutputKey", "assumption")
+        user_key = stage.get("userInputKey", "response")
         exchange = {
-            "assumption": state.pop("_pending_agent_output", ""),
-            "response": input_text or "",
+            agent_key: state.pop("_pending_agent_output", ""),
+            user_key: input_text or "",
         }
         exchanges.append(exchange)
         _set_nested(state, state_field, exchanges)
@@ -140,11 +144,16 @@ def handle_agent(stage: dict, state: dict, config: Config,
 
     if command in ("start", "next", "resume"):
         project_context = build_agent_context(model_key)
+        # Try discovery.exchanges first (spec/implement), then top-level exchanges (brainstorm)
         exchanges_field = state.get("discovery", {}).get("exchanges", [])
+        if not exchanges_field:
+            exchanges_field = state.get("exchanges", [])
+        # Determine exchange formatting style from stage or workflow context
+        exchange_style = stage.get("exchangeStyle", "discovery")
         extra = {
             "project_context": project_context,
             "projectContext": project_context,
-            "exchange_history": ctx.format_exchange_history(exchanges_field),
+            "exchange_history": ctx.format_exchange_history(exchanges_field, style=exchange_style),
         }
         prompt = ctx.render_prompt(prompt_template, state, config.data, extra)
         model = config.model_for(model_key)
