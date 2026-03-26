@@ -1,6 +1,6 @@
 ---
 name: planning
-description: "Hierarchical planning for software projects: scoping assessment (/plan), roadmap creation (/roadmap), and epic creation (/epic). Decomposes large initiatives into manageable work items. Invoke on /plan, /plan-overview, /roadmap, /epic, /draft-done commands."
+description: "Hierarchical planning for software projects: scoping assessment (/plan), roadmap creation (/roadmap), and epic creation (/epic). Decomposes large initiatives into manageable work items. Invoke on /plan, /plan-overview, /roadmap, /epic commands."
 ---
 
 # Planning
@@ -23,7 +23,6 @@ This file only contains planning-specific workflow and prompts.
 | `/plan-overview` | Show hierarchy: roadmaps → epics → specs | |
 | `/roadmap <description>` | Create a roadmap (decomposes into epics) | |
 | `/epic <description>` | Create an epic (decomposes into feature specs) | |
-| `/draft-done` | End hierarchy (roadmap/epic) drafting, request approval | |
 
 ## 2. Hierarchy State Schema (Roadmap/Epic)
 

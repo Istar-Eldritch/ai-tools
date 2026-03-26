@@ -206,7 +206,7 @@ Each exchange with the user should follow this pattern:
 
 ### Ending Discovery
 
-When the user signals discovery is done (e.g., `/discovery-done`) or all important aspects are covered:
+When the user signals discovery is done (e.g., "that covers it", "let's move on", "I'm happy with these") or all important aspects are covered:
 1. Generate a discovery summary from all exchanges
 2. Save the summary to `state.discovery.summary`
 3. Transition to the next stage (drafting)

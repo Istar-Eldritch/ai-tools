@@ -1,6 +1,6 @@
 ---
 name: spec
-description: "Create and manage technical specifications via discovery + drafting workflow, and condense implemented specs. Invoke on /spec, /spec-resume, /spec-status, /spec-list, /spec-cancel, /condense-spec, /discovery-done, /spec-draft-done commands."
+description: "Create and manage technical specifications via discovery + drafting workflow, and condense implemented specs. Invoke on /spec, /spec-resume, /spec-status, /spec-list, /spec-cancel, /condense-spec commands."
 ---
 
 # Spec
@@ -25,8 +25,6 @@ This file only contains spec-specific workflow and prompts.
 | `/spec-list` | List all spec state IDs | |
 | `/spec-cancel` | Cancel the active spec pipeline | |
 | `/condense-spec <spec-path>` | Condense an implemented spec to architectural documentation | |
-| `/discovery-done` | End discovery phase, proceed to drafting | |
-| `/spec-draft-done` | End spec drafting, request user approval | |
 
 ## 2. Spec State Schema
 
@@ -103,7 +101,13 @@ Follow CORE.md §3 Discovery Mode. For each exchange:
 2. After each user response, save the exchange to `state.discovery.exchanges`
 3. Save state after each exchange
 
-When user types `/discovery-done`:
+**Transition detection**: Move to drafting when the user signals discovery is complete. Watch for natural-language cues such as:
+- "that covers it", "let's draft", "I'm happy with these decisions", "move on to the spec"
+- Or the user types `/discovery-done` (legacy alternative)
+
+Also proactively suggest moving to drafting when all major discovery categories have been covered (typically 3-7 exchanges).
+
+When transitioning to drafting:
 1. Generate discovery summary
 2. Save to `state.discovery.summary`
 3. Set `state.stage = "spec_drafting"`

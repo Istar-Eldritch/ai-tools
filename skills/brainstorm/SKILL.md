@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: "Open-ended divergent exploration and brainstorming sessions with synthesis into structured documents. Invoke on /brainstorm, /brainstorm-done commands."
+description: "Open-ended divergent exploration and brainstorming sessions with synthesis into structured documents. Invoke on /brainstorm commands."
 ---
 
 # Brainstorm
@@ -20,7 +20,6 @@ This file only contains brainstorm-specific workflow and prompts.
 | Command | Description |
 |---------|-------------|
 | `/brainstorm <description>` | Start a brainstorming session |
-| `/brainstorm-done` | Synthesize the brainstorm into a document |
 
 ## 2. Brainstorm State Schema
 
@@ -74,9 +73,16 @@ For each exchange:
 1. Record the exchange in `state.exchanges[]`
 2. Save state after each exchange
 
-### Step 3: Synthesis (`/brainstorm-done`)
+### Step 3: Synthesis
 
-When the user types `/brainstorm-done`:
+**Transition detection**: Move to synthesis when the user signals they're done exploring. Watch for natural-language cues such as:
+- "I think that covers it", "let's wrap up", "I'm done", "let's synthesize"
+- "what do we have so far?", "can you summarize?"
+- Or the user types `/brainstorm-done` (legacy alternative)
+
+Also proactively suggest moving to synthesis when the brainstorm has covered multiple angles and new exchanges aren't surfacing fresh insights.
+
+When transitioning to synthesis:
 
 1. Set `state.stage = "synthesis"`
 2. Generate a synthesis document from the conversation:
