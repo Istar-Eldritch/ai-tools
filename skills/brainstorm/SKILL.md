@@ -133,6 +133,13 @@ When transitioning to synthesis:
 6. Set `state.synthesisPath` to the file path
 7. Set `state.stage = "completed"`
 8. Save state
+9. Output a **Suggested next step** block:
+   ```
+   Brainstorm saved to `{synthesisPath}`.
+
+   **Suggested next step**: To create a spec from these findings:
+   `/spec --from-brainstorm {synthesisPath} "<description>"`
+   ```
 
 ## 4. System Prompts
 

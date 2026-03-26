@@ -169,6 +169,13 @@ After all phases:
 1. Set `state.stage = "completed"`
 2. Save state
 3. Output summary: pipeline ID, spec path, phases completed, total commits
+4. Output a **Suggested next step** block:
+   ```
+   Implementation complete for `{specPath}`.
+
+   **Suggested next step**: To condense the spec to architectural documentation:
+   `/condense-spec {specPath}`
+   ```
 
 ### Review Protocol
 

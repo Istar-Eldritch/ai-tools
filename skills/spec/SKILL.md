@@ -155,6 +155,14 @@ bash skills/spec-pipeline-core/git-helpers.sh scoped-commit --files "{specPath}"
 ```
 Generate commit message via `Agent(model: haiku, prompt: <commitMessageWriter prompt + diff>)` — see CORE.md §5 for the prompt.
 
+After commit, output a **Suggested next step** block:
+```
+Spec approved and saved to `{specPath}`.
+
+**Suggested next step**: To implement this spec:
+`/implement {specPath}`
+```
+
 ### Quick Mode (`/spec --quick`)
 
 Same as above but skip Step 2 entirely. Go directly from initialization to drafting.

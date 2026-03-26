@@ -126,9 +126,14 @@ Roadmap: Platform Modernization (260302_abc)
    ```
    Save result to `state.childItems[]`.
 6. **Commit**: Use `bash skills/spec-pipeline-core/git-helpers.sh scoped-commit --files "{docPath}" --message "{commitMsg}"`. Generate commit message via haiku agent — see CORE.md §4-5.
-7. **Next Steps**: Inform user they can now create epics for each child item:
+7. **Suggested next step**: Output a block listing all child items as actionable commands:
    ```
-   To create an epic for item 1: /epic "Epic name - Brief description"
+   Roadmap saved to `{docPath}`.
+
+   **Suggested next steps**: Create epics for each item:
+   1. `/epic "Item 1 name - description"`
+   2. `/epic "Item 2 name - description"`
+   ...
    ```
 
 ## 6. Epic Creation (`/epic`)
@@ -142,9 +147,14 @@ Same workflow as roadmap but:
   - PART III: Technical Considerations
 - Child items decompose into feature specs (not epics)
 - After approval, extract child items: `bash skills/spec-pipeline-core/parse.sh extract-child-items "{docPath}"`
-- Inform user they can create specs:
+- Output a **Suggested next step** block listing all child items:
   ```
-  To create a spec for item 1: /spec "Feature name - Brief description"
+  Epic saved to `{docPath}`.
+
+  **Suggested next steps**: Create specs for each feature:
+  1. `/spec "Feature 1 name - description"`
+  2. `/spec "Feature 2 name - description"`
+  ...
   ```
 - If this epic is a child of a roadmap, record `parentId` in state
 
