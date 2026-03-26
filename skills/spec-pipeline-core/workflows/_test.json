@@ -1,0 +1,30 @@
+{
+  "name": "_test",
+  "stateType": "brainstorms",
+  "commands": {
+    "start": { "description": "Test workflow", "args": ["description"] },
+    "resume": { "description": "Resume test" },
+    "status": { "description": "Show status" },
+    "list": { "description": "List IDs" },
+    "cancel": { "description": "Cancel" }
+  },
+  "stateSchema": {
+    "description": "string",
+    "stage": "string",
+    "notes": "string"
+  },
+  "stages": [
+    {
+      "name": "drafting",
+      "type": "agent",
+      "promptTemplate": "_test_prompt.md",
+      "modelKey": "specDrafter",
+      "outputStateField": "notes",
+      "transitionTo": "completed"
+    }
+  ],
+  "completion": {
+    "message": "Test workflow complete: {description}",
+    "nextStep": "/next-thing"
+  }
+}
