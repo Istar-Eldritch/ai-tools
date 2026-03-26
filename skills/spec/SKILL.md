@@ -19,7 +19,7 @@ This file only contains spec-specific workflow and prompts.
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `/spec <description>` | Create a technical specification via discovery + drafting | `--quick` skips discovery |
+| `/spec <description>` | Create a technical specification via discovery + drafting | `--quick`, `--from-brainstorm <path>` |
 | `/spec-resume` | Resume an active spec pipeline | |
 | `/spec-status` | Show status of all spec pipelines | |
 | `/spec-list` | List all spec state IDs | |
@@ -40,7 +40,8 @@ This file only contains spec-specific workflow and prompts.
       { "assumption": "We should use JWT tokens...", "response": "Yes, that works" }
     ],
     "summary": null,
-    "skipped": false
+    "skipped": false,
+    "brainstormPath": null
   },
   "drafting": {
     "exchanges": [],
@@ -64,6 +65,7 @@ This file only contains spec-specific workflow and prompts.
 
 - `/spec <description>` — Full flow: discovery → drafting → approval
 - `/spec --quick <description>` — Skip discovery, go directly to drafting
+- `/spec --from-brainstorm <path> <description>` — Targeted discovery from brainstorm, then drafting
 - `/spec-resume` — Resume an active spec pipeline (see CORE.md §2 Resume Protocol)
 - `/spec-status` — Show status of all spec pipelines
 - `/spec-list` — List all spec state IDs
@@ -166,6 +168,46 @@ Spec approved and saved to `{specPath}`.
 ### Quick Mode (`/spec --quick`)
 
 Same as above but skip Step 2 entirely. Go directly from initialization to drafting.
+
+### From Brainstorm Mode (`/spec --from-brainstorm <path>`)
+
+Uses a brainstorm synthesis document as the starting point, then runs a short targeted discovery to fill technical gaps before drafting.
+
+#### Step 1: Initialize
+
+Same as the standard flow (load config, generate ID, etc.), plus:
+1. Read the brainstorm synthesis document at `<path>`
+2. Set `state.discovery.brainstormPath` to `<path>`
+
+#### Step 2: Targeted Discovery
+
+Instead of full discovery (CORE.md §3), run a **short, gap-focused discovery** (2-4 exchanges):
+
+1. Read the brainstorm document and identify which discovery categories are already well-covered:
+   - **Functional Requirements** — typically covered by brainstorm
+   - **Scope & Constraints** — typically covered by brainstorm
+   - **Edge Cases & Error Handling** — often missing from brainstorm
+   - **Non-Functional Requirements** — often missing from brainstorm
+   - **Integration & Dependencies** — often missing from brainstorm
+
+2. For each gap category, follow the Assume & Confirm protocol (one exchange per gap):
+   - Propose an assumption grounded in the codebase
+   - Ask the user to confirm or correct
+   - Record exchange in `state.discovery.exchanges`
+   - Save state after each exchange
+
+3. **Transition detection**: After 2-4 exchanges (or when all gaps are covered), proactively suggest moving to drafting. Watch for the same natural-language cues as standard discovery.
+
+4. Generate a combined discovery summary that includes:
+   - A "From Brainstorm" section summarizing the brainstorm's key findings (directions, tradeoffs, scope assessment)
+   - A "Targeted Discovery" section with the gap-filling exchanges
+5. Save to `state.discovery.summary`
+6. Set `state.stage = "spec_drafting"`
+7. Save state
+
+#### Steps 3-5: Drafting, Approval, Commit
+
+Same as the standard flow. The spec drafter agent receives the combined discovery summary (brainstorm + targeted exchanges) as context.
 
 ## 4. Condense Spec (`/condense-spec`)
 
