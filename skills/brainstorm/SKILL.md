@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: "Open-ended divergent exploration and brainstorming sessions with synthesis into structured documents. Invoke on /brainstorm commands."
+description: "Open-ended divergent exploration and brainstorming sessions with synthesis into structured documents. Invoke on /brainstorm, /brainstorm-resume, /brainstorm-status, /brainstorm-list, /brainstorm-cancel commands."
 ---
 
 # Brainstorm
@@ -20,6 +20,10 @@ This file only contains brainstorm-specific workflow and prompts.
 | Command | Description |
 |---------|-------------|
 | `/brainstorm <description>` | Start a brainstorming session |
+| `/brainstorm-resume` | Resume an active brainstorm session |
+| `/brainstorm-status` | Show status of all brainstorm sessions |
+| `/brainstorm-list` | List all brainstorm state IDs |
+| `/brainstorm-cancel` | Cancel the active brainstorm session |
 
 ## 2. Brainstorm State Schema
 
@@ -38,6 +42,38 @@ This file only contains brainstorm-specific workflow and prompts.
 **Stages**: `"brainstorming"` → `"synthesis"` → `"completed"` | `"cancelled"`
 
 ## 3. Brainstorming Workflow (`/brainstorm`)
+
+### Entry Points
+
+- `/brainstorm <description>` — Start a new brainstorming session
+- `/brainstorm-resume` — Resume an active brainstorm session (see CORE.md §2 Resume Protocol)
+- `/brainstorm-status` — Show status of all brainstorm sessions
+- `/brainstorm-list` — List all brainstorm state IDs
+- `/brainstorm-cancel` — Cancel the active brainstorm session
+
+### Resume (`/brainstorm-resume`)
+
+1. Find active brainstorm: `bash skills/spec-pipeline-core/state.sh find-active brainstorms`
+2. If an ID is returned, read its state file
+3. Resume from the current `stage`:
+   - `"brainstorming"` — Continue the brainstorming session with prior exchanges as context
+   - `"synthesis"` — Continue synthesis (unlikely to be interrupted, but handle gracefully)
+
+### Status (`/brainstorm-status`)
+
+1. List all brainstorms: `bash skills/spec-pipeline-core/state.sh list brainstorms`
+2. Read each state file and display: ID, description, stage, exchange count, created date
+
+### List (`/brainstorm-list`)
+
+1. List all brainstorm IDs: `bash skills/spec-pipeline-core/state.sh list brainstorms`
+2. Output the IDs
+
+### Cancel (`/brainstorm-cancel`)
+
+1. Find active brainstorm: `bash skills/spec-pipeline-core/state.sh find-active brainstorms`
+2. If found, set `state.stage = "cancelled"`, update timestamp, save state
+3. Confirm cancellation to the user
 
 ### Step 1: Initialize
 
