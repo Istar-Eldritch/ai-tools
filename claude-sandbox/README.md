@@ -4,7 +4,7 @@ A bubblewrap (`bwrap`) filesystem sandbox for running Claude Code with restricte
 
 ## Prerequisites
 
-- Linux with user namespaces enabled
+- Linux with user namespaces enabled (macOS and Windows are not supported)
 - [bubblewrap](https://github.com/containers/bubblewrap) installed (`apt install bubblewrap`)
 - Claude Code CLI (`claude`) installed and on `$PATH`
 - Rust toolchain (to build from source)
