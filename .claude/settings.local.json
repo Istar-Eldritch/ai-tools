@@ -16,7 +16,15 @@
       "Bash(cargo clippy:*)",
       "Bash(cargo install:*)",
       "Bash(miro-cli:*)",
-      "Bash(find /home/istar/code/ai_tools -type f -name CLAUDE.md -o -name settings.json -o -name *.yml -o -name *.yaml)"
+      "Bash(find /home/istar/code/ai_tools -type f -name CLAUDE.md -o -name settings.json -o -name *.yml -o -name *.yaml)",
+      "Read(//home/istar/.claude/**)",
+      "Bash(bwrap --version)",
+      "Bash(cat ~/.claude/plugins/*/plugin.json)",
+      "Bash(bwrap --help)",
+      "Bash(find /home/istar/.claude/plugins/ -name *.json -o -name *.toml -o -name *.sh)",
+      "Bash(find /home/istar/.claude/ -name .mcp.json -o -name mcp*.json)",
+      "Bash(xargs -I{} ls {})",
+      "Bash(xargs -I{} find {} -name *.json)"
     ]
   }
 }
