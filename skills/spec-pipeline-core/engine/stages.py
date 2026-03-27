@@ -57,7 +57,7 @@ def handle_conversation(stage: dict, state: dict, config: Config,
     transition_to = stage.get("transitionTo")
     state_id = state["id"]
 
-    if command in ("start", "next", "resume"):
+    if command in ("start", "next", "resume", "file-written"):
         # Emit call_agent for next exchange
         if prompt_template:
             project_context = build_agent_context(stage.get("modelKey", "specDrafter"))
@@ -158,7 +158,7 @@ def handle_agent(stage: dict, state: dict, config: Config,
     output_field = stage.get("outputStateField")
     output_file = stage.get("outputFile")
 
-    if command in ("start", "next", "resume"):
+    if command in ("start", "next", "resume", "file-written"):
         project_context = build_agent_context(model_key)
         # Try discovery.exchanges first (spec/implement), then top-level exchanges (brainstorm)
         exchanges_field = state.get("discovery", {}).get("exchanges", [])
@@ -224,7 +224,7 @@ def handle_approval(stage: dict, state: dict, config: Config,
 
     current_iteration = state.get(iteration_field, 0)
 
-    if command in ("start", "next", "resume"):
+    if command in ("start", "next", "resume", "file-written"):
         # Include draft content so the user can see what they're approving
         draft_field = stage.get("draftStateField", stage.get("outputStateField", "specDraft"))
         draft_content = state.get(draft_field, "")
@@ -306,7 +306,7 @@ def handle_review(stage: dict, state: dict, config: Config,
 
     current_cycle = state.get(cycle_field, 0)
 
-    if command in ("start", "next", "resume"):
+    if command in ("start", "next", "resume", "file-written"):
         # Emit reviewer call
         if reviewer_prompt_tmpl:
             project_context = build_agent_context(reviewer_model)
@@ -390,7 +390,7 @@ def handle_commit(stage: dict, state: dict, config: Config,
     resolved_files = [ctx.render_template(f, variables) for f in files]
     files_str = " ".join(resolved_files)
 
-    if command in ("start", "next", "resume"):
+    if command in ("start", "next", "resume", "file-written"):
         # Dispatch based on commit_phase for proper resume support
         if commit_phase == "writing_message":
             # Crashed after getting diff but before haiku finished — re-request haiku
@@ -495,7 +495,7 @@ def handle_init_phases(stage: dict, state: dict, config: Config,
     transition_to = stage.get("transitionTo")
     init_phase = state.get("_init_phase", "read_spec")
 
-    if command in ("start", "next", "resume"):
+    if command in ("start", "next", "resume", "file-written"):
         spec_path = state.get("specPath", "")
         if not spec_path:
             return inst.Error(message="specPath is required for implement workflow")

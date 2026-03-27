@@ -40,6 +40,25 @@ def find_stage(workflow: dict, stage_name: str) -> Optional[dict]:
     return None
 
 
+def _find_parent_loop_stage(workflow: dict, sub_stage_name: str) -> Optional[dict]:
+    """Find a loop stage that contains a sub-stage with the given name or transitionTo.
+
+    When a sub-stage handler sets state["stage"] to its transitionTo value,
+    the stage name refers to another sub-stage within the loop, not a top-level
+    stage. This function finds the parent loop stage so the runner can route
+    back through the loop handler.
+    """
+    for stage in workflow.get("stages", []):
+        if stage.get("type") != "loop":
+            continue
+        for sub_stage in stage.get("stages", []):
+            if sub_stage.get("name") == sub_stage_name:
+                return stage
+            if sub_stage.get("transitionTo") == sub_stage_name:
+                return stage
+    return None
+
+
 def run(workflow_name: str, command: str, args: list,
         flags: list, named_args: dict) -> inst.Instruction:
     """Main entry point: run a workflow command and return an instruction.
@@ -289,9 +308,17 @@ def _emit_for_stage(workflow: dict, workflow_name: str, state_type: str,
     # Find stage definition
     stage_def = find_stage(workflow, current_stage_name)
     if not stage_def:
-        return inst.Error(
-            message=f"Unknown stage '{current_stage_name}' in workflow '{workflow_name}'"
-        )
+        # Check if the current stage name refers to a sub-stage within a loop.
+        # Sub-stage handlers set state["stage"] to their transitionTo, which
+        # is another sub-stage name -- not a top-level stage. Route back through
+        # the parent loop handler so it can detect the transition and advance.
+        parent_loop = _find_parent_loop_stage(workflow, current_stage_name)
+        if parent_loop:
+            stage_def = parent_loop
+        else:
+            return inst.Error(
+                message=f"Unknown stage '{current_stage_name}' in workflow '{workflow_name}'"
+            )
 
     # Build kwargs for stage handler
     kwargs = {
