@@ -10,6 +10,7 @@ Stage types: conversation, agent, approval, review, commit, loop
 
 from __future__ import annotations
 
+import os
 import shlex
 from typing import Optional
 
@@ -60,12 +61,23 @@ def handle_conversation(stage: dict, state: dict, config: Config,
         # Emit call_agent for next exchange
         if prompt_template:
             project_context = build_agent_context(stage.get("modelKey", "specDrafter"))
+            # Check for preload file (e.g., brainstorm document for --from-brainstorm)
+            preload_field = _get_variant_field(stage, state, "preload", None)
+            brainstorm_content = ""
+            if preload_field:
+                preload_path = _get_nested(state, f"discovery.{preload_field}")
+                if not preload_path:
+                    preload_path = _get_nested(state, preload_field)
+                if preload_path and os.path.exists(preload_path):
+                    with open(preload_path, "r") as f:
+                        brainstorm_content = f.read()
             extra = {
                 "project_context": project_context,
                 "projectContext": project_context,
                 "exchange_history": ctx.format_exchange_history(
                     exchanges, style=stage.get("exchangeStyle", "discovery")
                 ),
+                "brainstorm_content": brainstorm_content,
             }
             prompt = ctx.render_prompt(prompt_template, state, config.data, extra)
         else:
@@ -158,6 +170,7 @@ def handle_agent(stage: dict, state: dict, config: Config,
             "project_context": project_context,
             "projectContext": project_context,
             "exchange_history": ctx.format_exchange_history(exchanges_field, style=exchange_style),
+            "revision_feedback": state.get("_revision_feedback", ""),
         }
         prompt = ctx.render_prompt(prompt_template, state, config.data, extra)
         model = config.model_for(model_key)
@@ -581,6 +594,10 @@ def _detect_transition_intent(text: str) -> str:
         "let's proceed", "lets proceed", "good enough",
         "that covers it", "i'm happy", "im happy",
         "/done", "/brainstorm-done",
+        "let's draft", "lets draft", "ready to draft",
+        "start drafting", "draft the spec", "write the spec",
+        "/discovery-done", "discovery done",
+        "let's move to drafting", "lets move to drafting",
     ]
     for phrase in transition_phrases:
         if phrase in lower:
