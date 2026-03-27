@@ -100,5 +100,17 @@ fn test_list_profiles_subcommand() {
         .arg("list-profiles")
         .assert()
         .success()
-        .stdout(predicate::str::contains("list-profiles:"));
+        .stdout(predicate::str::contains("list-profiles:"))
+        .stdout(predicate::str::contains("minimal"));
+}
+
+#[test]
+fn test_init_with_profile_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["init", "--profile", "development"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("init:"));
 }

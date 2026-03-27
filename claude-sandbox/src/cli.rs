@@ -17,7 +17,7 @@ pub enum Commands {
     Setup(SetupArgs),
 
     /// Initialize a project-level sandbox config
-    Init,
+    Init(InitArgs),
 
     /// Check that the sandbox environment is correctly configured
     Check(CheckArgs),
@@ -46,6 +46,13 @@ pub struct SetupArgs {
     /// Print a shell function that shadows `claude` with `claude-sandbox run --`
     #[clap(long)]
     pub shell_function: bool,
+}
+
+#[derive(clap::Args, Debug, Default)]
+pub struct InitArgs {
+    /// Set the default sandbox profile (defaults to "minimal")
+    #[clap(long)]
+    pub profile: Option<String>,
 }
 
 #[derive(clap::Args, Debug, Default)]
