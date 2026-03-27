@@ -4,6 +4,7 @@ use crate::config;
 use crate::error::AppResult;
 
 pub fn execute(args: CheckArgs) -> AppResult<()> {
+    crate::commands::run::verify_bwrap_available()?;
     let resolved = config::resolve_config(args.profile.as_deref())?;
     bwrap::validate(&resolved)?;
     let bwrap_args = bwrap::assemble_args(&resolved)?;

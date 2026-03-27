@@ -31,7 +31,7 @@ pub fn execute(args: RunArgs) -> AppResult<()> {
 
 /// Check that the `bwrap` binary exists and is executable.
 /// Returns `Err` with a clear message if it cannot be found.
-fn verify_bwrap_available() -> AppResult<()> {
+pub(crate) fn verify_bwrap_available() -> AppResult<()> {
     match Command::new("bwrap").arg("--version").output() {
         Ok(_) => Ok(()), // binary exists; exit code is irrelevant
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
