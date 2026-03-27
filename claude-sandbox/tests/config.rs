@@ -208,3 +208,87 @@ fn test_detect_project_root_finds_ancestor() {
     assert!(found.is_some(), "should have found the ancestor root");
     assert_eq!(found.unwrap(), root.path());
 }
+
+/// Test that all shipped profile TOML files parse correctly as SandboxProfile.
+#[test]
+fn test_all_shipped_profiles_parse() {
+    let sandboxes_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sandboxes");
+    let expected_profiles = ["minimal", "rust-dev", "java-dev", "debug"];
+
+    for name in &expected_profiles {
+        let path = sandboxes_dir.join(format!("{}.toml", name));
+        assert!(
+            path.exists(),
+            "Profile file should exist: {}",
+            path.display()
+        );
+        let content = std::fs::read_to_string(&path).unwrap();
+        let profile: SandboxProfile = toml::from_str(&content).unwrap_or_else(|e| {
+            panic!("Profile '{}' failed to parse: {}", name, e);
+        });
+        assert!(
+            !profile.description.is_empty(),
+            "Profile '{}' should have a description",
+            name
+        );
+        assert!(
+            !profile.ro_paths.is_empty(),
+            "Profile '{}' should have at least one ro_path",
+            name
+        );
+    }
+}
+
+/// Test that load_profile correctly loads shipped profiles via the ai_tools directory.
+#[test]
+fn test_load_shipped_profiles() {
+    // ai_tools dir is the parent of CARGO_MANIFEST_DIR (claude-sandbox/)
+    let ai_tools_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+
+    let profiles = ["minimal", "rust-dev", "java-dev", "debug"];
+    for name in &profiles {
+        let profile = load_profile(&ai_tools_dir.join("claude-sandbox"), name).unwrap_or_else(|e| {
+            panic!("Failed to load profile '{}': {}", name, e);
+        });
+        assert!(!profile.description.is_empty());
+    }
+}
+
+/// Test specific properties of the rust-dev profile.
+#[test]
+fn test_rust_dev_profile_contents() {
+    let sandboxes_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sandboxes");
+    let content = std::fs::read_to_string(sandboxes_dir.join("rust-dev.toml")).unwrap();
+    let profile: SandboxProfile = toml::from_str(&content).unwrap();
+
+    assert!(profile.ro_paths.iter().any(|p| p.contains(".cargo/registry")));
+    assert!(profile.ro_paths.iter().any(|p| p.contains(".rustup")));
+    assert!(profile.env.contains(&"CARGO_HOME".to_string()));
+    assert!(profile.env.contains(&"RUSTUP_HOME".to_string()));
+}
+
+/// Test specific properties of the java-dev profile.
+#[test]
+fn test_java_dev_profile_contents() {
+    let sandboxes_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sandboxes");
+    let content = std::fs::read_to_string(sandboxes_dir.join("java-dev.toml")).unwrap();
+    let profile: SandboxProfile = toml::from_str(&content).unwrap();
+
+    assert!(profile.ro_paths.iter().any(|p| p.contains(".m2/repository")));
+    assert!(profile.env.contains(&"JAVA_HOME".to_string()));
+    assert!(profile.env.contains(&"MAVEN_HOME".to_string()));
+}
+
+/// Test that the debug profile has permissive rw_paths.
+#[test]
+fn test_debug_profile_is_permissive() {
+    let sandboxes_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sandboxes");
+    let content = std::fs::read_to_string(sandboxes_dir.join("debug.toml")).unwrap();
+    let profile: SandboxProfile = toml::from_str(&content).unwrap();
+
+    assert!(profile.rw_paths.iter().any(|p| p == "~/"));
+    assert!(profile.description.contains("debug") || profile.description.contains("Debug"));
+}

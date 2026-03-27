@@ -1,0 +1,21 @@
+description = "Permissive profile for debugging sandbox issues. NOT for production use."
+
+rw_paths = [
+    "~/.claude/",
+    "~/",
+]
+
+ro_paths = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/sbin",
+    "/etc/resolv.conf",
+    "/etc/hosts",
+    "/etc/ssl",
+]
+
+excluded_paths = []
+
+env = []
