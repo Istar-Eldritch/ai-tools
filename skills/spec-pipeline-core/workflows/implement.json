@@ -21,7 +21,8 @@
     "phases": "array",
     "phasesGenerated": "array",
     "currentPhaseIndex": "number",
-    "currentReviewCycle": "number",
+    "planReviewCycle": "number",
+    "codeReviewCycle": "number",
     "previousReview": "string",
     "reviewCyclesCompleted": "number",
     "implementerCompletedForPhase": "boolean",
@@ -43,7 +44,8 @@
       "indexField": "currentPhaseIndex",
       "onIterationComplete": {
         "reset": [
-          "currentReviewCycle",
+          "planReviewCycle",
+          "codeReviewCycle",
           "previousReview",
           "reviewCyclesCompleted",
           "implementerCompletedForPhase"
@@ -79,7 +81,7 @@
           "fixPrompt": "address_review.md",
           "maxCyclesConfigKey": "reviewCycles.planReviewer",
           "maxCycles": 0,
-          "cycleStateField": "currentReviewCycle",
+          "cycleStateField": "planReviewCycle",
           "transitionTo": "implement"
         },
         {
@@ -106,7 +108,7 @@
           "fixPrompt": "address_review.md",
           "maxCyclesConfigKey": "reviewCycles.codeReviewer",
           "maxCycles": 5,
-          "cycleStateField": "currentReviewCycle",
+          "cycleStateField": "codeReviewCycle",
           "transitionTo": "phase_commit"
         },
         {

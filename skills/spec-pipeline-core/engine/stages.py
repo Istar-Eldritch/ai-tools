@@ -603,7 +603,7 @@ def handle_loop(stage: dict, state: dict, config: Config,
     sub_stage_index = state.get("_loop_sub_stage", 0)
 
     # Check if previous sub-stage completed (state["stage"] changed away from loop)
-    if state.get("stage") != loop_stage_name and command in ("next",):
+    if state.get("stage") != loop_stage_name and command in ("next", "resume"):
         # A sub-stage transitioned -- advance to the next sub-stage
         state["stage"] = loop_stage_name
         sub_stage_index += 1
