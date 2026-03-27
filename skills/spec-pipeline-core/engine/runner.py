@@ -96,8 +96,10 @@ def _handle_start(workflow: dict, workflow_name: str, state_type: str,
     paths = construct_paths(config.specs_dir, timestamp, short_name,
                             config.spec_format, workflow_name)
 
+    # Normalize _active_flags to only contain flag names (not their values)
+    active_flags = [f for f in flags if f.startswith("--")]
     extra_fields = {
-        "_active_flags": flags,
+        "_active_flags": active_flags,
         f"{workflow_name}Timestamp": timestamp,
     }
 
@@ -237,6 +239,12 @@ def _emit_for_stage(workflow: dict, workflow_name: str, state_type: str,
         named_args = {}
 
     current_stage_name = state.get("stage")
+
+    # Backward-compatible stage name aliases (old prose-driven -> new engine-driven)
+    stage_aliases = workflow.get("stageAliases", {})
+    if current_stage_name in stage_aliases:
+        current_stage_name = stage_aliases[current_stage_name]
+        state["stage"] = current_stage_name
 
     # Check for completion
     completion = workflow.get("completion", {})
