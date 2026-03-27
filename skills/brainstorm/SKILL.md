@@ -21,9 +21,6 @@ Read the instruction execution protocol in `skills/spec-pipeline-core/CORE.md` s
 
 ## Execution Loop
 
-1. Parse the user's command and flags from their message
-2. Run the matching engine call from the table above
-3. Parse the JSON instruction from stdout
-4. Execute the instruction per CORE.md section 6 "Engine Instruction Protocol"
-5. If the instruction has a `then` field, call that command with the result and go to step 3
-6. If no `then` field (`done` or `error`), stop
+1. Run the matching engine call from the table above
+2. Parse JSON instruction from stdout, execute per CORE.md §6
+3. If instruction has `then`, call it with result and go to step 2; otherwise stop

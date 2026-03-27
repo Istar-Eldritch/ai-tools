@@ -102,6 +102,10 @@ def handle_conversation(stage: dict, state: dict, config: Config,
         exchange_count = len(exchanges)
         should_transition = False
 
+        # If no explicit intent provided, detect from user text
+        if not intent and input_text:
+            intent = _detect_transition_intent(input_text)
+
         if intent == "TRANSITION" and exchange_count >= min_exchanges:
             should_transition = True
         elif exchange_count >= max_exchanges:
@@ -561,6 +565,27 @@ def _build_discovery_summary(exchanges: list) -> str:
         lines.append(f"**Decision**: {response}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _detect_transition_intent(text: str) -> str:
+    """Detect transition intent from user text using keyword heuristics.
+
+    Returns 'TRANSITION' or 'CONTINUE'.
+    """
+    lower = text.strip().lower()
+    transition_phrases = [
+        "let's wrap up", "lets wrap up", "wrap up", "move on",
+        "let's synthesize", "lets synthesize", "synthesize",
+        "let's move to", "lets move to", "that's enough",
+        "thats enough", "done brainstorming", "done exploring",
+        "let's proceed", "lets proceed", "good enough",
+        "that covers it", "i'm happy", "im happy",
+        "/done", "/brainstorm-done",
+    ]
+    for phrase in transition_phrases:
+        if phrase in lower:
+            return "TRANSITION"
+    return "CONTINUE"
 
 
 def _parse_verdict(text: str) -> str:

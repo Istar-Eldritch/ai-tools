@@ -21,6 +21,7 @@ Configuration is stored in `.claude/spec-pipeline.json`. All fields are optional
     "planReviewer": "sonnet",
     "implementer": "opus",
     "codeReviewer": "sonnet",
+    "brainstormAgent": "sonnet",
     "addressReview": "sonnet",
     "commitMessageWriter": "haiku"
   },
@@ -44,6 +45,7 @@ Configuration is stored in `.claude/spec-pipeline.json`. All fields are optional
 - `contextFiles` — all skills (shared project context for all agents)
 - `agentContext` — per-role extra context files, read and appended to agent prompts
 - `specTemplatePath`, `specConventionsPath` — spec, implement
+- `models.brainstormAgent` — brainstorm
 - `models.planDrafter/planReviewer/implementer/codeReviewer/addressReview` — implement only
 - `reviewCycles` — implement only
 
