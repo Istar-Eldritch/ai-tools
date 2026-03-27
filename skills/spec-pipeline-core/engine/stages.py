@@ -5,7 +5,7 @@ Each stage type has a handler function that:
 2. Mutates state as needed (record exchanges, advance counters)
 3. Returns the next Instruction to emit
 
-Stage types: conversation, agent, approval, review, commit, loop
+Stage types: conversation, agent, approval, review, commit, loop, init_phases
 """
 
 from __future__ import annotations
@@ -296,6 +296,14 @@ def handle_review(stage: dict, state: dict, config: Config,
     transition_to = stage.get("transitionTo")
     cycle_field = stage.get("cycleStateField", "reviewCycle")
 
+    # Read maxCycles from config if maxCyclesConfigKey is set
+    cycles_key = stage.get("maxCyclesConfigKey", "")
+    if cycles_key:
+        parts = cycles_key.split(".")
+        config_cycles = config.get_nested(*parts, default=max_cycles)
+        if config_cycles is not None:
+            max_cycles = config_cycles
+
     current_cycle = state.get(cycle_field, 0)
 
     if command in ("start", "next", "resume"):
@@ -453,15 +461,94 @@ def _emit_commit_command(workflow_name: str, state_id: str,
                           files_str: str, commit_msg: str) -> inst.Instruction:
     """Emit a run_command instruction for git commit with proper shell escaping."""
     safe_msg = shlex.quote(commit_msg)
-    safe_files = shlex.quote(files_str) if files_str else '""'
-    commit_cmd = (
-        f'bash skills/spec-pipeline-core/git-helpers.sh scoped-commit '
-        f'--files {safe_files} --message {safe_msg}'
-    )
+    if not files_str or all(f.strip() == "" for f in files_str.split()):
+        # Auto mode: commit all staged changes
+        commit_cmd = (
+            f'bash skills/spec-pipeline-core/git-helpers.sh scoped-commit '
+            f'--auto --message {safe_msg}'
+        )
+    else:
+        safe_files = shlex.quote(files_str)
+        commit_cmd = (
+            f'bash skills/spec-pipeline-core/git-helpers.sh scoped-commit '
+            f'--files {safe_files} --message {safe_msg}'
+        )
     return inst.RunCommand(
         command=commit_cmd,
         then=_engine_then(workflow_name, "command-done", state_id, "output"),
     )
+
+
+def handle_init_phases(stage: dict, state: dict, config: Config,
+                       workflow_name: str, command: str,
+                       agent_output: Optional[str] = None,
+                       command_output: Optional[str] = None,
+                       **kwargs) -> inst.Instruction:
+    """Handle the 'init_phases' stage for implement workflow.
+
+    Flow:
+    1. 'start': If specPath is a file, emit read_file. Otherwise emit error.
+    2. 'file-read': Store spec content in state, emit run_command for phase extraction.
+    3. 'command-done': Parse phases JSON, store in state, transition to loop.
+    """
+    state_id = state["id"]
+    transition_to = stage.get("transitionTo")
+    init_phase = state.get("_init_phase", "read_spec")
+
+    if command in ("start", "next", "resume"):
+        spec_path = state.get("specPath", "")
+        if not spec_path:
+            return inst.Error(message="specPath is required for implement workflow")
+        if init_phase == "extract_phases":
+            # Resume after spec was read but before phases extracted
+            return inst.RunCommand(
+                command=f'bash skills/spec-pipeline-core/parse.sh extract-phases "{spec_path}"',
+                then=_engine_then(workflow_name, "command-done", state_id, "output"),
+            )
+        # Start: read the spec file
+        state["_init_phase"] = "read_spec"
+        return inst.ReadFile(
+            path=spec_path,
+            then=_engine_then(workflow_name, "file-read", state_id, "content"),
+        )
+
+    elif command == "file-read":
+        # Spec content received, store it and extract phases
+        state["specContent"] = agent_output or ""  # content comes via agent_output mapping
+        state["_init_phase"] = "extract_phases"
+        spec_path = state.get("specPath", "")
+        return inst.RunCommand(
+            command=f'bash skills/spec-pipeline-core/parse.sh extract-phases "{spec_path}"',
+            then=_engine_then(workflow_name, "command-done", state_id, "output"),
+        )
+
+    elif command == "command-done":
+        # Parse phases from extract-phases output
+        import json as _json
+        try:
+            phases = _json.loads(command_output or "[]")
+        except (ValueError, TypeError):
+            phases = []
+
+        if not phases:
+            # Fallback: single phase
+            phases = [{"number": 1, "focus": "implementation", "sanitizedFocus": "implementation"}]
+
+        state["phases"] = phases
+        state["currentPhaseIndex"] = 0
+        state.pop("_init_phase", None)
+        state["stage"] = transition_to
+
+        phase_summary = "\n".join(
+            f"  Phase {p.get('number', i+1)}: {p.get('focus', 'unknown')}"
+            for i, p in enumerate(phases)
+        )
+        return inst.Present(
+            text=f"Extracted {len(phases)} phase(s) from spec:\n{phase_summary}\n\nStarting implementation.",
+            then=_engine_then(workflow_name, "next", state_id),
+        )
+
+    return inst.Error(message=f"Unexpected command '{command}' for init_phases stage")
 
 
 def handle_loop(stage: dict, state: dict, config: Config,
@@ -473,46 +560,101 @@ def handle_loop(stage: dict, state: dict, config: Config,
     Loop variables ({current_phase}, {phase_number}, {phase_focus}) are set in
     state for template rendering.
 
-    This is a placeholder implementation for Phase 1 -- full loop support
-    will be needed for the implement workflow in Phase 4.
+    Supports:
+    - indexField: custom state field for loop index (default: _loop_index)
+    - skipWhen / skipWhenState: skip sub-stages based on flags or state booleans
+    - maxCyclesConfigKey: review sub-stages read cycle count from config
+    - onIterationComplete: reset state fields between iterations
+    - Sub-stage completion detection via state["stage"] change monitoring
     """
     state_id = state["id"]
     over_field = stage.get("over", "phases")
     sub_stages = stage.get("stages", [])
     transition_to = stage.get("transitionTo")
-    loop_index = state.get("_loop_index", 0)
+    index_field = stage.get("indexField", "_loop_index")
+    loop_index = state.get(index_field, 0)
     items = _get_nested(state, over_field, default=[])
+    loop_stage_name = stage["name"]
+    on_complete = stage.get("onIterationComplete", {})
+    active_flags = state.get("_active_flags", [])
 
     if loop_index >= len(items):
-        # Loop complete
-        state.pop("_loop_index", None)
+        # Loop complete -- clean up
         state.pop("_loop_sub_stage", None)
         state["stage"] = transition_to
         return inst.Present(
-            text=f"Loop complete ({len(items)} items). Moving to {transition_to}.",
+            text=f"All {len(items)} phase(s) complete. Moving to {transition_to}.",
             then=_engine_then(workflow_name, "next", state_id),
         )
 
-    # Set loop variables in state for template rendering
+    # Set loop variables for current item
     item = items[loop_index]
     if isinstance(item, dict):
         state["current_phase"] = item.get("focus", "")
         state["phase_number"] = item.get("number", loop_index + 1)
         state["phase_focus"] = item.get("focus", "")
+        state["phase_sanitizedFocus"] = item.get("sanitizedFocus", "")
     else:
         state["current_phase"] = str(item)
         state["phase_number"] = loop_index + 1
+        state["phase_focus"] = str(item)
 
-    # Delegate to the current sub-stage
+    # Determine current sub-stage
     sub_stage_index = state.get("_loop_sub_stage", 0)
-    if sub_stage_index >= len(sub_stages):
-        # All sub-stages done for this item, advance to next item
-        state["_loop_index"] = loop_index + 1
-        state["_loop_sub_stage"] = 0
-        return handle_loop(stage, state, config, workflow_name, command, **kwargs)
 
-    # Run the current sub-stage
+    # Check if previous sub-stage completed (state["stage"] changed away from loop)
+    if state.get("stage") != loop_stage_name and command in ("next",):
+        # A sub-stage transitioned -- advance to the next sub-stage
+        state["stage"] = loop_stage_name
+        sub_stage_index += 1
+        state["_loop_sub_stage"] = sub_stage_index
+
+    # Skip sub-stages with skipWhen matching active flags, or skipWhenState
+    while sub_stage_index < len(sub_stages):
+        ss = sub_stages[sub_stage_index]
+        skip_flags = ss.get("skipWhen", [])
+        skip_state_field = ss.get("skipWhenState")
+        should_skip = any(f in active_flags for f in skip_flags)
+        if skip_state_field and state.get(skip_state_field):
+            should_skip = True
+        # For review stages, also skip if config cycles is 0
+        if ss.get("type") == "review":
+            cycles_key = ss.get("maxCyclesConfigKey", "")
+            if cycles_key:
+                parts = cycles_key.split(".")
+                cfg_cycles = config.get_nested(*parts, default=ss.get("maxCycles", 3))
+                if cfg_cycles == 0:
+                    should_skip = True
+        if should_skip:
+            sub_stage_index += 1
+            state["_loop_sub_stage"] = sub_stage_index
+            continue
+        break
+
+    if sub_stage_index >= len(sub_stages):
+        # All sub-stages done for this item -- apply onIterationComplete and advance
+        for field in on_complete.get("reset", []):
+            if field in state:
+                if isinstance(state[field], bool):
+                    state[field] = False
+                elif isinstance(state[field], int):
+                    state[field] = 0
+                elif isinstance(state[field], str):
+                    state[field] = ""
+                elif isinstance(state[field], list):
+                    state[field] = []
+        state[index_field] = loop_index + 1
+        state["_loop_sub_stage"] = 0
+        # Present phase completion, then recurse
+        return inst.Present(
+            text=f"Phase {loop_index + 1} of {len(items)} complete.",
+            then=_engine_then(workflow_name, "next", state_id),
+        )
+
+    # Dispatch to current sub-stage
     sub_stage = sub_stages[sub_stage_index]
+    # For the sub-stage dispatch, use the loop's stage name in state
+    state["stage"] = loop_stage_name
     return _dispatch_stage(sub_stage, state, config, workflow_name, command, **kwargs)
 
 
@@ -637,6 +779,7 @@ def _dispatch_stage(stage: dict, state: dict, config: Config,
         "review": handle_review,
         "commit": handle_commit,
         "loop": handle_loop,
+        "init_phases": handle_init_phases,
     }
     handler = handlers.get(stage_type)
     if not handler:

@@ -89,6 +89,23 @@ def _handle_start(workflow: dict, workflow_name: str, state_type: str,
     if not description:
         return inst.Error(message="Description is required for 'start' command")
 
+    # Implement-specific: first arg may be a spec file path
+    extra_fields_pre = {}
+    if workflow_name == "implement":
+        spec_path_or_desc = description
+        if os.path.exists(spec_path_or_desc):
+            extra_fields_pre["specPath"] = spec_path_or_desc
+            # Use the spec filename as the description if no separate description provided
+            if not named_args.get("description"):
+                description = os.path.basename(spec_path_or_desc)
+        else:
+            description = spec_path_or_desc
+        # Map flags to state fields
+        if "--no-plan" in flags:
+            extra_fields_pre["skipPlanGeneration"] = True
+        if "--no-review" in flags:
+            extra_fields_pre["skipReview"] = True
+
     # Compute extra initial fields
     short_name = derive_short_name(description)
     from .state import generate_timestamp
@@ -120,6 +137,10 @@ def _handle_start(workflow: dict, workflow_name: str, state_type: str,
                 extra_fields.setdefault("discovery", {})
                 if isinstance(extra_fields.get("discovery"), dict):
                     extra_fields["discovery"]["brainstormPath"] = brainstorm_path
+
+    # Merge implement-specific fields
+    if workflow_name == "implement":
+        extra_fields.update(extra_fields_pre)
 
     state = initialize_state(state_type, workflow, description, extra_fields)
 
@@ -291,7 +312,7 @@ def _emit_for_stage(workflow: dict, workflow_name: str, state_type: str,
         kwargs["intent"] = named_args["intent"]
     if "content" in named_args:
         kwargs["agent_output"] = named_args["content"]  # file content treated as output
-    if stage_type == "commit" and "output" in named_args and command == "command-done":
+    if "output" in named_args and command == "command-done":
         kwargs["command_output"] = named_args["output"]
 
     # Dispatch to stage handler
@@ -302,6 +323,7 @@ def _emit_for_stage(workflow: dict, workflow_name: str, state_type: str,
         "review": stages.handle_review,
         "commit": stages.handle_commit,
         "loop": stages.handle_loop,
+        "init_phases": stages.handle_init_phases,
     }.get(stage_type)
 
     if not handler:
