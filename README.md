@@ -8,7 +8,8 @@ A collection of extensions, skills, and utilities for [pi](https://github.com/ma
 ai_tools/
 ├── extensions/       # Pi extensions (add commands and tools)
 ├── skills/           # Pi skills (instruction files for specific tasks)
-├── plane/            # Plane.so CLI tool (Rust)
+├── claude-sandbox/   # Claude Code bwrap sandbox CLI (Rust)
+├── sandboxes/        # Sandbox profile definitions (TOML)
 └── prompts/          # Reusable prompt templates
 ```
 
@@ -92,9 +93,15 @@ Skills are instruction files that teach pi how to perform specific tasks. They a
 | **pass-secrets** | Securely inject secrets from pass password store into commands |
 | **plane** | Project management via Plane.so CLI |
 
-## Plane CLI
+## Claude Sandbox
 
-A Rust CLI tool for interacting with Plane.so project management. See [plane/README.md](plane/README.md) for details.
+A bubblewrap (`bwrap`) filesystem sandbox for running Claude Code on Linux. Restricts host filesystem access to only the paths a project needs, blocks credential directories, and clears the environment to a known-safe whitelist. See [claude-sandbox/README.md](claude-sandbox/README.md) for full documentation.
+
+```bash
+claude-sandbox setup        # one-time machine setup
+claude-sandbox init         # initialize project config
+claude-sandbox run          # launch Claude inside the sandbox
+```
 
 ## Installation
 
