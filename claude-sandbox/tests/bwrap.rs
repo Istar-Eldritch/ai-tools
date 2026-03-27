@@ -33,7 +33,7 @@ fn test_minimal_profile_produces_correct_flags() {
     let root_path = project_root.path().to_path_buf();
     let config = make_resolved(minimal_profile(), ProjectConfig::default(), root_path.clone());
 
-    let args = assemble_args(&config).unwrap();
+    let args = assemble_args(&config, None).unwrap();
 
     // Namespace flags must be present
     assert!(args.contains(&"--unshare-user".to_string()));
@@ -84,7 +84,7 @@ fn test_project_extra_paths_included() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&config).unwrap();
+    let args = assemble_args(&config, None).unwrap();
 
     // Check the full --bind <src> <dst> triple
     let found = args.windows(3).any(|w| {
@@ -116,7 +116,7 @@ fn test_extra_path_ro_mode() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&config).unwrap();
+    let args = assemble_args(&config, None).unwrap();
 
     // Check the full --ro-bind <src> <dst> triple
     let found = args.windows(3).any(|w| {
@@ -152,7 +152,7 @@ fn test_nonexistent_paths_skipped() {
     };
 
     let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-    let args = assemble_args(&config).unwrap();
+    let args = assemble_args(&config, None).unwrap();
 
     // /usr should be present, nonexistent should not
     assert!(args.contains(&"/usr".to_string()));
@@ -174,7 +174,7 @@ fn test_excluded_paths_blocks_ro_path() {
     };
 
     let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-    let result = assemble_args(&config);
+    let result = assemble_args(&config, None);
     assert!(result.is_err(), "excluded path in ro_paths must be rejected");
     assert!(result.unwrap_err().to_string().contains("excluded by profile"));
 }
@@ -192,7 +192,7 @@ fn test_excluded_paths_allows_non_excluded() {
     };
 
     let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-    let result = assemble_args(&config);
+    let result = assemble_args(&config, None);
     assert!(result.is_ok(), "non-excluded path should be allowed");
 }
 
@@ -271,7 +271,7 @@ fn test_project_root_always_rw_bind() {
     };
 
     let config = make_resolved(profile, ProjectConfig::default(), root_path.clone());
-    let args = assemble_args(&config).unwrap();
+    let args = assemble_args(&config, None).unwrap();
 
     let root_str = root_path.to_string_lossy().to_string();
     let found_root_bind = args.windows(3).any(|w| {

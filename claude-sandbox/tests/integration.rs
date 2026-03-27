@@ -140,7 +140,7 @@ fn test_full_workflow_setup_to_dry_run() {
     validate(&resolved).unwrap();
 
     // Assemble bwrap args (the dry-run output)
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     // Verify essential structure
     assert!(args.contains(&"--unshare-user".to_string()));
@@ -184,7 +184,7 @@ fn test_dry_run_with_each_profile() {
             panic!("Validation failed for profile '{}': {}", profile_name, e)
         });
 
-        let args = assemble_args(&resolved).unwrap_or_else(|e| {
+        let args = assemble_args(&resolved, None).unwrap_or_else(|e| {
             panic!(
                 "assemble_args failed for profile '{}': {}",
                 profile_name, e
@@ -297,7 +297,7 @@ fn test_r11_claude_args_passthrough() {
     );
 
     // Simulate what run.rs does: assemble bwrap args, then append "claude --flag value"
-    let mut full_args = assemble_args(&resolved).unwrap();
+    let mut full_args = assemble_args(&resolved, None).unwrap();
     full_args.push("claude".to_string());
     full_args.push("--flag".to_string());
     full_args.push("value".to_string());
@@ -401,7 +401,7 @@ fn test_deny_list_blocks_ssh_in_profile() {
         project_root.path().to_path_buf(),
     );
 
-    let result = assemble_args(&resolved);
+    let result = assemble_args(&resolved, None);
     assert!(result.is_err(), "mounting ~/.ssh must be rejected");
     let msg = result.unwrap_err().to_string();
     assert!(
@@ -436,7 +436,7 @@ fn test_deny_list_blocks_ssh_in_rw_paths() {
         project_root.path().to_path_buf(),
     );
 
-    let result = assemble_args(&resolved);
+    let result = assemble_args(&resolved, None);
     assert!(result.is_err(), "rw mounting ~/.ssh must be rejected");
     assert!(result.unwrap_err().to_string().contains("~/.ssh"));
 }
@@ -465,7 +465,7 @@ fn test_deny_list_blocks_ssh_in_extra_paths() {
 
     let resolved = make_resolved("test", profile, project, project_root.path().to_path_buf());
 
-    let result = assemble_args(&resolved);
+    let result = assemble_args(&resolved, None);
     assert!(result.is_err(), "extra path ~/.ssh must be rejected");
     assert!(result.unwrap_err().to_string().contains("~/.ssh"));
 }
@@ -496,7 +496,7 @@ fn test_env_whitelist_prevents_leakage() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     // The args should contain --clearenv
     assert!(
@@ -542,7 +542,7 @@ fn test_whitelisted_env_var_passes_through() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     let has_term = args.windows(3).any(|w| {
         w[0] == "--setenv" && w[1] == "TERM" && w[2] == "xterm-256color"
@@ -579,7 +579,7 @@ fn test_profile_env_vars_are_whitelisted() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     let has_cargo = args.windows(3).any(|w| {
         w[0] == "--setenv" && w[1] == "CARGO_HOME" && w[2] == "/test/cargo/home"
@@ -616,7 +616,7 @@ fn test_check_reports_all_mounts() {
         project.root(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     // Count mounts the same way the check command does
     let mount_count = args
@@ -664,7 +664,7 @@ fn test_empty_profile_still_mounts_project_root() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     // Even an empty profile must include the project root
     let root_str = project_root.path().to_string_lossy().to_string();
@@ -703,7 +703,7 @@ fn test_symlinked_project_root() {
     );
 
     // assemble_args should succeed with the symlink path
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
     let link_str = link_path.to_string_lossy().to_string();
     let has_root = args.windows(3).any(|w| {
         w[0] == "--bind" && w[1] == link_str && w[2] == link_str
@@ -748,7 +748,7 @@ fn test_symlinked_extra_path() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
     let has_link = args.windows(3).any(|w| {
         w[0] == "--ro-bind" && w[1] == link_str && w[2] == link_str
     });
@@ -819,7 +819,7 @@ fn test_profile_with_only_excluded_paths() {
     );
 
     // Should succeed — excluded_paths only matter when a path is actually mounted
-    let result = assemble_args(&resolved);
+    let result = assemble_args(&resolved, None);
     assert!(
         result.is_ok(),
         "profile with only excluded_paths and no actual mounts should succeed"
@@ -871,7 +871,7 @@ fn test_error_denied_path_is_actionable() {
         project_root.path().to_path_buf(),
     );
 
-    let result = assemble_args(&resolved);
+    let result = assemble_args(&resolved, None);
     let msg = result.unwrap_err().to_string();
 
     // Should explain what was denied and why
@@ -908,7 +908,7 @@ fn test_error_excluded_path_is_actionable() {
         project_root.path().to_path_buf(),
     );
 
-    let result = assemble_args(&resolved);
+    let result = assemble_args(&resolved, None);
     let msg = result.unwrap_err().to_string();
 
     assert!(
@@ -991,7 +991,7 @@ fn test_all_deny_list_entries_blocked() {
             project_root.path().to_path_buf(),
         );
 
-        let result = assemble_args(&resolved);
+        let result = assemble_args(&resolved, None);
         assert!(
             result.is_err(),
             "deny-list should block: {}",
@@ -1030,7 +1030,7 @@ fn test_deny_list_blocks_subdirectories() {
             project_root.path().to_path_buf(),
         );
 
-        let result = assemble_args(&resolved);
+        let result = assemble_args(&resolved, None);
         assert!(
             result.is_err(),
             "subdirectory of denied path should also be blocked: {}",
@@ -1204,7 +1204,7 @@ fn test_multiple_extra_paths_all_mounted() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     let has_ro = args.windows(3).any(|w| {
         w[0] == "--ro-bind" && w[1] == path1 && w[2] == path1
@@ -1245,7 +1245,7 @@ fn test_project_extra_env_whitelisted() {
         project_root.path().to_path_buf(),
     );
 
-    let args = assemble_args(&resolved).unwrap();
+    let args = assemble_args(&resolved, None).unwrap();
 
     let has_var = args.windows(3).any(|w| {
         w[0] == "--setenv" && w[1] == var_name && w[2] == "custom_value"

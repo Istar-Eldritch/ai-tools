@@ -7,7 +7,7 @@ pub fn execute(args: CheckArgs) -> AppResult<()> {
     bwrap::verify_bwrap_available()?;
     let resolved = config::resolve_config(args.profile.as_deref())?;
     bwrap::validate(&resolved)?;
-    let bwrap_args = bwrap::assemble_args(&resolved)?;
+    let bwrap_args = bwrap::assemble_args(&resolved, None)?;
 
     // Count mounts: --bind and --ro-bind each consume 3 positions (flag, src, dst)
     let mount_count = bwrap_args

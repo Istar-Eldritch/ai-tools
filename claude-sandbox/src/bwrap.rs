@@ -114,7 +114,11 @@ fn host_path_exists(path: &Path) -> bool {
 }
 
 /// Assemble the bwrap argument list from a resolved configuration.
-pub fn assemble_args(config: &ResolvedConfig) -> AppResult<Vec<String>> {
+///
+/// If `claude_path` is provided, the directories containing the binary (and
+/// its symlink target, if any) are automatically mounted read-only so bwrap
+/// can execute it.
+pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Path>) -> AppResult<Vec<String>> {
     let mut args: Vec<String> = Vec::new();
 
     // Namespace flags
@@ -237,6 +241,54 @@ pub fn assemble_args(config: &ResolvedConfig) -> AppResult<Vec<String>> {
                 MountMode::Rw => "--bind",
             };
             args.extend_from_slice(&[flag.to_string(), src.clone(), src]);
+        }
+    }
+
+    // Mount directories needed for the claude binary.  We mount the directory
+    // containing the symlink (e.g. ~/.local/bin/) and, if the symlink target
+    // lives elsewhere, the directory containing the real binary too (e.g.
+    // ~/.local/share/claude/).
+    if let Some(cp) = claude_path {
+        let mut dirs_to_mount: Vec<PathBuf> = Vec::new();
+
+        // Directory containing the path we were given (may be a symlink)
+        if let Some(parent) = cp.parent() {
+            dirs_to_mount.push(parent.to_path_buf());
+        }
+
+        // If it's a symlink, also mount the directory of the resolved target
+        if let Ok(canonical) = cp.canonicalize() {
+            if let Some(parent) = canonical.parent() {
+                dirs_to_mount.push(parent.to_path_buf());
+            }
+            // Also mount intermediate symlink targets' directories
+            // (e.g. ~/.local/share/claude/versions/)
+            let mut p = cp.to_path_buf();
+            while let Ok(target) = std::fs::read_link(&p) {
+                let target = if target.is_relative() {
+                    p.parent().unwrap_or(Path::new("/")).join(&target)
+                } else {
+                    target
+                };
+                if let Some(parent) = target.parent() {
+                    dirs_to_mount.push(parent.to_path_buf());
+                }
+                p = target;
+            }
+        }
+
+        // Deduplicate and mount each directory ro
+        dirs_to_mount.sort();
+        dirs_to_mount.dedup();
+        for dir in &dirs_to_mount {
+            if host_path_exists(dir) {
+                let src = dir.to_string_lossy().to_string();
+                // Skip if already covered by an existing mount (e.g. /usr/bin
+                // is already under the /usr ro-bind)
+                if !args.windows(3).any(|w| (w[0] == "--ro-bind" || w[0] == "--bind") && w[1] == src) {
+                    args.extend_from_slice(&["--ro-bind".to_string(), src.clone(), src]);
+                }
+            }
         }
     }
 
@@ -383,7 +435,7 @@ mod tests {
         };
 
         let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-        let result = assemble_args(&config);
+        let result = assemble_args(&config, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("~/.ssh"));
     }
@@ -403,7 +455,7 @@ mod tests {
         };
 
         let config = make_resolved(minimal_profile(), project, project_root.path().to_path_buf());
-        let result = assemble_args(&config);
+        let result = assemble_args(&config, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("~/.aws"));
     }
@@ -414,7 +466,7 @@ mod tests {
     fn test_clearenv_flag_present() {
         let project_root = tempfile::tempdir().unwrap();
         let config = make_resolved(minimal_profile(), ProjectConfig::default(), project_root.path().to_path_buf());
-        let args = assemble_args(&config).unwrap();
+        let args = assemble_args(&config, None).unwrap();
         assert!(args.contains(&"--clearenv".to_string()), "--clearenv must be present");
     }
 
@@ -424,7 +476,7 @@ mod tests {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key-12345");
         let project_root = tempfile::tempdir().unwrap();
         let config = make_resolved(minimal_profile(), ProjectConfig::default(), project_root.path().to_path_buf());
-        let args = assemble_args(&config).unwrap();
+        let args = assemble_args(&config, None).unwrap();
 
         // Find --setenv ANTHROPIC_API_KEY test-key-12345 triple
         let pos = args.iter().position(|a| a == "--setenv");
@@ -454,7 +506,7 @@ mod tests {
             env: vec![],
         };
         let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-        let args = assemble_args(&config).unwrap();
+        let args = assemble_args(&config, None).unwrap();
 
         let claude_str = claude_dir.to_string_lossy().to_string();
         // Both source and destination should appear
@@ -483,7 +535,7 @@ mod tests {
         };
 
         let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-        let result = assemble_args(&config);
+        let result = assemble_args(&config, None);
         assert!(result.is_err(), "excluded path in ro_paths should be rejected");
         assert!(result.unwrap_err().to_string().contains("excluded by profile"));
     }
@@ -503,7 +555,7 @@ mod tests {
         };
 
         let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-        let result = assemble_args(&config);
+        let result = assemble_args(&config, None);
         assert!(result.is_err(), "excluded path in rw_paths should be rejected");
     }
 
@@ -531,7 +583,7 @@ mod tests {
         };
 
         let config = make_resolved(profile, project, project_root.path().to_path_buf());
-        let result = assemble_args(&config);
+        let result = assemble_args(&config, None);
         assert!(result.is_err(), "excluded path in extra_paths should be rejected");
     }
 
@@ -566,7 +618,7 @@ mod tests {
         };
 
         let config = make_resolved(profile, ProjectConfig::default(), bad_root);
-        let result = assemble_args(&config);
+        let result = assemble_args(&config, None);
         assert!(result.is_err(), "project root in deny-list should be rejected");
         assert!(result.unwrap_err().to_string().contains("~/.ssh"));
     }
