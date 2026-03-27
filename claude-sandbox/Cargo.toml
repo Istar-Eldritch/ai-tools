@@ -28,3 +28,7 @@ path = "tests/config.rs"
 [[test]]
 name = "cli"
 path = "tests/cli.rs"
+
+[[test]]
+name = "bwrap"
+path = "tests/bwrap.rs"

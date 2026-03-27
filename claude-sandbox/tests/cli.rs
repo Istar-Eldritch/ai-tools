@@ -15,32 +15,33 @@ fn test_version_flag() {
 }
 
 #[test]
-fn test_default_to_run() {
-    // No subcommand should default to `run`
+fn test_default_to_run_fails_without_config() {
+    // Without a valid profile on disk, `run` (the default command) should fail
+    // with a config/profile error rather than silently succeeding.
     cmd()
         .assert()
-        .success()
-        .stdout(predicate::str::contains("run:"));
+        .failure();
 }
 
 #[test]
-fn test_run_subcommand() {
+fn test_run_subcommand_fails_without_config() {
     cmd()
         .arg("run")
         .assert()
-        .success()
-        .stdout(predicate::str::contains("run:"));
+        .failure();
 }
 
 #[test]
-fn test_run_with_passthrough_args() {
+fn test_run_dry_run_prints_bwrap_command() {
+    // --dry-run prints the bwrap command line and exits successfully
+    // (This works when a default "minimal" profile is available on disk)
     cmd()
-        .args(["run", "--", "--model", "opus"])
+        .args(["run", "--dry-run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("run:"))
-        .stdout(predicate::str::contains("--model"))
-        .stdout(predicate::str::contains("opus"));
+        .stdout(predicate::str::contains("bwrap"))
+        .stdout(predicate::str::contains("--unshare-user"))
+        .stdout(predicate::str::contains("claude"));
 }
 
 #[test]

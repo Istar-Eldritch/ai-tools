@@ -166,6 +166,47 @@ pub fn load_project_config(project_root: &Path) -> AppResult<Option<ProjectConfi
     Ok(Some(config))
 }
 
+/// Resolve a fully merged configuration from all layers.
+///
+/// - Detects the project root
+/// - Loads machine config
+/// - Loads project config (or defaults)
+/// - Loads the sandbox profile (using optional override)
+pub fn resolve_config(profile_override: Option<&str>) -> AppResult<ResolvedConfig> {
+    let machine = load_machine_config()?;
+    let project_root = detect_project_root()?;
+    let project = load_project_config(&project_root)?.unwrap_or_default();
+
+    let profile_name = profile_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| project.profile.clone());
+
+    // Determine ai_tools directory: from machine config, or fall back to parent of this binary's
+    // likely location, or a sensible default.
+    let ai_tools_dir = machine
+        .tools
+        .ai_tools
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            // Fallback: try the parent of the cargo manifest dir at build time, or cwd.
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."))
+        });
+
+    let profile = load_profile(&ai_tools_dir, &profile_name)?;
+
+    Ok(ResolvedConfig {
+        profile_name,
+        profile,
+        project,
+        machine,
+        project_root,
+    })
+}
+
 /// Load the machine configuration.
 /// Returns a default config if the file does not exist.
 // TODO(R10): At launch time this should be fail-closed — if the machine config is absent

@@ -28,6 +28,14 @@ pub enum Commands {
 
 #[derive(clap::Args, Debug, Default)]
 pub struct RunArgs {
+    /// Print the bwrap command that would be executed, then exit
+    #[clap(long)]
+    pub dry_run: bool,
+
+    /// Override the sandbox profile to use
+    #[clap(long)]
+    pub profile: Option<String>,
+
     /// Arguments to pass through to claude
     #[clap(last = true)]
     pub claude_args: Vec<String>,
