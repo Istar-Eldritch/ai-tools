@@ -6,6 +6,7 @@
 
 use claude_sandbox::bwrap::{assemble_args, expand_tilde, validate};
 use claude_sandbox::config::*;
+use serial_test::serial;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -249,7 +250,70 @@ fn test_dry_run_with_each_profile() {
             "profile '{}' missing --ro-bind /usr /usr",
             profile_name
         );
+
+        // R14: profile-specific cache paths must be present (expanded)
+        if *profile_name == "rust-dev" {
+            let cargo_registry = expand_tilde("~/.cargo/registry").unwrap();
+            let cargo_registry_str = cargo_registry.to_string_lossy().to_string();
+            let has_cargo_registry = args.iter().any(|a| a == &cargo_registry_str);
+            assert!(
+                has_cargo_registry,
+                "rust-dev profile missing cache path '{}' in args",
+                cargo_registry_str
+            );
+        }
+        if *profile_name == "java-dev" {
+            let m2_repo = expand_tilde("~/.m2/repository").unwrap();
+            let m2_repo_str = m2_repo.to_string_lossy().to_string();
+            let has_m2_repo = args.iter().any(|a| a == &m2_repo_str);
+            assert!(
+                has_m2_repo,
+                "java-dev profile missing cache path '{}' in args",
+                m2_repo_str
+            );
+        }
     }
+}
+
+// ── 2b. R11: claude args are appended after bwrap args ───────────────────
+
+#[test]
+fn test_r11_claude_args_passthrough() {
+    let project_root = tempfile::tempdir().unwrap();
+
+    let profile = SandboxProfile {
+        description: "passthrough test".to_string(),
+        rw_paths: vec![],
+        ro_paths: vec![],
+        excluded_paths: vec![],
+        env: vec![],
+    };
+
+    let resolved = make_resolved(
+        "minimal",
+        profile,
+        ProjectConfig::default(),
+        project_root.path().to_path_buf(),
+    );
+
+    // Simulate what run.rs does: assemble bwrap args, then append "claude --flag value"
+    let mut full_args = assemble_args(&resolved).unwrap();
+    full_args.push("claude".to_string());
+    full_args.push("--flag".to_string());
+    full_args.push("value".to_string());
+
+    // The last three args must be the claude invocation and its flags
+    let n = full_args.len();
+    assert!(
+        n >= 3,
+        "full_args must have at least 3 entries, got {}",
+        n
+    );
+    assert_eq!(
+        &full_args[n - 3..],
+        &["claude", "--flag", "value"],
+        "last args must be [\"claude\", \"--flag\", \"value\"]"
+    );
 }
 
 // ── 3. Run fails without setup (no machine config) ───────────────────────
@@ -409,6 +473,7 @@ fn test_deny_list_blocks_ssh_in_extra_paths() {
 // ── 6. Env whitelist prevents leakage ────────────────────────────────────
 
 #[test]
+#[serial]
 fn test_env_whitelist_prevents_leakage() {
     // Set a secret variable that is NOT in the whitelist
     let secret_var_name = "SUPER_SECRET_TEST_VAR_12345";
@@ -454,6 +519,7 @@ fn test_env_whitelist_prevents_leakage() {
 }
 
 #[test]
+#[serial]
 fn test_whitelisted_env_var_passes_through() {
     // Verify that a whitelisted var IS present when set
     let var_name = "TERM";
@@ -491,6 +557,7 @@ fn test_whitelisted_env_var_passes_through() {
 }
 
 #[test]
+#[serial]
 fn test_profile_env_vars_are_whitelisted() {
     // A profile that declares CARGO_HOME env should pass it through if set
     let original = std::env::var("CARGO_HOME").ok();
@@ -567,12 +634,13 @@ fn test_check_reports_all_mounts() {
         mount_count
     );
 
-    // Count env vars
+    // Count env vars — HOME is always set so we expect at least one --setenv entry
     let env_count = args.iter().filter(|a| a.as_str() == "--setenv").count();
-    // We should have at least some env vars from the default whitelist
-    // (HOME, PATH, USER, SHELL, TERM, etc. — whatever is set in the environment).
-    // Just verify the count is sane (it's a usize so always >= 0).
-    let _ = env_count;
+    assert!(
+        env_count >= 1,
+        "should have at least 1 --setenv entry from default whitelist, got {}",
+        env_count
+    );
 }
 
 // ── Edge case: empty profile ─────────────────────────────────────────────
