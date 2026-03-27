@@ -217,14 +217,19 @@ pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Pa
         args.extend_from_slice(&["--bind".to_string(), src.clone(), src]);
     }
 
-    // ~/.claude/ is always bound rw so that Claude can read its config and
-    // write session state, regardless of what the profile specifies.
+    // ~/.claude/ and ~/.claude.json are always bound rw so that Claude can
+    // read its config and write session state, regardless of profile.
     {
-        let claude_dir = dirs::home_dir()
-            .ok_or_else(|| AppError::Config("Could not determine home directory".to_string()))?
-            .join(".claude");
+        let home = dirs::home_dir()
+            .ok_or_else(|| AppError::Config("Could not determine home directory".to_string()))?;
+        let claude_dir = home.join(".claude");
         if host_path_exists(&claude_dir) {
             let src = claude_dir.to_string_lossy().to_string();
+            args.extend_from_slice(&["--bind".to_string(), src.clone(), src]);
+        }
+        let claude_json = home.join(".claude.json");
+        if host_path_exists(&claude_json) {
+            let src = claude_json.to_string_lossy().to_string();
             args.extend_from_slice(&["--bind".to_string(), src.clone(), src]);
         }
     }
