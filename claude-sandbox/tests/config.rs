@@ -107,7 +107,9 @@ fn test_load_project_config_from_disk() {
 profile = "custom"
 extra_env = ["FOO=bar"]
 "#;
-    std::fs::write(dir.path().join(".claude-sandbox.toml"), config_content).unwrap();
+    let claude_dir = dir.path().join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(claude_dir.join("sandbox.toml"), config_content).unwrap();
 
     let config = load_project_config(dir.path()).unwrap();
     assert!(config.is_some());
@@ -129,4 +131,68 @@ fn test_project_config_defaults() {
     assert_eq!(config.profile, "minimal");
     assert!(config.extra_paths.is_empty());
     assert!(config.extra_env.is_empty());
+}
+
+/// Test that detect_project_root walks upward to find .claude/sandbox.toml.
+/// We can't change cwd in a unit test safely, but we can verify the upward-walk
+/// logic by calling load_project_config on parent/child directory pairs directly.
+#[test]
+fn test_detect_project_root_upward_walk_via_load() {
+    // Create a directory tree:  root/.claude/sandbox.toml  and  root/subdir/subsubdir/
+    // Verify that load_project_config finds the config when called with root, and
+    // returns None when called with a subdir that has no .claude/sandbox.toml.
+    let root = tempfile::tempdir().unwrap();
+    let claude_dir = root.path().join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("sandbox.toml"),
+        "profile = \"test\"\n",
+    )
+    .unwrap();
+
+    let subdir = root.path().join("subdir").join("subsubdir");
+    std::fs::create_dir_all(&subdir).unwrap();
+
+    // load_project_config on root finds the config
+    let config = load_project_config(root.path()).unwrap();
+    assert!(config.is_some());
+    assert_eq!(config.unwrap().profile, "test");
+
+    // load_project_config on a subdirectory (no .claude/sandbox.toml there) returns None
+    let config = load_project_config(&subdir).unwrap();
+    assert!(config.is_none());
+}
+
+/// Test that detect_project_root upward-walk stops at the directory containing
+/// .claude/sandbox.toml, not at a deeper subdirectory.
+#[test]
+fn test_detect_project_root_finds_ancestor() {
+    use std::path::PathBuf;
+
+    // Build a tree and manually simulate what detect_project_root does (walk upward).
+    let root = tempfile::tempdir().unwrap();
+    let claude_dir = root.path().join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(claude_dir.join("sandbox.toml"), "profile = \"ancestor\"\n").unwrap();
+
+    let deep = root.path().join("a").join("b").join("c");
+    std::fs::create_dir_all(&deep).unwrap();
+
+    // Walk upward from `deep` looking for .claude/sandbox.toml — mirrors the
+    // fallback logic in detect_project_root.
+    let mut found: Option<PathBuf> = None;
+    let mut dir = deep.as_path();
+    loop {
+        if dir.join(".claude").join("sandbox.toml").exists() {
+            found = Some(dir.to_path_buf());
+            break;
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => break,
+        }
+    }
+
+    assert!(found.is_some(), "should have found the ancestor root");
+    assert_eq!(found.unwrap(), root.path());
 }

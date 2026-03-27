@@ -171,12 +171,31 @@ impl ItemCommand {
         match &self.command {
             ItemCommands::List { board_id } => {
                 let bid = resolve_board_id(board_id.as_deref(), global_board)?;
-                let response = client.list_items(bid).await?;
-                println!("{}", serde_json::to_string_pretty(&response.data)?);
+                let items = client.list_all_items(bid).await?;
+                println!("{}", serde_json::to_string_pretty(&items)?);
             }
             ItemCommands::Get { item_id, board_id } => {
                 let bid = resolve_board_id(board_id.as_deref(), global_board)?;
-                let item = client.get_item(bid, item_id).await?;
+                // Try generic endpoint first; if it fails, look up the item type
+                // and use the type-specific endpoint instead
+                let item = match client.get_item(bid, item_id).await {
+                    Ok(item) if item.data.is_some() => item,
+                    _ => {
+                        // Find item type from the generic list, then fetch via type-specific endpoint
+                        let response = client.list_items(bid).await?;
+                        let listed = response.data.iter().find(|i| i.id == *item_id);
+                        if let Some(listed) = listed {
+                            client
+                                .get_item_by_type(bid, item_id, &listed.item_type)
+                                .await?
+                        } else {
+                            return Err(crate::error::AppError::General(format!(
+                                "Item {} not found on board {}",
+                                item_id, bid
+                            )));
+                        }
+                    }
+                };
                 println!("{}", serde_json::to_string_pretty(&item)?);
             }
             ItemCommands::CreateStickyNote {

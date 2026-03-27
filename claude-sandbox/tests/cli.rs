@@ -38,7 +38,9 @@ fn test_run_with_passthrough_args() {
         .args(["run", "--", "--model", "opus"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("run:"));
+        .stdout(predicate::str::contains("run:"))
+        .stdout(predicate::str::contains("--model"))
+        .stdout(predicate::str::contains("opus"));
 }
 
 #[test]

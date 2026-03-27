@@ -18,7 +18,7 @@ pub struct SandboxProfile {
     pub env: Vec<String>,
 }
 
-/// Per-project sandbox configuration (`.claude-sandbox.toml`).
+/// Per-project sandbox configuration (`.claude/sandbox.toml`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ProjectConfig {
     #[serde(default = "default_profile")]
@@ -58,7 +58,7 @@ pub enum MountMode {
     Rw,
 }
 
-/// Machine-level configuration (`~/.config/claude-sandbox/machine.toml`).
+/// Machine-level configuration (`~/.config/claude-sandbox/paths.toml`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct MachineConfig {
     #[serde(default)]
@@ -83,6 +83,8 @@ pub struct ToolPaths {
 }
 
 /// Fully resolved configuration combining profile, project, and machine configs.
+// Constructed during sandbox launch once all config layers are loaded and merged.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub profile_name: String,
@@ -102,16 +104,32 @@ pub fn machine_config_dir() -> AppResult<PathBuf> {
 
 /// Return the machine config file path.
 pub fn machine_config_path() -> AppResult<PathBuf> {
-    Ok(machine_config_dir()?.join("machine.toml"))
+    Ok(machine_config_dir()?.join("paths.toml"))
 }
 
-/// Detect the project root by searching upward for `.claude-sandbox.toml`.
-/// Falls back to the current working directory.
+/// Detect the project root by:
+/// 1. Running `git rev-parse --show-toplevel` (fastest, covers most cases).
+/// 2. Walking upward from cwd searching for `.claude/sandbox.toml` (R13 fallback).
+/// 3. Falling back to the current working directory.
 pub fn detect_project_root() -> AppResult<PathBuf> {
+    // Step 1: try git rev-parse --show-toplevel
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+    {
+        if output.status.success() {
+            let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !toplevel.is_empty() {
+                return Ok(PathBuf::from(toplevel));
+            }
+        }
+    }
+
+    // Step 2: walk upward searching for .claude/sandbox.toml
     let cwd = std::env::current_dir()?;
     let mut dir = cwd.as_path();
     loop {
-        if dir.join(".claude-sandbox.toml").exists() {
+        if dir.join(".claude").join("sandbox.toml").exists() {
             return Ok(dir.to_path_buf());
         }
         match dir.parent() {
@@ -137,9 +155,9 @@ pub fn load_profile(ai_tools_dir: &Path, name: &str) -> AppResult<SandboxProfile
 }
 
 /// Load the project configuration from a project root directory.
-/// Returns `None` if no `.claude-sandbox.toml` exists.
+/// Returns `None` if no `.claude/sandbox.toml` exists.
 pub fn load_project_config(project_root: &Path) -> AppResult<Option<ProjectConfig>> {
-    let path = project_root.join(".claude-sandbox.toml");
+    let path = project_root.join(".claude").join("sandbox.toml");
     if !path.exists() {
         return Ok(None);
     }
@@ -150,6 +168,9 @@ pub fn load_project_config(project_root: &Path) -> AppResult<Option<ProjectConfi
 
 /// Load the machine configuration.
 /// Returns a default config if the file does not exist.
+// TODO(R10): At launch time this should be fail-closed — if the machine config is absent
+// the tool should refuse to run rather than silently using defaults. The permissive
+// fallback here is acceptable only during development / first-run setup flows.
 pub fn load_machine_config() -> AppResult<MachineConfig> {
     let path = machine_config_path()?;
     if !path.exists() {

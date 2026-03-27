@@ -23,6 +23,8 @@ pub struct Item {
     pub modified_by: Option<Value>,
     #[serde(default)]
     pub parent: Option<Value>,
+    #[serde(default, rename = "isSupported")]
+    pub is_supported: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

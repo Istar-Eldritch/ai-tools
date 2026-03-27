@@ -114,10 +114,100 @@ impl Client {
         handle_response(response).await
     }
 
+    /// List all items on a board by querying each type-specific endpoint with pagination.
+    /// Uses v2-experimental API which returns full data for all items, including those
+    /// the standard v2 API marks as `isSupported: false`.
+    pub async fn list_all_items(&self, board_id: &str) -> AppResult<Vec<Item>> {
+        let type_paths = ["shapes", "sticky_notes", "texts", "cards", "frames", "images"];
+        let mut all_items = Vec::new();
+
+        for type_path in &type_paths {
+            let mut cursor: Option<String> = None;
+            loop {
+                let mut url = self.base_url.join(&format!(
+                    "/v2-experimental/boards/{}/{}",
+                    board_id, type_path
+                ))?;
+                url.query_pairs_mut().append_pair("limit", "50");
+                if let Some(ref c) = cursor {
+                    url.query_pairs_mut().append_pair("cursor", c);
+                }
+
+                let response = self.client.get(url).send().await?;
+                if !response.status().is_success() {
+                    // Fall back to v2 if experimental fails for this type
+                    let mut url = self.base_url.join(&format!(
+                        "/v2/boards/{}/{}",
+                        board_id, type_path
+                    ))?;
+                    url.query_pairs_mut().append_pair("limit", "50");
+                    if let Some(ref c) = cursor {
+                        url.query_pairs_mut().append_pair("cursor", c);
+                    }
+                    let response = self.client.get(url).send().await?;
+                    let page: ItemListResponse = handle_response(response).await?;
+                    all_items.extend(page.data);
+                    if page.cursor.is_some() {
+                        cursor = page.cursor;
+                    } else {
+                        break;
+                    }
+                    continue;
+                }
+                let page: ItemListResponse = handle_response(response).await?;
+                let has_more = page.cursor.is_some();
+                cursor = page.cursor;
+                all_items.extend(page.data);
+
+                if !has_more {
+                    break;
+                }
+            }
+        }
+
+        Ok(all_items)
+    }
+
     pub async fn get_item(&self, board_id: &str, item_id: &str) -> AppResult<Item> {
         let url = self
             .base_url
             .join(&format!("/v2/boards/{}/items/{}", board_id, item_id))?;
+        let response = self.client.get(url).send().await?;
+        handle_response(response).await
+    }
+
+    /// Get an item using the v2-experimental type-specific endpoint, which supports
+    /// items that the standard v2 API marks as `isSupported: false`.
+    /// Falls back to the generic /items/{id} endpoint for unknown types.
+    pub async fn get_item_by_type(
+        &self,
+        board_id: &str,
+        item_id: &str,
+        item_type: &str,
+    ) -> AppResult<Item> {
+        let type_path = match item_type {
+            "shape" => "shapes",
+            "sticky_note" => "sticky_notes",
+            "text" => "texts",
+            "card" => "cards",
+            "frame" => "frames",
+            "image" => "images",
+            _ => "items",
+        };
+        // Try v2-experimental first (supports all items including "unsupported" ones),
+        // fall back to v2 if experimental fails
+        let exp_url = self.base_url.join(&format!(
+            "/v2-experimental/boards/{}/{}/{}",
+            board_id, type_path, item_id
+        ))?;
+        let response = self.client.get(exp_url).send().await?;
+        if response.status().is_success() {
+            return handle_response(response).await;
+        }
+        let url = self.base_url.join(&format!(
+            "/v2/boards/{}/{}/{}",
+            board_id, type_path, item_id
+        ))?;
         let response = self.client.get(url).send().await?;
         handle_response(response).await
     }
