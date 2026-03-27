@@ -68,7 +68,29 @@ fn test_check_subcommand() {
         .arg("check")
         .assert()
         .success()
-        .stdout(predicate::str::contains("check:"));
+        .stdout(predicate::str::contains("check: sandbox environment OK"))
+        .stdout(predicate::str::contains("profile:"))
+        .stdout(predicate::str::contains("project root:"))
+        .stdout(predicate::str::contains("mounts:"))
+        .stdout(predicate::str::contains("env vars:"));
+}
+
+#[test]
+fn test_check_with_profile_flag() {
+    cmd()
+        .args(["check", "--profile", "minimal"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("profile:"))
+        .stdout(predicate::str::contains("minimal"));
+}
+
+#[test]
+fn test_check_with_bad_profile_fails() {
+    cmd()
+        .args(["check", "--profile", "nonexistent_profile_12345"])
+        .assert()
+        .failure();
 }
 
 #[test]

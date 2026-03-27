@@ -20,7 +20,7 @@ pub enum Commands {
     Init,
 
     /// Check that the sandbox environment is correctly configured
-    Check,
+    Check(CheckArgs),
 
     /// List available sandbox profiles
     ListProfiles,
@@ -39,4 +39,11 @@ pub struct RunArgs {
     /// Arguments to pass through to claude
     #[clap(last = true)]
     pub claude_args: Vec<String>,
+}
+
+#[derive(clap::Args, Debug, Default)]
+pub struct CheckArgs {
+    /// Override the sandbox profile to check
+    #[clap(long)]
+    pub profile: Option<String>,
 }

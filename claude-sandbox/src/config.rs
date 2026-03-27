@@ -203,7 +203,12 @@ pub fn resolve_config(profile_override: Option<&str>) -> AppResult<ResolvedConfi
     };
 
     let project_root = detect_project_root()?;
-    let project = load_project_config(&project_root)?.unwrap_or_default();
+    let project = load_project_config(&project_root)?.ok_or_else(|| {
+        AppError::Config(format!(
+            "No sandbox.toml found at '{}/.claude/sandbox.toml'. Run `claude-sandbox init` to create one.",
+            project_root.display()
+        ))
+    })?;
 
     let profile_name = profile_override
         .map(|s| s.to_string())

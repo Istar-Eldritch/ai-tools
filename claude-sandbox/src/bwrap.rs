@@ -59,6 +59,31 @@ fn check_deny_list(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Check whether `path` falls under any of the profile's excluded paths.
+/// Returns `Err(AppError::DeniedPath(...))` if blocked, `Ok(())` otherwise.
+/// The implicit ~/.claude/ mount (R6) is never blocked by excluded_paths.
+fn check_excluded_paths(path: &Path, excluded: &[String]) -> AppResult<()> {
+    // Never block the implicit ~/.claude/ mount
+    if let Some(home) = dirs::home_dir() {
+        let claude_dir = home.join(".claude");
+        if path == claude_dir || path.starts_with(&claude_dir) {
+            return Ok(());
+        }
+    }
+
+    for excl_raw in excluded {
+        let excl = expand_tilde(excl_raw)?;
+        if path == excl || path.starts_with(&excl) {
+            return Err(AppError::DeniedPath(format!(
+                "'{}' is excluded by profile (matches excluded_paths entry '{}')",
+                path.display(),
+                excl_raw,
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Check whether a host path exists, printing a warning if not.
 /// Returns `true` if the path exists.
 fn host_path_exists(path: &Path) -> bool {
@@ -147,6 +172,7 @@ pub fn assemble_args(config: &ResolvedConfig) -> AppResult<Vec<String>> {
     for ro_path in &config.profile.ro_paths {
         let expanded = expand_tilde(ro_path)?;
         check_deny_list(&expanded)?;
+        check_excluded_paths(&expanded, &config.profile.excluded_paths)?;
         if host_path_exists(&expanded) {
             let src = expanded.to_string_lossy().to_string();
             // dest == src (same path inside the sandbox)
@@ -158,14 +184,16 @@ pub fn assemble_args(config: &ResolvedConfig) -> AppResult<Vec<String>> {
     for rw_path in &config.profile.rw_paths {
         let expanded = expand_tilde(rw_path)?;
         check_deny_list(&expanded)?;
+        check_excluded_paths(&expanded, &config.profile.excluded_paths)?;
         if host_path_exists(&expanded) {
             let src = expanded.to_string_lossy().to_string();
             args.extend_from_slice(&["--bind".to_string(), src.clone(), src]);
         }
     }
 
-    // Project root: always rw bind
+    // Project root: always rw bind — but check deny-list first
     {
+        check_deny_list(&config.project_root)?;
         let src = config.project_root.to_string_lossy().to_string();
         args.extend_from_slice(&["--bind".to_string(), src.clone(), src]);
     }
@@ -186,6 +214,7 @@ pub fn assemble_args(config: &ResolvedConfig) -> AppResult<Vec<String>> {
     for extra in &config.project.extra_paths {
         let expanded = expand_tilde(&extra.path)?;
         check_deny_list(&expanded)?;
+        check_excluded_paths(&expanded, &config.profile.excluded_paths)?;
         if host_path_exists(&expanded) {
             let src = expanded.to_string_lossy().to_string();
             let flag = match extra.mode {
@@ -197,6 +226,48 @@ pub fn assemble_args(config: &ResolvedConfig) -> AppResult<Vec<String>> {
     }
 
     Ok(args)
+}
+
+/// Validate a resolved configuration before assembling bwrap arguments.
+///
+/// Checks:
+/// - `project_root` exists and is a directory
+/// - `machine.tools.ai_tools` is set and points to an existing directory
+pub fn validate(config: &ResolvedConfig) -> AppResult<()> {
+    // Check project_root exists and is a directory
+    if !config.project_root.exists() {
+        return Err(AppError::Validation(format!(
+            "project root '{}' does not exist",
+            config.project_root.display()
+        )));
+    }
+    if !config.project_root.is_dir() {
+        return Err(AppError::Validation(format!(
+            "project root '{}' is not a directory",
+            config.project_root.display()
+        )));
+    }
+
+    // Check ai_tools directory
+    match &config.machine.tools.ai_tools {
+        None => {
+            return Err(AppError::Validation(
+                "machine.tools.ai_tools is not configured. Run `claude-sandbox setup` to set it."
+                    .to_string(),
+            ));
+        }
+        Some(ai_tools_path) => {
+            let p = PathBuf::from(ai_tools_path);
+            if !p.exists() || !p.is_dir() {
+                return Err(AppError::Validation(format!(
+                    "ai_tools directory '{}' does not exist or is not a directory",
+                    ai_tools_path
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -378,5 +449,195 @@ mod tests {
         let first_idx = occurrences[0].0;
         assert!(first_idx >= 1);
         assert_eq!(args[first_idx - 1], "--bind", "~/.claude must be --bind (rw)");
+    }
+
+    // ── Excluded-paths tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_excluded_paths_blocks_matching_ro_path() {
+        let project_root = tempfile::tempdir().unwrap();
+        let blocked_dir = tempfile::tempdir().unwrap();
+        let blocked_path = blocked_dir.path().to_string_lossy().to_string();
+
+        let profile = SandboxProfile {
+            description: "test".to_string(),
+            rw_paths: vec![],
+            ro_paths: vec![blocked_path.clone()],
+            excluded_paths: vec![blocked_path.clone()],
+            env: vec![],
+        };
+
+        let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
+        let result = assemble_args(&config);
+        assert!(result.is_err(), "excluded path in ro_paths should be rejected");
+        assert!(result.unwrap_err().to_string().contains("excluded by profile"));
+    }
+
+    #[test]
+    fn test_excluded_paths_blocks_matching_rw_path() {
+        let project_root = tempfile::tempdir().unwrap();
+        let blocked_dir = tempfile::tempdir().unwrap();
+        let blocked_path = blocked_dir.path().to_string_lossy().to_string();
+
+        let profile = SandboxProfile {
+            description: "test".to_string(),
+            rw_paths: vec![blocked_path.clone()],
+            ro_paths: vec![],
+            excluded_paths: vec![blocked_path.clone()],
+            env: vec![],
+        };
+
+        let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
+        let result = assemble_args(&config);
+        assert!(result.is_err(), "excluded path in rw_paths should be rejected");
+    }
+
+    #[test]
+    fn test_excluded_paths_blocks_matching_extra_path() {
+        let project_root = tempfile::tempdir().unwrap();
+        let blocked_dir = tempfile::tempdir().unwrap();
+        let blocked_path = blocked_dir.path().to_string_lossy().to_string();
+
+        let profile = SandboxProfile {
+            description: "test".to_string(),
+            rw_paths: vec![],
+            ro_paths: vec![],
+            excluded_paths: vec![blocked_path.clone()],
+            env: vec![],
+        };
+
+        let project = ProjectConfig {
+            profile: "test".to_string(),
+            extra_paths: vec![ExtraPath {
+                path: blocked_path,
+                mode: MountMode::Ro,
+            }],
+            extra_env: vec![],
+        };
+
+        let config = make_resolved(profile, project, project_root.path().to_path_buf());
+        let result = assemble_args(&config);
+        assert!(result.is_err(), "excluded path in extra_paths should be rejected");
+    }
+
+    #[test]
+    fn test_excluded_paths_does_not_block_claude_dir() {
+        let home = dirs::home_dir().unwrap();
+        let claude_dir = home.join(".claude");
+        if !claude_dir.exists() {
+            return; // skip if ~/.claude doesn't exist
+        }
+        // check_excluded_paths should allow ~/.claude even if it matches
+        let result = check_excluded_paths(
+            &claude_dir,
+            &[claude_dir.to_string_lossy().to_string()],
+        );
+        assert!(result.is_ok(), "~/.claude must never be blocked by excluded_paths");
+    }
+
+    // ── Project root deny-list test ───────────────────────────────────────
+
+    #[test]
+    fn test_project_root_deny_list_checked() {
+        let home = dirs::home_dir().unwrap();
+        let bad_root = home.join(".ssh");
+
+        let profile = SandboxProfile {
+            description: "test".to_string(),
+            rw_paths: vec![],
+            ro_paths: vec![],
+            excluded_paths: vec![],
+            env: vec![],
+        };
+
+        let config = make_resolved(profile, ProjectConfig::default(), bad_root);
+        let result = assemble_args(&config);
+        assert!(result.is_err(), "project root in deny-list should be rejected");
+        assert!(result.unwrap_err().to_string().contains("~/.ssh"));
+    }
+
+    // ── Validate tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_ok() {
+        let project_root = tempfile::tempdir().unwrap();
+        let ai_tools = tempfile::tempdir().unwrap();
+
+        let config = ResolvedConfig {
+            profile_name: "test".to_string(),
+            profile: minimal_profile(),
+            project: ProjectConfig::default(),
+            machine: MachineConfig {
+                tools: crate::config::ToolPaths {
+                    ai_tools: Some(ai_tools.path().to_string_lossy().to_string()),
+                },
+                paths: std::collections::HashMap::new(),
+            },
+            project_root: project_root.path().to_path_buf(),
+        };
+
+        assert!(validate(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_missing_project_root() {
+        let ai_tools = tempfile::tempdir().unwrap();
+
+        let config = ResolvedConfig {
+            profile_name: "test".to_string(),
+            profile: minimal_profile(),
+            project: ProjectConfig::default(),
+            machine: MachineConfig {
+                tools: crate::config::ToolPaths {
+                    ai_tools: Some(ai_tools.path().to_string_lossy().to_string()),
+                },
+                paths: std::collections::HashMap::new(),
+            },
+            project_root: PathBuf::from("/nonexistent_project_root_12345"),
+        };
+
+        let result = validate(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_validate_missing_ai_tools() {
+        let project_root = tempfile::tempdir().unwrap();
+
+        let config = ResolvedConfig {
+            profile_name: "test".to_string(),
+            profile: minimal_profile(),
+            project: ProjectConfig::default(),
+            machine: MachineConfig::default(), // ai_tools is None
+            project_root: project_root.path().to_path_buf(),
+        };
+
+        let result = validate(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ai_tools"));
+    }
+
+    #[test]
+    fn test_validate_ai_tools_not_a_directory() {
+        let project_root = tempfile::tempdir().unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+
+        let config = ResolvedConfig {
+            profile_name: "test".to_string(),
+            profile: minimal_profile(),
+            project: ProjectConfig::default(),
+            machine: MachineConfig {
+                tools: crate::config::ToolPaths {
+                    ai_tools: Some(tmp.path().to_string_lossy().to_string()),
+                },
+                paths: std::collections::HashMap::new(),
+            },
+            project_root: project_root.path().to_path_buf(),
+        };
+
+        let result = validate(&config);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a directory"));
     }
 }

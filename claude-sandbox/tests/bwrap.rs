@@ -1,5 +1,6 @@
-use claude_sandbox::bwrap::{assemble_args, expand_tilde};
+use claude_sandbox::bwrap::{assemble_args, expand_tilde, validate};
 use claude_sandbox::config::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn minimal_profile() -> SandboxProfile {
@@ -156,6 +157,103 @@ fn test_nonexistent_paths_skipped() {
     // /usr should be present, nonexistent should not
     assert!(args.contains(&"/usr".to_string()));
     assert!(!args.contains(&"/nonexistent_path_that_does_not_exist_12345".to_string()));
+}
+
+#[test]
+fn test_excluded_paths_blocks_ro_path() {
+    let project_root = tempfile::tempdir().unwrap();
+    let blocked_dir = tempfile::tempdir().unwrap();
+    let blocked_path = blocked_dir.path().to_string_lossy().to_string();
+
+    let profile = SandboxProfile {
+        description: "test".to_string(),
+        rw_paths: vec![],
+        ro_paths: vec![blocked_path.clone()],
+        excluded_paths: vec![blocked_path.clone()],
+        env: vec![],
+    };
+
+    let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
+    let result = assemble_args(&config);
+    assert!(result.is_err(), "excluded path in ro_paths must be rejected");
+    assert!(result.unwrap_err().to_string().contains("excluded by profile"));
+}
+
+#[test]
+fn test_excluded_paths_allows_non_excluded() {
+    let project_root = tempfile::tempdir().unwrap();
+
+    let profile = SandboxProfile {
+        description: "test".to_string(),
+        rw_paths: vec![],
+        ro_paths: vec!["/usr".to_string()],
+        excluded_paths: vec!["/opt/secret".to_string()],
+        env: vec![],
+    };
+
+    let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
+    let result = assemble_args(&config);
+    assert!(result.is_ok(), "non-excluded path should be allowed");
+}
+
+#[test]
+fn test_validate_passes_with_valid_config() {
+    let project_root = tempfile::tempdir().unwrap();
+    let ai_tools = tempfile::tempdir().unwrap();
+
+    let config = ResolvedConfig {
+        profile_name: "test".to_string(),
+        profile: minimal_profile(),
+        project: ProjectConfig::default(),
+        machine: MachineConfig {
+            tools: ToolPaths {
+                ai_tools: Some(ai_tools.path().to_string_lossy().to_string()),
+            },
+            paths: HashMap::new(),
+        },
+        project_root: project_root.path().to_path_buf(),
+    };
+
+    assert!(validate(&config).is_ok());
+}
+
+#[test]
+fn test_validate_fails_missing_project_root() {
+    let ai_tools = tempfile::tempdir().unwrap();
+
+    let config = ResolvedConfig {
+        profile_name: "test".to_string(),
+        profile: minimal_profile(),
+        project: ProjectConfig::default(),
+        machine: MachineConfig {
+            tools: ToolPaths {
+                ai_tools: Some(ai_tools.path().to_string_lossy().to_string()),
+            },
+            paths: HashMap::new(),
+        },
+        project_root: PathBuf::from("/nonexistent_root_12345"),
+    };
+
+    let result = validate(&config);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("does not exist"));
+}
+
+#[test]
+fn test_validate_fails_missing_ai_tools() {
+    let project_root = tempfile::tempdir().unwrap();
+
+    let config = ResolvedConfig {
+        profile_name: "test".to_string(),
+        profile: minimal_profile(),
+        project: ProjectConfig::default(),
+        machine: MachineConfig::default(),
+        project_root: project_root.path().to_path_buf(),
+    };
+
+    let result = validate(&config);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("ai_tools"));
 }
 
 #[test]

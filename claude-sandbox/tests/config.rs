@@ -163,6 +163,18 @@ fn test_detect_project_root_upward_walk_via_load() {
     assert!(config.is_none());
 }
 
+/// Test that resolve_config fails when no sandbox.toml exists.
+/// We can't call resolve_config directly in a temp dir because it uses
+/// detect_project_root which looks at cwd/git, but we can verify the
+/// load_project_config -> None path would produce an error.
+#[test]
+fn test_load_project_config_none_means_required_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = load_project_config(dir.path()).unwrap();
+    // Verify it returns None (which resolve_config now treats as an error)
+    assert!(result.is_none(), "Missing sandbox.toml should return None from load_project_config");
+}
+
 /// Test that detect_project_root upward-walk stops at the directory containing
 /// .claude/sandbox.toml, not at a deeper subdirectory.
 #[test]

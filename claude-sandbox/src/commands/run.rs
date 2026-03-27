@@ -12,6 +12,7 @@ pub fn execute(args: RunArgs) -> AppResult<()> {
     verify_bwrap_available()?;
 
     let resolved = config::resolve_config(args.profile.as_deref())?;
+    bwrap::validate(&resolved)?;
     let bwrap_args = bwrap::assemble_args(&resolved)?;
 
     let mut full_args = bwrap_args;

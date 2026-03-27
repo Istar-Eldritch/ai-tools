@@ -13,6 +13,9 @@ pub enum AppError {
     #[error("Denied path: {0}")]
     DeniedPath(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

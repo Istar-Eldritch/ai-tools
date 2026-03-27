@@ -12,7 +12,7 @@ fn main() -> AppResult<()> {
         Commands::Run(args) => commands::run::execute(args),
         Commands::Setup => commands::setup::execute(),
         Commands::Init => commands::init::execute(),
-        Commands::Check => commands::check::execute(),
+        Commands::Check(args) => commands::check::execute(args),
         Commands::ListProfiles => commands::list_profiles::execute(),
     }
 }
