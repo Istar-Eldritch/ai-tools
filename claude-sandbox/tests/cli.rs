@@ -45,12 +45,13 @@ fn test_run_dry_run_prints_bwrap_command() {
 }
 
 #[test]
-fn test_setup_subcommand() {
+fn test_setup_shell_function() {
     cmd()
-        .arg("setup")
+        .args(["setup", "--shell-function"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("setup:"));
+        .stdout(predicate::str::contains("claude()"))
+        .stdout(predicate::str::contains("claude-sandbox run --"));
 }
 
 #[test]

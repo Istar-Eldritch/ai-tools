@@ -2,6 +2,21 @@ use crate::config::ResolvedConfig;
 use crate::config::MountMode;
 use crate::error::{AppError, AppResult};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Check that the `bwrap` binary exists and is executable.
+/// Returns `Err` with a clear message if it cannot be found.
+pub fn verify_bwrap_available() -> AppResult<()> {
+    match Command::new("bwrap").arg("--version").output() {
+        Ok(_) => Ok(()), // binary exists; exit code is irrelevant
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(AppError::General(
+                "bwrap not found. Install bubblewrap (e.g. `apt install bubblewrap`) and try again.".to_string(),
+            ))
+        }
+        Err(e) => Err(AppError::Io(e)),
+    }
+}
 
 /// Credential paths that must never be exposed inside the sandbox.
 /// Any host path that resolves to one of these (or a subdirectory of one) will

@@ -10,7 +10,7 @@ fn main() -> AppResult<()> {
 
     match command {
         Commands::Run(args) => commands::run::execute(args),
-        Commands::Setup => commands::setup::execute(),
+        Commands::Setup(args) => commands::setup::execute(args),
         Commands::Init => commands::init::execute(),
         Commands::Check(args) => commands::check::execute(args),
         Commands::ListProfiles => commands::list_profiles::execute(),

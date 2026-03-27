@@ -14,7 +14,7 @@ pub enum Commands {
     Run(RunArgs),
 
     /// Interactive first-time setup
-    Setup,
+    Setup(SetupArgs),
 
     /// Initialize a project-level sandbox config
     Init,
@@ -39,6 +39,13 @@ pub struct RunArgs {
     /// Arguments to pass through to claude
     #[clap(last = true)]
     pub claude_args: Vec<String>,
+}
+
+#[derive(clap::Args, Debug, Default)]
+pub struct SetupArgs {
+    /// Print a shell function that shadows `claude` with `claude-sandbox run --`
+    #[clap(long)]
+    pub shell_function: bool,
 }
 
 #[derive(clap::Args, Debug, Default)]

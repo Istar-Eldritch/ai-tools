@@ -7,9 +7,7 @@ use std::process::Command;
 
 pub fn execute(args: RunArgs) -> AppResult<()> {
     // R10 fail-closed: verify bwrap is installed before doing anything else.
-    // If it is absent the error message is unambiguous and the tool does not
-    // proceed with a partially-constructed command.
-    verify_bwrap_available()?;
+    bwrap::verify_bwrap_available()?;
 
     let resolved = config::resolve_config(args.profile.as_deref())?;
     bwrap::validate(&resolved)?;
@@ -27,20 +25,6 @@ pub fn execute(args: RunArgs) -> AppResult<()> {
     let err = Command::new("bwrap").args(&full_args).exec();
     // exec() only returns on error
     Err(AppError::Io(err))
-}
-
-/// Check that the `bwrap` binary exists and is executable.
-/// Returns `Err` with a clear message if it cannot be found.
-pub(crate) fn verify_bwrap_available() -> AppResult<()> {
-    match Command::new("bwrap").arg("--version").output() {
-        Ok(_) => Ok(()), // binary exists; exit code is irrelevant
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Err(AppError::General(
-                "bwrap not found. Install bubblewrap (e.g. `apt install bubblewrap`) and try again.".to_string(),
-            ))
-        }
-        Err(e) => Err(AppError::Io(e)),
-    }
 }
 
 /// Join args with shell-safe quoting for display.
