@@ -45,21 +45,19 @@ fn test_minimal_profile_produces_correct_flags() {
     assert!(args.contains(&"--dev".to_string()));
     assert!(args.contains(&"--tmpfs".to_string()));
 
-    // /usr should be ro-bound (it exists on the host)
-    let usr_idx = args.iter().position(|a| a == "/usr");
-    assert!(usr_idx.is_some(), "/usr should appear in args");
-    // The flag before /usr should be --ro-bind
-    let idx = usr_idx.unwrap();
-    assert!(idx >= 1);
-    assert_eq!(args[idx - 1], "--ro-bind");
+    // /usr should be ro-bound (it exists on the host).
+    // Check the full --ro-bind <src> <dst> triple (src == dst for same-path mounts).
+    let found_usr_ro_bind = args.windows(3).any(|w| {
+        w[0] == "--ro-bind" && w[1] == "/usr" && w[2] == "/usr"
+    });
+    assert!(found_usr_ro_bind, "--ro-bind /usr /usr triple must be present in args");
 
-    // Project root should appear as --bind (rw)
+    // Project root should appear as --bind <src> <dst> triple (rw)
     let root_str = root_path.to_string_lossy().to_string();
-    let root_idx = args.iter().position(|a| a == &root_str);
-    assert!(root_idx.is_some(), "project root should appear in args");
-    let idx = root_idx.unwrap();
-    assert!(idx >= 1);
-    assert_eq!(args[idx - 1], "--bind");
+    let found_root_bind = args.windows(3).any(|w| {
+        w[0] == "--bind" && w[1] == root_str && w[2] == root_str
+    });
+    assert!(found_root_bind, "--bind <root> <root> triple must be present in args");
 }
 
 #[test]
@@ -87,11 +85,11 @@ fn test_project_extra_paths_included() {
 
     let args = assemble_args(&config).unwrap();
 
-    let extra_idx = args.iter().position(|a| a == &extra_path);
-    assert!(extra_idx.is_some(), "extra path should appear in args");
-    let idx = extra_idx.unwrap();
-    assert!(idx >= 1);
-    assert_eq!(args[idx - 1], "--bind");
+    // Check the full --bind <src> <dst> triple
+    let found = args.windows(3).any(|w| {
+        w[0] == "--bind" && w[1] == extra_path && w[2] == extra_path
+    });
+    assert!(found, "--bind <extra_path> <extra_path> triple must be present in args");
 }
 
 #[test]
@@ -119,11 +117,11 @@ fn test_extra_path_ro_mode() {
 
     let args = assemble_args(&config).unwrap();
 
-    let extra_idx = args.iter().position(|a| a == &extra_path);
-    assert!(extra_idx.is_some(), "extra ro path should appear in args");
-    let idx = extra_idx.unwrap();
-    assert!(idx >= 1);
-    assert_eq!(args[idx - 1], "--ro-bind");
+    // Check the full --ro-bind <src> <dst> triple
+    let found = args.windows(3).any(|w| {
+        w[0] == "--ro-bind" && w[1] == extra_path && w[2] == extra_path
+    });
+    assert!(found, "--ro-bind <extra_path> <extra_path> triple must be present in args");
 }
 
 #[test]
@@ -178,9 +176,8 @@ fn test_project_root_always_rw_bind() {
     let args = assemble_args(&config).unwrap();
 
     let root_str = root_path.to_string_lossy().to_string();
-    let root_idx = args.iter().position(|a| a == &root_str);
-    assert!(root_idx.is_some(), "project root must always appear");
-    let idx = root_idx.unwrap();
-    assert!(idx >= 1);
-    assert_eq!(args[idx - 1], "--bind", "project root must be rw (--bind)");
+    let found_root_bind = args.windows(3).any(|w| {
+        w[0] == "--bind" && w[1] == root_str && w[2] == root_str
+    });
+    assert!(found_root_bind, "--bind <root> <root> triple must always be present (project root is rw)");
 }
