@@ -79,7 +79,8 @@ def run(workflow_name: str, command: str, args: list,
         return inst.Error(message=str(e))
 
     state_type = workflow.get("stateType", workflow_name + "s")
-    config = load_config()
+    needs_template = workflow_name in ("spec", "implement")
+    config = load_config(needs_template=needs_template)
 
     # Dispatch by command
     if command == "start":
