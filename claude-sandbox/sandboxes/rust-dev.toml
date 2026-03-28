@@ -2,6 +2,8 @@ description = "Rust development profile with Cargo and Rustup access"
 
 rw_paths = [
     "~/.claude/",
+    "~/.cargo/registry/",
+    "/tmp",
 ]
 
 ro_paths = [
@@ -13,8 +15,14 @@ ro_paths = [
     "/etc/resolv.conf",
     "/etc/hosts",
     "/etc/ssl",
-    "~/.cargo/registry",
+    "/etc/alternatives/",
+    "~/.cargo/",
     "~/.rustup/",
+    "~/code/ai_tools",
+    "~/.local",
+    "~/.config",
+    "~/.gitconfig",
+    "~/.gitignore_global"
 ]
 
 excluded_paths = []

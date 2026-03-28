@@ -13,6 +13,12 @@ ro_paths = [
     "/etc/resolv.conf",
     "/etc/hosts",
     "/etc/ssl",
+    "/etc/alternatives/",
+    "~/code/ai_tools",
+    "~/.local",
+    "~/.config",
+    "~/.gitconfig",
+    "~/.gitignore_global"
 ]
 
 excluded_paths = []
