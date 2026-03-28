@@ -17,6 +17,7 @@ ro_paths = [
     "/etc/hosts",
     "/etc/ssl",
     "/etc/alternatives/",
+    "/etc/chromium.d/",
     "~/.cargo/",
     "~/.rustup/",
     "~/code/ai_tools",
