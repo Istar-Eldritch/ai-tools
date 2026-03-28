@@ -775,7 +775,7 @@ fn test_invalid_toml_in_project_config() {
 #[test]
 fn test_invalid_toml_in_profile() {
     let dir = tempfile::tempdir().unwrap();
-    let sandboxes_dir = dir.path().join("sandboxes");
+    let sandboxes_dir = dir.path().join("claude-sandbox").join("sandboxes");
     std::fs::create_dir_all(&sandboxes_dir).unwrap();
     std::fs::write(
         sandboxes_dir.join("broken.toml"),
@@ -831,7 +831,7 @@ fn test_profile_with_only_excluded_paths() {
 #[test]
 fn test_error_profile_not_found_is_actionable() {
     let dir = tempfile::tempdir().unwrap();
-    let sandboxes = dir.path().join("sandboxes");
+    let sandboxes = dir.path().join("claude-sandbox").join("sandboxes");
     std::fs::create_dir_all(&sandboxes).unwrap();
 
     let result = load_profile(dir.path(), "does_not_exist");

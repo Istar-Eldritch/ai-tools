@@ -28,7 +28,7 @@ fn resolve_ai_tools_dir() -> AppResult<PathBuf> {
 
 pub fn execute() -> AppResult<()> {
     let ai_tools_dir = resolve_ai_tools_dir()?;
-    let sandboxes_dir = ai_tools_dir.join("sandboxes");
+    let sandboxes_dir = ai_tools_dir.join("claude-sandbox").join("sandboxes");
 
     if !sandboxes_dir.exists() || !sandboxes_dir.is_dir() {
         return Err(AppError::Config(format!(
@@ -90,13 +90,13 @@ mod tests {
     fn test_resolve_ai_tools_dir_fallback() {
         // In test environment, the fallback should point to the ai_tools workspace root
         let dir = resolve_ai_tools_dir().unwrap();
-        assert!(dir.join("sandboxes").exists(), "ai_tools fallback should have a sandboxes/ dir");
+        assert!(dir.join("claude-sandbox").join("sandboxes").exists(), "ai_tools fallback should have a claude-sandbox/sandboxes/ dir");
     }
 
     #[test]
     fn test_list_profiles_finds_minimal() {
         let ai_tools_dir = resolve_ai_tools_dir().unwrap();
-        let sandboxes_dir = ai_tools_dir.join("sandboxes");
+        let sandboxes_dir = ai_tools_dir.join("claude-sandbox").join("sandboxes");
         assert!(sandboxes_dir.join("minimal.toml").exists(), "minimal.toml should exist");
     }
 }

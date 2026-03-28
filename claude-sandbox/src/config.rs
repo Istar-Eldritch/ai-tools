@@ -141,7 +141,7 @@ pub fn detect_project_root() -> AppResult<PathBuf> {
 
 /// Load a sandbox profile by name from the ai_tools sandboxes directory.
 pub fn load_profile(ai_tools_dir: &Path, name: &str) -> AppResult<SandboxProfile> {
-    let path = ai_tools_dir.join("sandboxes").join(format!("{}.toml", name));
+    let path = ai_tools_dir.join("claude-sandbox").join("sandboxes").join(format!("{}.toml", name));
     if !path.exists() {
         return Err(AppError::ProfileNotFound(format!(
             "Profile '{}' not found at {}",

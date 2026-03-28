@@ -24,7 +24,9 @@
       "Bash(find /home/istar/.claude/plugins/ -name *.json -o -name *.toml -o -name *.sh)",
       "Bash(find /home/istar/.claude/ -name .mcp.json -o -name mcp*.json)",
       "Bash(xargs -I{} ls {})",
-      "Bash(xargs -I{} find {} -name *.json)"
+      "Bash(xargs -I{} find {} -name *.json)",
+      "Read(//gnu/store/**)",
+      "Read(//home/istar/.config/git/**)"
     ]
   }
 }

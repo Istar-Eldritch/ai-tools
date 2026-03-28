@@ -70,7 +70,7 @@ node = "/home/user/.nvm/versions/node/v20/bin"
 #[test]
 fn test_load_profile_from_disk() {
     let dir = tempfile::tempdir().unwrap();
-    let sandboxes_dir = dir.path().join("sandboxes");
+    let sandboxes_dir = dir.path().join("claude-sandbox").join("sandboxes");
     std::fs::create_dir_all(&sandboxes_dir).unwrap();
 
     let profile_content = r#"
@@ -91,7 +91,7 @@ env = []
 #[test]
 fn test_load_profile_not_found() {
     let dir = tempfile::tempdir().unwrap();
-    let sandboxes_dir = dir.path().join("sandboxes");
+    let sandboxes_dir = dir.path().join("claude-sandbox").join("sandboxes");
     std::fs::create_dir_all(&sandboxes_dir).unwrap();
 
     let result = load_profile(dir.path(), "nonexistent");
@@ -250,7 +250,7 @@ fn test_load_shipped_profiles() {
 
     let profiles = ["minimal", "rust-dev", "java-dev", "debug"];
     for name in &profiles {
-        let profile = load_profile(&ai_tools_dir.join("claude-sandbox"), name).unwrap_or_else(|e| {
+        let profile = load_profile(&ai_tools_dir, name).unwrap_or_else(|e| {
             panic!("Failed to load profile '{}': {}", name, e);
         });
         assert!(!profile.description.is_empty());
