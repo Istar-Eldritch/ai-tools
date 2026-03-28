@@ -4,6 +4,7 @@ rw_paths = [
     "~/.claude/",
     "~/.cargo/registry/",
     "/tmp",
+    "/var/run/docker.sock",
 ]
 
 ro_paths = [
