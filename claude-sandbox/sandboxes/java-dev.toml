@@ -2,6 +2,7 @@ description = "Java/Maven development profile with Maven repository access"
 
 rw_paths = [
     "~/.claude/",
+    "~/.gradle/"
 ]
 
 ro_paths = [
@@ -13,12 +14,25 @@ ro_paths = [
     "/etc/resolv.conf",
     "/etc/hosts",
     "/etc/ssl",
+    "/etc/alternatives/",
+    "/etc/alsa/",
+    "/dev/snd/",
+    "/proc/asound/",
+    "/run/user/1000/pulse/",
+    "/run/user/1000/pipewire-0",
+    "/run/user/1000/pipewire-0-manager",
+    "~/code/ai_tools",
+    "~/.local",
+    "~/.config",
+    "~/.gitconfig",
+    "~/.gitignore_global",
     "~/.m2/repository",
 ]
 
 excluded_paths = []
 
 env = [
+    "XDG_RUNTIME_DIR",
     "JAVA_HOME",
     "MAVEN_HOME",
 ]
