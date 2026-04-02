@@ -177,15 +177,9 @@ Fields:
 
 ## Security Model
 
-### Credential deny-list
+### Excluded paths
 
-The following paths are **always blocked** from being mounted, including subdirectories. Any attempt to mount them (via profile, project config, or as project root) results in an error:
-
-- `~/.ssh`
-- `~/.gnupg`
-- `~/.aws`
-- `~/.config/gh`
-- `~/.config/gcloud`
+Profiles can define `excluded_paths` to block specific paths from being mounted. Any attempt to mount an excluded path (via profile `ro_paths`, `rw_paths`, or project `extra_paths`) results in an error. The implicit `~/.claude/` mount is never blocked by excluded paths.
 
 ### Environment variable whitelist
 
@@ -296,10 +290,6 @@ Edit `~/.config/claude-sandbox/paths.toml` and set `tools.ai_tools` to the absol
 **`Profile 'X' not found`**
 
 Verify the profile TOML exists at `<ai_tools>/sandboxes/X.toml`. Run `claude-sandbox list-profiles` to see available profiles.
-
-**`credential path and cannot be mounted`**
-
-A path in the credential deny-list was referenced. Remove it from your profile or project config. The deny-list cannot be overridden.
 
 **`excluded by profile`**
 

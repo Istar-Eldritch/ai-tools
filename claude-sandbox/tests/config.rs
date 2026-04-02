@@ -264,7 +264,7 @@ fn test_rust_dev_profile_contents() {
     let content = std::fs::read_to_string(sandboxes_dir.join("rust-dev.toml")).unwrap();
     let profile: SandboxProfile = toml::from_str(&content).unwrap();
 
-    assert!(profile.ro_paths.iter().any(|p| p.contains(".cargo/registry")));
+    assert!(profile.rw_paths.iter().any(|p| p.contains(".cargo/registry")));
     assert!(profile.ro_paths.iter().any(|p| p.contains(".rustup")));
     assert!(profile.env.contains(&"CARGO_HOME".to_string()));
     assert!(profile.env.contains(&"RUSTUP_HOME".to_string()));

@@ -28,6 +28,7 @@ ro_paths = [
     "~/.gitconfig",
     "~/.gitignore_global",
     "~/.m2/repository",
+    "~/.config/gh",
 ]
 
 excluded_paths = []

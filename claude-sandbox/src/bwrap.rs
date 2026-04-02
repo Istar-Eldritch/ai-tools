@@ -18,16 +18,6 @@ pub fn verify_bwrap_available() -> AppResult<()> {
     }
 }
 
-/// Credential paths that must never be exposed inside the sandbox.
-/// Any host path that resolves to one of these (or a subdirectory of one) will
-/// be rejected with `AppError::DeniedPath`.
-const CREDENTIAL_DENY_LIST: &[&str] = &[
-    "~/.ssh",
-    "~/.gnupg",
-    "~/.aws",
-    "~/.config/gh",
-    "~/.config/gcloud",
-];
 
 /// Environment variables that are allowed to pass through into the sandbox.
 /// All other variables are cleared via `--clearenv`.
@@ -57,22 +47,6 @@ pub fn expand_tilde(path: &str) -> AppResult<PathBuf> {
     }
 }
 
-/// Check whether `path` falls under any entry in `CREDENTIAL_DENY_LIST`.
-/// Returns `Err(AppError::DeniedPath(...))` if blocked, `Ok(())` otherwise.
-fn check_deny_list(path: &Path) -> AppResult<()> {
-    for &denied_raw in CREDENTIAL_DENY_LIST {
-        let denied = expand_tilde(denied_raw)?;
-        // Block exact matches and any subdirectory of a denied path.
-        if path == denied || path.starts_with(&denied) {
-            return Err(AppError::DeniedPath(format!(
-                "'{}' is a credential path and cannot be mounted in the sandbox (matches deny-list entry '{}')",
-                path.display(),
-                denied_raw,
-            )));
-        }
-    }
-    Ok(())
-}
 
 /// Check whether `path` falls under any of the profile's excluded paths.
 /// Returns `Err(AppError::DeniedPath(...))` if blocked, `Ok(())` otherwise.
@@ -190,7 +164,6 @@ pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Pa
     // Read-only binds from profile
     for ro_path in &config.profile.ro_paths {
         let expanded = expand_tilde(ro_path)?;
-        check_deny_list(&expanded)?;
         check_excluded_paths(&expanded, &config.profile.excluded_paths)?;
         if host_path_exists(&expanded) {
             let src = expanded.to_string_lossy().to_string();
@@ -202,7 +175,6 @@ pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Pa
     // Read-write binds from profile
     for rw_path in &config.profile.rw_paths {
         let expanded = expand_tilde(rw_path)?;
-        check_deny_list(&expanded)?;
         check_excluded_paths(&expanded, &config.profile.excluded_paths)?;
         if host_path_exists(&expanded) {
             let src = expanded.to_string_lossy().to_string();
@@ -210,9 +182,8 @@ pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Pa
         }
     }
 
-    // Project root: always rw bind — but check deny-list first
+    // Project root: always rw bind
     {
-        check_deny_list(&config.project_root)?;
         let src = config.project_root.to_string_lossy().to_string();
         args.extend_from_slice(&["--bind".to_string(), src.clone(), src]);
     }
@@ -237,7 +208,6 @@ pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Pa
     // Extra paths from project config
     for extra in &config.project.extra_paths {
         let expanded = expand_tilde(&extra.path)?;
-        check_deny_list(&expanded)?;
         check_excluded_paths(&expanded, &config.profile.excluded_paths)?;
         if host_path_exists(&expanded) {
             let src = expanded.to_string_lossy().to_string();
@@ -392,79 +362,6 @@ mod tests {
         assert_eq!(result, PathBuf::from("/usr/bin"));
     }
 
-    // ── Deny-list tests ──────────────────────────────────────────────────────
-
-    #[test]
-    fn test_deny_list_blocks_ssh_dir() {
-        let home = dirs::home_dir().unwrap();
-        let ssh = home.join(".ssh");
-        let result = check_deny_list(&ssh);
-        assert!(result.is_err(), "~/.ssh must be blocked by the deny list");
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("~/.ssh"), "error message should mention the deny-list entry");
-    }
-
-    #[test]
-    fn test_deny_list_blocks_aws_subdir() {
-        let home = dirs::home_dir().unwrap();
-        let aws_creds = home.join(".aws").join("credentials");
-        let result = check_deny_list(&aws_creds);
-        assert!(result.is_err(), "subdirectory of ~/.aws must be blocked");
-    }
-
-    #[test]
-    fn test_deny_list_blocks_gnupg() {
-        let home = dirs::home_dir().unwrap();
-        let gnupg = home.join(".gnupg");
-        let result = check_deny_list(&gnupg);
-        assert!(result.is_err(), "~/.gnupg must be blocked by the deny list");
-    }
-
-    #[test]
-    fn test_deny_list_allows_safe_path() {
-        let result = check_deny_list(Path::new("/usr/share/doc"));
-        assert!(result.is_ok(), "/usr/share/doc should not be blocked");
-    }
-
-    #[test]
-    fn test_assemble_args_rejects_denied_ro_path() {
-        let project_root = tempfile::tempdir().unwrap();
-        let home = dirs::home_dir().unwrap();
-
-        let profile = SandboxProfile {
-            description: "bad".to_string(),
-            rw_paths: vec![],
-            ro_paths: vec![home.join(".ssh").to_string_lossy().to_string()],
-            excluded_paths: vec![],
-            env: vec![],
-        };
-
-        let config = make_resolved(profile, ProjectConfig::default(), project_root.path().to_path_buf());
-        let result = assemble_args(&config, None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("~/.ssh"));
-    }
-
-    #[test]
-    fn test_assemble_args_rejects_denied_extra_path() {
-        let project_root = tempfile::tempdir().unwrap();
-        let home = dirs::home_dir().unwrap();
-
-        let project = ProjectConfig {
-            profile: "test".to_string(),
-            extra_paths: vec![ExtraPath {
-                path: home.join(".aws").to_string_lossy().to_string(),
-                mode: MountMode::Ro,
-            }],
-            extra_env: vec![],
-        };
-
-        let config = make_resolved(minimal_profile(), project, project_root.path().to_path_buf());
-        let result = assemble_args(&config, None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("~/.aws"));
-    }
-
     // ── Env whitelist / clearenv tests ───────────────────────────────────────
 
     #[test]
@@ -605,27 +502,6 @@ mod tests {
             &[claude_dir.to_string_lossy().to_string()],
         );
         assert!(result.is_ok(), "~/.claude must never be blocked by excluded_paths");
-    }
-
-    // ── Project root deny-list test ───────────────────────────────────────
-
-    #[test]
-    fn test_project_root_deny_list_checked() {
-        let home = dirs::home_dir().unwrap();
-        let bad_root = home.join(".ssh");
-
-        let profile = SandboxProfile {
-            description: "test".to_string(),
-            rw_paths: vec![],
-            ro_paths: vec![],
-            excluded_paths: vec![],
-            env: vec![],
-        };
-
-        let config = make_resolved(profile, ProjectConfig::default(), bad_root);
-        let result = assemble_args(&config, None);
-        assert!(result.is_err(), "project root in deny-list should be rejected");
-        assert!(result.unwrap_err().to_string().contains("~/.ssh"));
     }
 
     // ── Validate tests ───────────────────────────────────────────────────
