@@ -69,19 +69,22 @@ impl IngestPipeline {
 
         let svc = self.embedding.clone();
         let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-        let vectors = tokio::task::spawn_blocking(move || {
+        let join_result = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
             svc.embed_batch(&refs)
         })
-        .await
-        .map_err(|e| AppError::Internal(format!("embedding task panicked: {e}")))?;
+        .await;
 
-        let vectors: Vec<pgvector::Vector> = match vectors {
-            Ok(v) => v,
+        let vectors: Vec<pgvector::Vector> = match join_result {
             Err(e) => {
+                self.cleanup(source_id).await;
+                return Err(AppError::Internal(format!("embedding task panicked: {e}")));
+            }
+            Ok(Err(e)) => {
                 self.cleanup(source_id).await;
                 return Err(e);
             }
+            Ok(Ok(v)) => v,
         };
 
         let new_chunks: Vec<NewChunk> = chunks
