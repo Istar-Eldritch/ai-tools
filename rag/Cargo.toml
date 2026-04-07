@@ -15,6 +15,10 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "uuid"
 thiserror = "2.0"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+aws-sdk-s3 = "1"
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest"] }
+aws-credential-types = "1"
+bytes = "1"
 
 [dev-dependencies]
 testcontainers = { version = "0.25", features = ["watchdog"] }

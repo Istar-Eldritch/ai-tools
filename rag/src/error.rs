@@ -15,4 +15,7 @@ pub enum AppError {
 
     #[error("Migration error: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
+
+    #[error("Storage error: {0}")]
+    Storage(String),
 }

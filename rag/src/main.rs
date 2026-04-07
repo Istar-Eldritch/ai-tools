@@ -1,14 +1,11 @@
 mod chunking;
-mod config;
-mod db;
 mod embedding;
-mod error;
 mod mcp;
 mod pipelines;
-mod storage;
 
 use clap::{Parser, Subcommand};
-use config::Config;
+use rag_mcp::config::Config;
+use rag_mcp::db;
 
 #[derive(Parser)]
 #[command(name = "rag-mcp", version, about = "RAG MCP Server — semantic search over a document knowledge base")]
