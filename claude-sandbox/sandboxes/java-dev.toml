@@ -24,6 +24,7 @@ ro_paths = [
     "~/code/ai_tools",
     "~/.local",
     "~/.config",
+    "~/.cargo/bin/",
     "~/.gitconfig",
     "~/.gitignore_global",
     "~/.m2/repository",
