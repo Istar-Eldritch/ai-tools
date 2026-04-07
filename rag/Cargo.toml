@@ -19,6 +19,7 @@ aws-sdk-s3 = "1"
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest"] }
 aws-credential-types = "1"
 bytes = "1"
+text-splitter = { version = "0.29", features = ["markdown"] }
 
 [dev-dependencies]
 testcontainers = { version = "0.25", features = ["watchdog"] }

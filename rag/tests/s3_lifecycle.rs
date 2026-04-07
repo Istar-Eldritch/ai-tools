@@ -31,6 +31,8 @@ async fn setup_minio() -> (S3Storage, ContainerAsync<GenericImage>) {
         s3_secret_key: "minioadmin".into(),
         db_max_connections: 1,
         embedding_model: String::new(),
+        chunk_size: 2048,
+        chunk_overlap: 200,
     };
 
     let storage = S3Storage::new(&config)

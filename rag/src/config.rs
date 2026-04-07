@@ -29,4 +29,12 @@ pub struct Config {
     /// Embedding model name for FastEmbed
     #[arg(long, env = "EMBEDDING_MODEL", default_value = "nomic-embed-text-v2-moe")]
     pub embedding_model: String,
+
+    /// Maximum chunk size in characters
+    #[arg(long, env = "CHUNK_SIZE", default_value = "2048")]
+    pub chunk_size: usize,
+
+    /// Overlap between consecutive chunks in characters
+    #[arg(long, env = "CHUNK_OVERLAP", default_value = "200")]
+    pub chunk_overlap: usize,
 }
