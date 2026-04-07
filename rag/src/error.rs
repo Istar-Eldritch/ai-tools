@@ -18,4 +18,7 @@ pub enum AppError {
 
     #[error("Storage error: {0}")]
     Storage(String),
+
+    #[error("Embedding error: {0}")]
+    Embedding(String),
 }

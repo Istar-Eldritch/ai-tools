@@ -1,5 +1,4 @@
 mod chunking;
-mod embedding;
 mod mcp;
 mod pipelines;
 
