@@ -1,6 +1,5 @@
 mod chunking;
 mod mcp;
-mod pipelines;
 
 use clap::{Parser, Subcommand};
 use rag_mcp::config::Config;

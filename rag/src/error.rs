@@ -21,4 +21,10 @@ pub enum AppError {
 
     #[error("Embedding error: {0}")]
     Embedding(String),
+
+    #[error("validation error: {0}")]
+    Validation(String),
+
+    #[error("internal error: {0}")]
+    Internal(String),
 }
