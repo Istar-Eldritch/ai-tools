@@ -37,6 +37,8 @@ pub async fn get_source_by_s3_key(pool: &PgPool, s3_key: &str) -> AppResult<Opti
     Ok(row)
 }
 
+/// Deletes a source by ID. Associated chunks are removed automatically via
+/// the `ON DELETE CASCADE` foreign key constraint on the `chunks` table.
 pub async fn delete_source(pool: &PgPool, id: Uuid) -> AppResult<bool> {
     let result = sqlx::query("DELETE FROM sources WHERE id = $1")
         .bind(id)

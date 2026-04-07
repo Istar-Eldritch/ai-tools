@@ -14,12 +14,13 @@ pub struct Source {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, FromRow, Serialize)]
 pub struct Chunk {
     pub id: Uuid,
     pub source_id: Uuid,
     pub chunk_index: i32,
     pub content: String,
+    #[serde(skip)]
     pub embedding: Vector,
     pub created_at: DateTime<Utc>,
 }
