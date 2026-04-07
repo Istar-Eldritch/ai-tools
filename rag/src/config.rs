@@ -22,6 +22,10 @@ pub struct Config {
     #[arg(long, env = "S3_SECRET_KEY")]
     pub s3_secret_key: String,
 
+    /// Maximum number of database connections in the pool
+    #[arg(long, env = "DB_MAX_CONNECTIONS", default_value = "5")]
+    pub db_max_connections: u32,
+
     /// Embedding model name for FastEmbed
     #[arg(long, env = "EMBEDDING_MODEL", default_value = "nomic-embed-text-v2-moe")]
     pub embedding_model: String,

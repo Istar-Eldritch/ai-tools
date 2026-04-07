@@ -34,8 +34,10 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve(_config) => {
+        Commands::Serve(config) => {
             println!("RAG MCP server starting.");
+            let _pool = db::connect(&config.database_url, config.db_max_connections).await?;
+            println!("Database connected and migrations applied.");
             Ok(())
         }
     }
