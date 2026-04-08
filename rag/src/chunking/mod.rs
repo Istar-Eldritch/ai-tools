@@ -966,7 +966,9 @@ public class App {
             overlap: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Java, &config);
-        // interface is a container in Java → expands into method_declaration chunks
+        // interface is a container in Java → expands into method_declaration chunks.
+        // Verified: tree-sitter-java emits "method_declaration" (not "abstract_method_declaration"
+        // or similar) for abstract interface methods, so the assertions below are correct as-is.
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].node_type, "method_declaration");
         assert!(chunks[0].context.is_some());
