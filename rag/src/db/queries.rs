@@ -7,8 +7,8 @@ use super::models::{NewChunk, NewSource, SearchResult, Source};
 
 pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Source> {
     let row = sqlx::query_as::<_, Source>(
-        "INSERT INTO sources (id, s3_key, filename, content_type, metadata)
-         VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO sources (id, s3_key, filename, content_type, metadata, project)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *"
     )
     .bind(source.id)
@@ -16,6 +16,7 @@ pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Sourc
     .bind(&source.filename)
     .bind(&source.content_type)
     .bind(&source.metadata)
+    .bind(&source.project)
     .fetch_one(pool)
     .await?;
     Ok(row)

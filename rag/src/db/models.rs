@@ -11,6 +11,7 @@ pub struct Source {
     pub filename: String,
     pub content_type: String,
     pub metadata: serde_json::Value,
+    pub project: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -45,6 +46,7 @@ pub struct NewSource {
     pub filename: String,
     pub content_type: String,
     pub metadata: serde_json::Value,
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone)]

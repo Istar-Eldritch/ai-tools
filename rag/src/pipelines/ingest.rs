@@ -52,6 +52,7 @@ impl IngestPipeline {
             filename: filename.to_owned(),
             content_type: content_type.to_owned(),
             metadata,
+            project: None,
         };
         let source = queries::insert_source(&self.pool, &new_source).await?;
 

@@ -29,6 +29,7 @@ async fn insert_source_with_chunk(
         filename: filename.to_string(),
         content_type: "text/plain".to_string(),
         metadata,
+        project: None,
     };
     queries::insert_source(pool, &source).await.unwrap();
     let chunk = NewChunk {
