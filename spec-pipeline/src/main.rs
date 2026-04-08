@@ -1,9 +1,12 @@
 mod mcp;
 
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use spec_pipeline_mcp::config::Config;
+use spec_pipeline_mcp::session::{SessionRegistry, SessionStore};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -100,7 +103,10 @@ async fn main() -> anyhow::Result<()> {
                 })?;
             tracing::info!("Claude credentials validated");
 
-            let server = McpServer::new();
+            let store = SessionStore::new(state_dir.clone())?;
+            let registry = Arc::new(SessionRegistry::new(store)?);
+
+            let server = McpServer::new(registry);
 
             tracing::info!("MCP server ready; listening on stdio");
 

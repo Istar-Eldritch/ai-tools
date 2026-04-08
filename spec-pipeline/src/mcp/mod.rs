@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -5,25 +7,73 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
+use tracing::info;
+use uuid::Uuid;
+
+use spec_pipeline_mcp::session::SessionRegistry;
+use spec_pipeline_mcp::workflow::{
+    BrainstormState, EpicState, SpecState, WorkflowState, WorkflowType,
+};
+use spec_pipeline_mcp::workflow::brainstorm::DiscoveryPhase;
 
 // -- Request parameter structs --
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SpecStartParams {
+    /// The type of workflow to start: "brainstorm", "spec", or "epic".
+    pub workflow_type: String,
+    /// The topic or subject for this workflow session.
+    pub topic: String,
+    /// Optional list of context references (file paths, URLs, etc.) to inform the workflow.
+    pub context_refs: Option<Vec<String>>,
+    /// Optional model override (e.g. "opus", "sonnet", "haiku").
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SpecStatusParams {
-    /// Optional session ID to query status for. If omitted, returns general server status.
-    pub session_id: Option<String>,
+    /// The UUID of the session to query.
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SpecRespondParams {
+    /// The UUID of the session to respond to.
+    pub session_id: String,
+    /// The type of response: "approve", "revise", "cancel", or "retry".
+    pub response_type: String,
+    /// Optional content for the response (e.g. revision feedback).
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SpecCancelParams {
+    /// The UUID of the session to cancel.
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SpecListParams {
+    /// Whether to include completed and cancelled sessions. Defaults to false.
+    pub include_completed: Option<bool>,
+    /// Filter by workflow type: "brainstorm", "spec", or "epic".
+    pub workflow_type: Option<String>,
+    /// Maximum number of sessions to return. Defaults to 20.
+    pub limit: Option<usize>,
 }
 
 // -- McpServer --
 
 #[derive(Clone)]
 pub struct McpServer {
+    registry: Arc<SessionRegistry>,
     tool_router: ToolRouter<McpServer>,
 }
 
 impl McpServer {
-    pub fn new() -> Self {
+    pub fn new(registry: Arc<SessionRegistry>) -> Self {
         Self {
+            registry,
             tool_router: Self::tool_router(),
         }
     }
@@ -33,14 +83,171 @@ impl McpServer {
 
 #[tool_router]
 impl McpServer {
-    #[tool(description = "Check the status of the spec pipeline server. Returns a static status message confirming the server is operational.")]
+    #[tool(
+        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, or epic) and topic. Returns the session ID and initial status."
+    )]
+    async fn spec_start(
+        &self,
+        Parameters(params): Parameters<SpecStartParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let workflow_type = parse_workflow_type(&params.workflow_type)?;
+
+        let initial_state = match workflow_type {
+            WorkflowType::Brainstorm => {
+                WorkflowState::Brainstorm(BrainstormState::Discovery(DiscoveryPhase::Exploring {
+                    turn: 0,
+                }))
+            }
+            WorkflowType::Spec => WorkflowState::Spec(SpecState::Research { turn: 0 }),
+            WorkflowType::Epic => WorkflowState::Epic(EpicState::ChildExtraction { turn: 0 }),
+        };
+
+        let context_refs = params.context_refs.unwrap_or_default();
+
+        let session_id = self
+            .registry
+            .create(params.topic, initial_state, context_refs, params.model)
+            .map_err(anyhow_to_mcp)?;
+
+        let json = serde_json::json!({
+            "session_id": session_id.to_string(),
+            "status": "running",
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string(&json).map_err(|e| serialization_error(e))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Check the status of an existing spec-pipeline session. Returns detailed information about the session including workflow type, phase, state, and any gate content."
+    )]
     async fn spec_status(
         &self,
-        Parameters(_params): Parameters<SpecStatusParams>,
+        Parameters(params): Parameters<SpecStatusParams>,
     ) -> Result<CallToolResult, McpError> {
+        let id = parse_uuid(&params.session_id)?;
+
+        let handle = self.registry.get(id).ok_or_else(|| {
+            McpError::invalid_params(format!("Session not found: {id}"), None)
+        })?;
+
+        let session = handle.lock().await;
+        let state = session.session_state();
+
+        let json = serde_json::json!({
+            "session_id": session.id.to_string(),
+            "topic": session.topic,
+            "workflow_type": session.workflow_state.workflow_type().to_string(),
+            "session_state": format!("{:?}", state),
+            "phase": session.workflow_state.phase_name(),
+            "sub_phase": session.workflow_state.sub_phase_name(),
+            "context_refs": session.context_refs,
+            "model_override": session.model_override,
+            "total_cost_usd": session.total_cost_usd,
+            "gate_content": session.workflow_state.gate_content(),
+            "created_at": session.created_at.to_rfc3339(),
+            "updated_at": session.updated_at.to_rfc3339(),
+        });
+
         Ok(CallToolResult::success(vec![Content::text(
-            "spec-pipeline-mcp is running",
+            serde_json::to_string_pretty(&json).map_err(|e| serialization_error(e))?,
         )]))
+    }
+
+    #[tool(
+        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate. Note: actual state transitions will be wired in a future phase."
+    )]
+    async fn spec_respond(
+        &self,
+        Parameters(params): Parameters<SpecRespondParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = parse_uuid(&params.session_id)?;
+
+        // Validate the response type
+        let valid_types = ["approve", "revise", "cancel", "retry"];
+        if !valid_types.contains(&params.response_type.as_str()) {
+            return Err(McpError::invalid_params(
+                format!(
+                    "Invalid response_type '{}'. Must be one of: {}",
+                    params.response_type,
+                    valid_types.join(", ")
+                ),
+                None,
+            ));
+        }
+
+        let handle = self.registry.get(id).ok_or_else(|| {
+            McpError::invalid_params(format!("Session not found: {id}"), None)
+        })?;
+
+        let session = handle.lock().await;
+        let state = session.session_state();
+
+        info!(
+            session_id = %id,
+            response_type = %params.response_type,
+            has_content = params.content.is_some(),
+            "Received gate response (transitions not yet wired)"
+        );
+
+        let json = serde_json::json!({
+            "session_id": session.id.to_string(),
+            "acknowledged": true,
+            "response_type": params.response_type,
+            "current_state": format!("{:?}", state),
+            "note": "State transitions will be wired in Phase 7",
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string(&json).map_err(|e| serialization_error(e))?,
+        )]))
+    }
+
+    #[tool(
+        description = "Cancel an active spec-pipeline session. Transitions the session to a cancelled state. Cannot cancel sessions that are already complete or cancelled."
+    )]
+    async fn spec_cancel(
+        &self,
+        Parameters(params): Parameters<SpecCancelParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let id = parse_uuid(&params.session_id)?;
+
+        self.registry.cancel(id).await.map_err(anyhow_to_mcp)?;
+
+        let json = serde_json::json!({
+            "session_id": id.to_string(),
+            "status": "cancelled",
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string(&json).map_err(|e| serialization_error(e))?,
+        )]))
+    }
+
+    #[tool(
+        description = "List spec-pipeline sessions. Returns a summary of sessions optionally filtered by completion state and workflow type. Results are ordered by most recently updated first."
+    )]
+    async fn spec_list(
+        &self,
+        Parameters(params): Parameters<SpecListParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let include_completed = params.include_completed.unwrap_or(false);
+        let limit = params.limit.unwrap_or(20);
+
+        let workflow_type = match params.workflow_type {
+            Some(ref wt) => Some(parse_workflow_type(wt)?),
+            None => None,
+        };
+
+        let summaries = self
+            .registry
+            .list(include_completed, workflow_type, limit)
+            .await;
+
+        let json = serde_json::to_string(&summaries).map_err(|e| serialization_error(e))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }
 
@@ -55,4 +262,40 @@ impl ServerHandler for McpServer {
                 env!("CARGO_PKG_VERSION"),
             ))
     }
+}
+
+// -- Helpers --
+
+/// Parse a string into a WorkflowType, returning an MCP error on invalid input.
+fn parse_workflow_type(s: &str) -> Result<WorkflowType, McpError> {
+    match s {
+        "brainstorm" => Ok(WorkflowType::Brainstorm),
+        "spec" => Ok(WorkflowType::Spec),
+        "epic" => Ok(WorkflowType::Epic),
+        _ => Err(McpError::invalid_params(
+            format!(
+                "Invalid workflow_type '{}'. Must be one of: brainstorm, spec, epic",
+                s
+            ),
+            None,
+        )),
+    }
+}
+
+/// Parse a UUID string, returning an MCP error on invalid input.
+fn parse_uuid(s: &str) -> Result<Uuid, McpError> {
+    Uuid::parse_str(s).map_err(|_| {
+        McpError::invalid_params(format!("Invalid UUID: '{s}'"), None)
+    })
+}
+
+/// Convert an anyhow::Error into an McpError.
+fn anyhow_to_mcp(e: anyhow::Error) -> McpError {
+    tracing::error!(error = %e, "tool call error");
+    McpError::internal_error(format!("{e:#}"), None)
+}
+
+/// Create an McpError for serialization failures.
+fn serialization_error(e: serde_json::Error) -> McpError {
+    McpError::internal_error(format!("serialization error: {e}"), None)
 }
