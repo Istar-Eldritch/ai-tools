@@ -279,34 +279,82 @@ fn process_node(
         if has_extractable {
             let body = body_opt.unwrap();
             let mut cursor = body.walk();
+            // R1.5 – Container-level merge buffer for non-extractable children
+            let mut container_buf = MergeBuffer::new();
             let mut first = true;
+
             for child in body.children(&mut cursor) {
-                if is_extractable_node(child.kind(), language) {
-                    if first && prefix.is_some() {
-                        process_node(
-                            &child,
-                            source,
-                            language,
-                            config,
-                            Some(&sig),
-                            prefix,
-                            chunks,
-                        );
-                        first = false;
-                    } else {
-                        process_node(
-                            &child,
-                            source,
-                            language,
-                            config,
-                            Some(&sig),
-                            None,
-                            chunks,
-                        );
-                        first = false;
-                    }
+                // Skip anonymous nodes (punctuation like { } , ;)
+                if !child.is_named() {
+                    continue;
                 }
+
+                let child_is_ext = is_extractable_node(child.kind(), language);
+                let child_text = &source[child.byte_range()];
+                let child_sl = child.start_position().row + 1;
+                let child_el = child.end_position().row + 1;
+
+                // R2.4: extractable but below min_chunk_size → buffer like non-extractable
+                let should_buffer = if !child_is_ext {
+                    true
+                } else if config.min_chunk_size > 0
+                    && child_text.len() < config.min_chunk_size
+                {
+                    true
+                } else {
+                    false
+                };
+
+                if should_buffer {
+                    container_buf.push(child_text, child_sl, child_el);
+                    continue;
+                }
+
+                // R2.5: Eager flush if buffer >= min_chunk_size
+                if !container_buf.is_empty() && config.min_chunk_size > 0
+                    && container_buf.len() >= config.min_chunk_size
+                {
+                    container_buf.flush(Some(&sig), chunks);
+                }
+
+                // Build combined prefix from top-level prefix (first child) + container buffer
+                let combined_prefix = if first && prefix.is_some() {
+                    first = false;
+                    if container_buf.is_empty() {
+                        prefix.map(|s| s.to_string())
+                    } else {
+                        let (buf_text, _, _) = container_buf.drain();
+                        Some(match prefix {
+                            Some(pfx) => format!("{}\n{}", pfx, buf_text),
+                            None => buf_text,
+                        })
+                    }
+                } else {
+                    first = false;
+                    if container_buf.is_empty() {
+                        None
+                    } else if container_buf.len() + 1 + child_text.len() > config.chunk_size {
+                        container_buf.flush(Some(&sig), chunks);
+                        None
+                    } else {
+                        let (buf_text, _, _) = container_buf.drain();
+                        Some(buf_text)
+                    }
+                };
+
+                process_node(
+                    &child,
+                    source,
+                    language,
+                    config,
+                    Some(&sig),
+                    combined_prefix.as_deref(),
+                    chunks,
+                );
             }
+
+            // R1.5 – Flush remaining container buffer at end of body
+            container_buf.flush(Some(&sig), chunks);
             return;
         }
         // No extractable children → emit as single chunk (fall through)
@@ -496,26 +544,41 @@ pub fn chunk_code(source: &str, language: CodeLanguage, config: &ChunkConfig) ->
         }
     }
 
-    // R6/R7/R8 – Process remaining top-level nodes with forward-merge buffer
+    // R1/R2 – Process remaining top-level nodes with forward-merge buffer
     let mut merge_buf = MergeBuffer::new();
 
     for node in &top_level[preamble_end..] {
         let kind = node.kind();
         let is_ext = is_extractable_node(kind, language);
         let is_cont = is_container_node(kind, language);
+        let node_text = &source[node.byte_range()];
+        let start_line = node.start_position().row + 1;
+        let end_line = node.end_position().row + 1;
 
-        if !is_ext && !is_cont {
-            // R1.1: accumulate in merge buffer
-            let node_text = &source[node.byte_range()];
-            let start_line = node.start_position().row + 1;
-            let end_line = node.end_position().row + 1;
+        // R1.1: non-extractable, non-container → always buffer
+        // R2.4: extractable but below min_chunk_size → also buffer
+        let should_buffer = if !is_ext && !is_cont {
+            true
+        } else if config.min_chunk_size > 0 && node_text.len() < config.min_chunk_size {
+            true
+        } else {
+            false
+        };
+
+        if should_buffer {
             merge_buf.push(node_text, start_line, end_line);
             continue;
         }
 
+        // R2.5: Eager flush — if buffer >= min_chunk_size, flush before processing next node
+        if !merge_buf.is_empty() && config.min_chunk_size > 0
+            && merge_buf.len() >= config.min_chunk_size
+        {
+            merge_buf.flush(None, &mut chunks);
+        }
+
         // Extractable or container node
         let prefix = if !merge_buf.is_empty() {
-            let node_text = &source[node.byte_range()];
             if merge_buf.len() + 1 + node_text.len() > config.chunk_size {
                 // R1.3: overflow → flush buffer standalone
                 merge_buf.flush(None, &mut chunks);
@@ -1222,6 +1285,132 @@ fn bar() {
         assert!(content.starts_with("// header comment\nfn bar()"));
         // context should be None since this is a top-level node (no container).
         assert!(chunks[0].context.is_none());
+    }
+
+    // --- Phase 3: Container body merging tests ---
+
+    #[test]
+    fn chunk_code_container_body_comment_merged_into_method() {
+        let source = r#"impl Foo {
+    // This method does something
+    fn method_a(&self) -> i32 {
+        1
+    }
+
+    fn method_b(&self) -> i32 {
+        2
+    }
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        // 2 method chunks (comment merged into method_a)
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "function_item");
+        assert!(chunks[0].content.contains("// This method does something"));
+        assert!(chunks[0].content.contains("fn method_a"));
+        assert_eq!(chunks[1].node_type, "function_item");
+    }
+
+    #[test]
+    fn chunk_code_container_body_trailing_non_extractable() {
+        let source = r#"impl Foo {
+    fn method_a(&self) {}
+    // trailing comment
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        // method chunk + standalone non_extractable for trailing comment
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "function_item");
+        assert_eq!(chunks[1].node_type, "non_extractable");
+        assert!(chunks[1].content.contains("// trailing comment"));
+        // Container context should be set on the flushed buffer
+        assert!(chunks[1].context.is_some());
+    }
+
+    // --- Phase 4: min_chunk_size tests ---
+
+    #[test]
+    fn chunk_code_min_chunk_size_merges_small_extractable() {
+        let source = r#"const X: i32 = 1;
+
+fn big_function() -> i32 {
+    let a = 1;
+    let b = 2;
+    let c = 3;
+    a + b + c
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 100,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        // const is extractable but small (< 100 chars), so merged into big_function
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content.contains("const X"));
+        assert!(chunks[0].content.contains("fn big_function"));
+    }
+
+    #[test]
+    fn chunk_code_min_chunk_size_zero_disables() {
+        let source = r#"const X: i32 = 1;
+
+fn foo() -> i32 {
+    42
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        // With min_chunk_size=0, const is emitted as its own chunk
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "const_item");
+        assert_eq!(chunks[1].node_type, "function_item");
+    }
+
+    #[test]
+    fn chunk_code_min_chunk_size_eager_flush() {
+        // Two small extractable nodes followed by a large one.
+        // With min_chunk_size=30, the two small ones get buffered,
+        // and since buffer >= min_chunk_size when the large one arrives,
+        // the buffer flushes eagerly before the large node.
+        let source = r#"const A: i32 = 1;
+const B: i32 = 2;
+
+fn big_function() -> i32 {
+    let a = 1;
+    let b = 2;
+    a + b
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 30,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        // Two consts (~18 chars each) get buffered. Combined buffer (~37) >= 30,
+        // so they flush eagerly as non_extractable before big_function.
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "non_extractable");
+        assert!(chunks[0].content.contains("const A"));
+        assert!(chunks[0].content.contains("const B"));
+        assert_eq!(chunks[1].node_type, "function_item");
     }
 
 }
