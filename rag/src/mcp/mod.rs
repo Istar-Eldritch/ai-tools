@@ -10,6 +10,7 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use rag_mcp::error::AppError;
@@ -169,6 +170,7 @@ impl McpServer {
     #[tool(description = "Ingest all matching files from a local directory into the knowledge base. Walks the directory recursively, filters by include/exclude glob patterns, detects binary files, deduplicates by content hash, and ingests with bounded concurrency. Returns a summary with counts of ingested, skipped, and failed files.")]
     async fn ingest_directory(
         &self,
+        ct: CancellationToken,
         meta: Meta,
         client: Peer<RoleServer>,
         Parameters(params): Parameters<IngestDirectoryParams>,
@@ -206,6 +208,7 @@ impl McpServer {
                 &exclude,
                 metadata,
                 on_progress.as_ref(),
+                &ct,
             )
             .await
             .map_err(app_error_to_mcp_error)?;

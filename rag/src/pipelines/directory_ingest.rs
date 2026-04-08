@@ -7,6 +7,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
 use crate::db::models::Source;
@@ -71,6 +72,7 @@ impl DirectoryIngestPipeline {
         exclude: &[String],
         metadata: serde_json::Value,
         on_progress: Option<&ProgressCallback>,
+        ct: &CancellationToken,
     ) -> AppResult<IngestDirectorySummary> {
         let root = Path::new(path);
         if !root.is_dir() {
@@ -265,22 +267,40 @@ impl DirectoryIngestPipeline {
             })
             .buffer_unordered(CONCURRENCY_LIMIT);
 
-        while let Some(result) = result_stream.next().await {
-            completed += 1;
-            match result {
-                Ok(()) => summary.ingested += 1,
-                Err((filename, err_msg)) => {
-                    summary.failed += 1;
-                    push_error(&mut summary.errors, format!("{filename}: {err_msg}"));
+        loop {
+            tokio::select! {
+                biased;
+                _ = ct.cancelled() => {
+                    tracing::info!(
+                        completed,
+                        total = total_actions as u64,
+                        "directory ingest cancelled by client"
+                    );
+                    break;
                 }
-            }
-            if let Some(cb) = &on_progress {
-                let total = total_actions as u64;
-                cb(
-                    completed as f64,
-                    Some(total_actions),
-                    &format!("Processed {completed}/{total} files"),
-                );
+                item = result_stream.next() => {
+                    match item {
+                        None => break,
+                        Some(result) => {
+                            completed += 1;
+                            match result {
+                                Ok(()) => summary.ingested += 1,
+                                Err((filename, err_msg)) => {
+                                    summary.failed += 1;
+                                    push_error(&mut summary.errors, format!("{filename}: {err_msg}"));
+                                }
+                            }
+                            if let Some(cb) = &on_progress {
+                                let total = total_actions as u64;
+                                cb(
+                                    completed as f64,
+                                    Some(total_actions),
+                                    &format!("Processed {completed}/{total} files"),
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
 
