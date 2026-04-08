@@ -51,6 +51,7 @@ async fn source_chunk_lifecycle() {
             chunk_index: 0,
             content: "first chunk".into(),
             embedding: Vector::from(emb_a.clone()),
+            metadata: json!({}),
         },
         NewChunk {
             id: Uuid::new_v4(),
@@ -58,6 +59,7 @@ async fn source_chunk_lifecycle() {
             chunk_index: 1,
             content: "second chunk".into(),
             embedding: Vector::from(emb_b.clone()),
+            metadata: json!({}),
         },
     ];
     let inserted = queries::insert_chunks(&pool, &chunks).await.unwrap();
@@ -70,6 +72,7 @@ async fn source_chunk_lifecycle() {
     assert_eq!(results[0].content, "first chunk");
     assert!(results[0].similarity > results[1].similarity);
     assert_eq!(results[0].source_filename, "test-file.pdf");
+    assert_eq!(results[0].chunk_metadata, json!({}));
 
     // 6. delete_chunks_by_source
     let deleted = queries::delete_chunks_by_source(&pool, source_id).await.unwrap();

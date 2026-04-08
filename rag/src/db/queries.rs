@@ -55,8 +55,8 @@ pub async fn insert_chunks(pool: &PgPool, chunks: &[NewChunk]) -> AppResult<u64>
     let mut count: u64 = 0;
     for chunk in chunks {
         let result = sqlx::query(
-            "INSERT INTO chunks (id, source_id, chunk_index, content, embedding)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO chunks (id, source_id, chunk_index, content, embedding, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (source_id, chunk_index) DO NOTHING"
         )
         .bind(chunk.id)
@@ -64,6 +64,7 @@ pub async fn insert_chunks(pool: &PgPool, chunks: &[NewChunk]) -> AppResult<u64>
         .bind(chunk.chunk_index)
         .bind(&chunk.content)
         .bind(&chunk.embedding)
+        .bind(&chunk.metadata)
         .execute(&mut *tx)
         .await?;
         count += result.rows_affected();
@@ -85,6 +86,7 @@ pub async fn search_chunks(
              c.content,
              s.filename    AS source_filename,
              s.metadata    AS source_metadata,
+             c.metadata    AS chunk_metadata,
              1.0 - (c.embedding <=> $1) AS similarity
          FROM chunks c
          JOIN sources s ON s.id = c.source_id

@@ -96,6 +96,7 @@ impl IngestPipeline {
                 chunk_index: chunk.index as i32,
                 content: chunk.content.clone(),
                 embedding,
+                metadata: serde_json::Value::Object(Default::default()),
             })
             .collect();
 

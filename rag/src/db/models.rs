@@ -22,6 +22,7 @@ pub struct Chunk {
     pub content: String,
     #[serde(skip)]
     pub embedding: Vector,
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
 
@@ -33,6 +34,7 @@ pub struct SearchResult {
     pub content: String,
     pub source_filename: String,
     pub source_metadata: serde_json::Value,
+    pub chunk_metadata: serde_json::Value,
     pub similarity: f64,
 }
 
@@ -52,4 +54,5 @@ pub struct NewChunk {
     pub chunk_index: i32,
     pub content: String,
     pub embedding: Vector,
+    pub metadata: serde_json::Value,
 }
