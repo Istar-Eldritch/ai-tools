@@ -10,9 +10,12 @@ use serde::Deserialize;
 use tracing::info;
 use uuid::Uuid;
 
+use spec_pipeline_mcp::phase_runner::{self, GateChannelMap};
+use spec_pipeline_mcp::prompts::PromptStore;
+use spec_pipeline_mcp::runner::ClaudeRunner;
 use spec_pipeline_mcp::session::SessionRegistry;
 use spec_pipeline_mcp::workflow::{
-    BrainstormState, EpicState, SpecState, WorkflowState, WorkflowType,
+    BrainstormState, EpicState, GateResponse, ModelConfig, SpecState, WorkflowState, WorkflowType,
 };
 use spec_pipeline_mcp::workflow::brainstorm::DiscoveryPhase;
 
@@ -67,13 +70,27 @@ pub struct SpecListParams {
 #[derive(Clone)]
 pub struct McpServer {
     registry: Arc<SessionRegistry>,
+    runner: Arc<ClaudeRunner>,
+    gate_channels: Arc<GateChannelMap>,
+    model_config: ModelConfig,
+    prompts: Arc<PromptStore>,
     tool_router: ToolRouter<McpServer>,
 }
 
 impl McpServer {
-    pub fn new(registry: Arc<SessionRegistry>) -> Self {
+    pub fn new(
+        registry: Arc<SessionRegistry>,
+        runner: Arc<ClaudeRunner>,
+        gate_channels: Arc<GateChannelMap>,
+        model_config: ModelConfig,
+        prompts: Arc<PromptStore>,
+    ) -> Self {
         Self {
             registry,
+            runner,
+            gate_channels,
+            model_config,
+            prompts,
             tool_router: Self::tool_router(),
         }
     }
@@ -106,8 +123,33 @@ impl McpServer {
 
         let session_id = self
             .registry
-            .create(params.topic, initial_state, context_refs, params.model)
+            .create(
+                params.topic,
+                initial_state,
+                context_refs,
+                params.model,
+            )
             .map_err(anyhow_to_mcp)?;
+
+        // Spawn the async workflow loop for brainstorm sessions.
+        if workflow_type == WorkflowType::Brainstorm {
+            let registry = Arc::clone(&self.registry);
+            let runner = Arc::clone(&self.runner);
+            let gate_channels = Arc::clone(&self.gate_channels);
+            let model_config = self.model_config.clone();
+            let prompts = Arc::clone(&self.prompts);
+            tokio::spawn(async move {
+                phase_runner::run_brainstorm_session(
+                    session_id,
+                    registry,
+                    runner,
+                    gate_channels,
+                    model_config,
+                    prompts,
+                )
+                .await;
+            });
+        }
 
         let json = serde_json::json!({
             "session_id": session_id.to_string(),
@@ -156,7 +198,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate. Note: actual state transitions will be wired in a future phase."
+        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate."
     )]
     async fn spec_respond(
         &self,
@@ -164,39 +206,74 @@ impl McpServer {
     ) -> Result<CallToolResult, McpError> {
         let id = parse_uuid(&params.session_id)?;
 
-        // Validate the response type
-        let valid_types = ["approve", "revise", "cancel", "retry"];
-        if !valid_types.contains(&params.response_type.as_str()) {
-            return Err(McpError::invalid_params(
-                format!(
-                    "Invalid response_type '{}'. Must be one of: {}",
-                    params.response_type,
-                    valid_types.join(", ")
-                ),
-                None,
-            ));
-        }
+        // Parse response_type into a GateResponse
+        let gate_response = match params.response_type.as_str() {
+            "approve" => GateResponse::Approve,
+            "revise" => GateResponse::Revise {
+                feedback: params.content.unwrap_or_default(),
+            },
+            "cancel" => GateResponse::Cancel,
+            "retry" => GateResponse::Retry,
+            other => {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "Invalid response_type '{}'. Must be one of: approve, revise, cancel, retry",
+                        other
+                    ),
+                    None,
+                ));
+            }
+        };
 
+        // Verify the session exists
         let handle = self.registry.get(id).ok_or_else(|| {
             McpError::invalid_params(format!("Session not found: {id}"), None)
         })?;
 
-        let session = handle.lock().await;
-        let state = session.session_state();
+        // Read current state for the response (short lock)
+        let current_state = {
+            let session = handle.lock().await;
+            format!("{:?}", session.session_state())
+        };
 
-        info!(
-            session_id = %id,
-            response_type = %params.response_type,
-            has_content = params.content.is_some(),
-            "Received gate response (transitions not yet wired)"
-        );
+        // Send the response through the gate channel
+        let sent = match self.gate_channels.remove(&id) {
+            Some((_, tx)) => {
+                let response_type_str = params.response_type.clone();
+                match tx.send(gate_response) {
+                    Ok(()) => {
+                        info!(
+                            session_id = %id,
+                            response_type = %response_type_str,
+                            "gate response sent to session loop"
+                        );
+                        true
+                    }
+                    Err(_) => {
+                        info!(
+                            session_id = %id,
+                            response_type = %response_type_str,
+                            "gate channel receiver dropped (session may have ended)"
+                        );
+                        false
+                    }
+                }
+            }
+            None => {
+                info!(
+                    session_id = %id,
+                    response_type = %params.response_type,
+                    "no gate channel found (session not waiting at a gate)"
+                );
+                false
+            }
+        };
 
         let json = serde_json::json!({
-            "session_id": session.id.to_string(),
-            "acknowledged": true,
+            "session_id": id.to_string(),
+            "acknowledged": sent,
             "response_type": params.response_type,
-            "current_state": format!("{:?}", state),
-            "note": "State transitions will be wired in Phase 7",
+            "current_state": current_state,
         });
 
         Ok(CallToolResult::success(vec![Content::text(

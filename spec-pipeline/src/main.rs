@@ -6,7 +6,11 @@ use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use spec_pipeline_mcp::config::Config;
+use spec_pipeline_mcp::phase_runner::GateChannelMap;
+use spec_pipeline_mcp::prompts::PromptStore;
+use spec_pipeline_mcp::runner::ClaudeRunner;
 use spec_pipeline_mcp::session::{SessionRegistry, SessionStore};
+use spec_pipeline_mcp::workflow::types::ModelConfig;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -106,7 +110,24 @@ async fn main() -> anyhow::Result<()> {
             let store = SessionStore::new(state_dir.clone())?;
             let registry = Arc::new(SessionRegistry::new(store)?);
 
-            let server = McpServer::new(registry);
+            let runner = Arc::new(
+                ClaudeRunner::new(config.rag_mcp_config.clone())
+                    .map_err(|e| anyhow::anyhow!("Failed to create ClaudeRunner: {e}"))?,
+            );
+            let prompts = Arc::new(
+                PromptStore::new()
+                    .map_err(|e| anyhow::anyhow!("Failed to create PromptStore: {e}"))?,
+            );
+            let gate_channels = Arc::new(GateChannelMap::default());
+            let model_config = ModelConfig::default();
+
+            let server = McpServer::new(
+                registry,
+                runner,
+                gate_channels,
+                model_config,
+                prompts,
+            );
 
             tracing::info!("MCP server ready; listening on stdio");
 
