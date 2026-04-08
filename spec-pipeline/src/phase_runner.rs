@@ -6,9 +6,11 @@ use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use tokio::sync::mpsc;
+
 use crate::notifier::{SessionEvent, SessionNotifier, progress_for};
 use crate::prompts::PromptStore;
-use crate::runner::{ClaudeRunner, PhaseContext, RawPhaseOutput, RunnerError};
+use crate::runner::{ChildEvent, ClaudeRunner, PhaseContext, RawPhaseOutput, RunnerError};
 use crate::session::SessionRegistry;
 use crate::workflow::brainstorm::{BrainstormState, DiscoveryPhase};
 use crate::workflow::epic::EpicState;
@@ -417,7 +419,7 @@ async fn run_phase_and_process(
             .await;
     }
 
-    // Run the phase (no lock held)
+    // Run the phase (no lock held), forwarding child events as notifications.
     info!(
         %session_id,
         phase = %setup.context.phase,
@@ -425,9 +427,25 @@ async fn run_phase_and_process(
         "running phase"
     );
 
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ChildEvent>();
+
+    // Spawn a task to forward child events to the MCP client.
+    let fwd_notifier = notifier.clone();
+    let fwd_phase = setup.context.phase.clone();
+    let fwd_handle = tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            fwd_notifier
+                .notify_child_event(session_id, &fwd_phase, &event.message)
+                .await;
+        }
+    });
+
     let result = runner
-        .run_phase(&setup.context, &setup.model, &prompt_path)
+        .run_phase(&setup.context, &setup.model, &prompt_path, Some(event_tx))
         .await;
+
+    // Drop sender is implicit (run_phase consumed it), wait for forwarder to drain.
+    let _ = fwd_handle.await;
 
     // Process result
     match result {

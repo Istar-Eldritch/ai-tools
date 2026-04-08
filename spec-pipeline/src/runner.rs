@@ -3,7 +3,8 @@ use std::process::Stdio;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,9 @@ pub enum RunnerError {
         source: serde_json::Error,
     },
 
+    #[error("no result event found in stream-json output")]
+    MissingResult,
+
     #[error("failed to spawn claude subprocess: {0}")]
     SpawnFailed(#[source] std::io::Error),
 
@@ -43,7 +47,7 @@ pub enum RunnerError {
 }
 
 // ---------------------------------------------------------------------------
-// Claude envelope (the JSON wrapper `claude -p --output-format json` emits)
+// Claude envelope (parsed from the stream-json "result" event)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -119,6 +123,16 @@ pub struct PhaseRunResult {
 }
 
 // ---------------------------------------------------------------------------
+// Child event — forwarded to the caller for progress reporting
+// ---------------------------------------------------------------------------
+
+/// An event from the child claude subprocess that callers can observe.
+#[derive(Debug, Clone)]
+pub struct ChildEvent {
+    pub message: String,
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -126,9 +140,12 @@ pub struct PhaseRunResult {
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
 pub struct ClaudeRunner {
-    /// Optional path to the RAG MCP server config JSON file.
-    rag_mcp_config: Option<PathBuf>,
-    /// Temp directory that keeps the schema file alive.
+    /// Path to the MCP config JSON file passed to `claude -p`.
+    /// Always set — contains the RAG server config when available, otherwise
+    /// an empty `{"mcpServers":{}}` to prevent Claude from loading the
+    /// user's default MCP servers (which would recursively spawn this server).
+    mcp_config: PathBuf,
+    /// Temp directory that keeps the schema and MCP config files alive.
     _schema_dir: tempfile::TempDir,
     /// Path to the generated JSON schema for RawPhaseOutput.
     phase_output_schema: PathBuf,
@@ -150,19 +167,36 @@ impl ClaudeRunner {
 
         debug!(path = %schema_path.display(), "wrote phase output JSON schema");
 
+        // Resolve the MCP config path. If a RAG config was provided, use it.
+        // Otherwise write an empty config so `claude -p` won't load the user's
+        // default MCP servers (which include *this* server → infinite recursion).
+        let mcp_config = match rag_mcp_config {
+            Some(path) => path,
+            None => {
+                let empty_path = schema_dir.path().join("empty_mcp_config.json");
+                std::fs::write(&empty_path, r#"{"mcpServers":{}}"#)
+                    .map_err(RunnerError::SpawnFailed)?;
+                empty_path
+            }
+        };
+
         Ok(Self {
-            rag_mcp_config,
+            mcp_config,
             _schema_dir: schema_dir,
             phase_output_schema: schema_path,
         })
     }
 
     /// Run a single phase by invoking `claude -p` as a subprocess.
+    ///
+    /// If `event_tx` is provided, child agent events (tool calls, etc.) are
+    /// streamed through the channel as they happen.
     pub async fn run_phase(
         &self,
         context: &PhaseContext,
         model: &str,
         system_prompt: &Path,
+        event_tx: Option<mpsc::UnboundedSender<ChildEvent>>,
     ) -> Result<PhaseRunResult, RunnerError> {
         let context_json =
             serde_json::to_string_pretty(context).map_err(RunnerError::SerializeFailed)?;
@@ -170,9 +204,11 @@ impl ClaudeRunner {
         let mut cmd = tokio::process::Command::new("claude");
         cmd.arg("-p")
             .arg("--bare")
+            .arg("--dangerously-skip-permissions")
             .arg("--no-session-persistence")
             .arg("--output-format")
-            .arg("json")
+            .arg("stream-json")
+            .arg("--verbose")
             .arg("--json-schema")
             .arg(&self.phase_output_schema)
             .arg("--model")
@@ -182,12 +218,13 @@ impl ClaudeRunner {
             .arg("--max-turns")
             .arg("50");
 
-        // If a RAG MCP config is available, pass it with strict mode.
-        if let Some(ref mcp_config) = self.rag_mcp_config {
-            cmd.arg("--mcp-config")
-                .arg(mcp_config)
-                .arg("--strict-mcp-config");
-        }
+        // Always pass --mcp-config with --strict-mcp-config to prevent
+        // Claude from loading default MCP servers (which would recursively
+        // spawn this server). The config is either the RAG server config or
+        // an empty config written at construction time.
+        cmd.arg("--mcp-config")
+            .arg(&self.mcp_config)
+            .arg("--strict-mcp-config");
 
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -210,38 +247,103 @@ impl ClaudeRunner {
             // Drop to close stdin so claude reads EOF.
         }
 
-        // Wait with timeout.
-        let output = tokio::time::timeout(
+        // Take stdout for line-by-line streaming.
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let mut lines = BufReader::new(stdout).lines();
+
+        // Collect stderr in the background for error reporting.
+        let stderr_handle = {
+            let stderr = child.stderr.take().expect("stderr was piped");
+            tokio::spawn(async move {
+                let mut buf = String::new();
+                let mut reader = BufReader::new(stderr);
+                reader.read_to_string(&mut buf).await.ok();
+                buf
+            })
+        };
+
+        // Read stdout lines, forwarding events and capturing the result.
+        let mut result_event: Option<ClaudeEnvelope> = None;
+
+        let stream_result = tokio::time::timeout(
             std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS),
-            child.wait_with_output(),
+            async {
+                while let Some(line) = lines
+                    .next_line()
+                    .await
+                    .map_err(RunnerError::SpawnFailed)?
+                {
+                    let v: serde_json::Value = match serde_json::from_str(&line) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            debug!(error = %e, "skipping non-JSON line from child");
+                            continue;
+                        }
+                    };
+
+                    let event_type = v
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+
+                    match event_type {
+                        "assistant" => {
+                            extract_and_send_events(&v, &event_tx);
+                        }
+                        "result" => {
+                            result_event = Some(ClaudeEnvelope {
+                                result: v
+                                    .get("result")
+                                    .and_then(|r| r.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                total_cost_usd: v
+                                    .get("total_cost_usd")
+                                    .and_then(|c| c.as_f64())
+                                    .unwrap_or(0.0),
+                                stop_reason: v
+                                    .get("stop_reason")
+                                    .and_then(|s| s.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                num_turns: v
+                                    .get("num_turns")
+                                    .and_then(|n| n.as_u64())
+                                    .unwrap_or(0)
+                                    as u32,
+                            });
+                        }
+                        _ => {} // skip system, rate_limit_event, etc.
+                    }
+                }
+                Ok::<(), RunnerError>(())
+            },
         )
-        .await
-        .map_err(|_| RunnerError::Timeout {
-            timeout_secs: DEFAULT_TIMEOUT_SECS,
-        })?
-        .map_err(|e| RunnerError::SpawnFailed(e))?;
+        .await;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        match stream_result {
+            Err(_) => return Err(RunnerError::Timeout { timeout_secs: DEFAULT_TIMEOUT_SECS }),
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(())) => {}
+        }
 
-        if !output.status.success() {
+        // Wait for child to exit.
+        let status = child.wait().await.map_err(RunnerError::SpawnFailed)?;
+        let stderr = stderr_handle.await.unwrap_or_default();
+
+        if !status.success() {
             warn!(
-                exit_code = output.status.code(),
+                exit_code = status.code(),
                 stderr = %stderr,
                 "claude subprocess exited with non-zero status"
             );
             return Err(RunnerError::SubprocessFailed {
-                exit_code: output.status.code(),
+                exit_code: status.code(),
                 stderr,
             });
         }
 
-        // Parse the envelope.
-        let envelope: ClaudeEnvelope =
-            serde_json::from_str(&stdout).map_err(|e| RunnerError::InvalidEnvelope {
-                raw_stdout: stdout.clone(),
-                source: e,
-            })?;
+        let envelope = result_event.ok_or(RunnerError::MissingResult)?;
 
         info!(
             cost_usd = envelope.total_cost_usd,
@@ -266,5 +368,92 @@ impl ClaudeRunner {
             stop_reason: envelope.stop_reason,
             num_turns: envelope.num_turns,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stream-json event helpers
+// ---------------------------------------------------------------------------
+
+/// Extract tool_use events from an assistant message and send them.
+fn extract_and_send_events(
+    v: &serde_json::Value,
+    event_tx: &Option<mpsc::UnboundedSender<ChildEvent>>,
+) {
+    let tx = match event_tx {
+        Some(tx) => tx,
+        None => return,
+    };
+
+    let content = match v.pointer("/message/content").and_then(|c| c.as_array()) {
+        Some(arr) => arr,
+        None => return,
+    };
+
+    for block in content {
+        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if block_type == "tool_use" {
+            let name = block
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            let input = block.get("input").cloned().unwrap_or_default();
+            let summary = summarize_tool_input(name, &input);
+            let msg = if summary.is_empty() {
+                format!("tool: {name}")
+            } else {
+                format!("tool: {name} {summary}")
+            };
+            let _ = tx.send(ChildEvent { message: msg });
+        }
+    }
+}
+
+/// Build a short human-readable summary of a tool's input.
+fn summarize_tool_input(tool_name: &str, input: &serde_json::Value) -> String {
+    match tool_name {
+        "Read" => input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "Edit" | "Write" => input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "Grep" => {
+            let pattern = input.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+            let path = input.get("path").and_then(|v| v.as_str());
+            match path {
+                Some(p) => format!("\"{pattern}\" in {p}"),
+                None => format!("\"{pattern}\""),
+            }
+        }
+        "Glob" => input
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "Bash" => {
+            let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            truncate(cmd, 80)
+        }
+        _ => {
+            // For unknown tools, show first string value (truncated)
+            input
+                .as_object()
+                .and_then(|obj| obj.values().find_map(|v| v.as_str()))
+                .map(|s| truncate(s, 80))
+                .unwrap_or_default()
+        }
+    }
+}
+
+fn truncate(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len])
     }
 }

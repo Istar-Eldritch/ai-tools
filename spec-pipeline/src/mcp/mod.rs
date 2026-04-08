@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use rmcp::{
     ErrorData as McpError, ServerHandler,
@@ -11,6 +12,7 @@ use rmcp::{
     service::{RoleServer, RequestContext},
 };
 use serde::Deserialize;
+use tokio::sync::watch;
 use tracing::info;
 use uuid::Uuid;
 
@@ -20,7 +22,8 @@ use spec_pipeline_mcp::prompts::PromptStore;
 use spec_pipeline_mcp::runner::ClaudeRunner;
 use spec_pipeline_mcp::session::SessionRegistry;
 use spec_pipeline_mcp::workflow::{
-    BrainstormState, EpicState, GateResponse, ModelConfig, SpecState, WorkflowState, WorkflowType,
+    BrainstormState, EpicState, GateResponse, ModelConfig, SessionState, SpecState, WorkflowState,
+    WorkflowType,
 };
 use spec_pipeline_mcp::workflow::brainstorm::DiscoveryPhase;
 
@@ -112,7 +115,7 @@ impl McpServer {
 #[tool_router]
 impl McpServer {
     #[tool(
-        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, or epic) and topic. Returns the session ID and initial status."
+        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, or epic) and topic. Blocks until the session reaches a gate requiring user input, completes, or errors. Returns the full session state including any gate content."
     )]
     async fn spec_start(
         &self,
@@ -141,6 +144,9 @@ impl McpServer {
                 params.model,
             )
             .map_err(anyhow_to_mcp)?;
+
+        // Create watch channel before spawning so we don't miss state transitions.
+        let rx = self.notifier.create_watch(session_id);
 
         // Spawn the async workflow loop for the appropriate workflow type.
         {
@@ -196,14 +202,8 @@ impl McpServer {
             }
         }
 
-        let json = serde_json::json!({
-            "session_id": session_id.to_string(),
-            "status": "running",
-        });
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&json).map_err(|e| serialization_error(e))?,
-        )]))
+        // Block until the session reaches a non-Running state.
+        await_state_change(rx, session_id, &self.registry, &self.notifier).await
     }
 
     #[tool(
@@ -243,7 +243,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate."
+        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate. Blocks until the session reaches the next gate, completes, or errors. Returns the full session state including any gate content."
     )]
     async fn spec_respond(
         &self,
@@ -275,11 +275,25 @@ impl McpServer {
             McpError::invalid_params(format!("Session not found: {id}"), None)
         })?;
 
-        // Read current state for the response (short lock)
-        let current_state = {
+        // Verify the session is actually at a gate
+        {
             let session = handle.lock().await;
-            format!("{:?}", session.session_state())
-        };
+            let state = session.session_state();
+            if !matches!(state, SessionState::WaitingAtGate | SessionState::ErrorGate) {
+                return Err(McpError::invalid_params(
+                    format!("Session {id} is not at a gate (state: {state:?})"),
+                    None,
+                ));
+            }
+        }
+
+        // Subscribe to watch channel before sending gate response to avoid race.
+        let rx = self.notifier.subscribe(id).ok_or_else(|| {
+            McpError::internal_error(
+                format!("No watch channel for session {id}"),
+                None,
+            )
+        })?;
 
         // Send the response through the gate channel
         let sent = match self.gate_channels.remove(&id) {
@@ -314,16 +328,18 @@ impl McpServer {
             }
         };
 
-        let json = serde_json::json!({
-            "session_id": id.to_string(),
-            "acknowledged": sent,
-            "response_type": params.response_type,
-            "current_state": current_state,
-        });
+        if !sent {
+            // Gate response couldn't be delivered — return immediately with current state.
+            return build_session_snapshot(id, &self.registry).await;
+        }
 
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&json).map_err(|e| serialization_error(e))?,
-        )]))
+        // For terminal responses (cancel), return immediately.
+        if params.response_type == "cancel" {
+            return build_session_snapshot(id, &self.registry).await;
+        }
+
+        // Block until the session reaches the next non-Running state.
+        await_state_change(rx, id, &self.registry, &self.notifier).await
     }
 
     #[tool(
@@ -445,4 +461,76 @@ fn anyhow_to_mcp(e: anyhow::Error) -> McpError {
 /// Create an McpError for serialization failures.
 fn serialization_error(e: serde_json::Error) -> McpError {
     McpError::internal_error(format!("serialization error: {e}"), None)
+}
+
+/// Keepalive interval for blocking tool calls.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Block until the session transitions to a non-Running state, sending keepalive
+/// progress notifications every 15 seconds to prevent client timeouts.
+async fn await_state_change(
+    mut rx: watch::Receiver<SessionState>,
+    session_id: Uuid,
+    registry: &Arc<SessionRegistry>,
+    notifier: &SessionNotifier,
+) -> Result<CallToolResult, McpError> {
+    loop {
+        tokio::select! {
+            result = rx.changed() => {
+                match result {
+                    Ok(()) => {
+                        let state = *rx.borrow();
+                        if state != SessionState::Running {
+                            return build_session_snapshot(session_id, registry).await;
+                        }
+                        // Still running — continue waiting.
+                    }
+                    Err(_) => {
+                        // Watch channel closed (session loop ended without signaling).
+                        return build_session_snapshot(session_id, registry).await;
+                    }
+                }
+            }
+            _ = tokio::time::sleep(KEEPALIVE_INTERVAL) => {
+                notifier.send_keepalive(
+                    session_id,
+                    "working…",
+                    0.0,
+                    1.0,
+                ).await;
+            }
+        }
+    }
+}
+
+/// Read the full session state from the registry and return it as a CallToolResult.
+async fn build_session_snapshot(
+    session_id: Uuid,
+    registry: &Arc<SessionRegistry>,
+) -> Result<CallToolResult, McpError> {
+    let handle = registry.get(session_id).ok_or_else(|| {
+        McpError::internal_error(format!("Session {session_id} vanished"), None)
+    })?;
+
+    let session = handle.lock().await;
+    let state = session.session_state();
+
+    let json = serde_json::json!({
+        "session_id": session.id.to_string(),
+        "topic": session.topic,
+        "workflow_type": session.workflow_state.workflow_type().to_string(),
+        "session_state": format!("{:?}", state),
+        "phase": session.workflow_state.phase_name(),
+        "sub_phase": session.workflow_state.sub_phase_name(),
+        "context_refs": session.context_refs,
+        "model_override": session.model_override,
+        "total_cost_usd": session.total_cost_usd,
+        "gate_content": session.workflow_state.gate_content(),
+        "created_at": session.created_at.to_rfc3339(),
+        "updated_at": session.updated_at.to_rfc3339(),
+    });
+
+    Ok(CallToolResult::success(vec![Content::text(
+        serde_json::to_string_pretty(&json).map_err(|e| serialization_error(e))?,
+    )]))
 }

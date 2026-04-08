@@ -31,8 +31,23 @@ pub async fn validate_claude_cli() -> Result<String> {
 
 /// Run a minimal `claude -p` probe to verify credentials are valid.
 pub async fn validate_claude_credentials() -> Result<()> {
+    // Write a temporary empty MCP config so that `claude -p` does not load
+    // the user's default MCP servers.  Without this, Claude would try to
+    // start *this* MCP server, creating an infinite recursion of processes.
+    let tmp = tempfile::NamedTempFile::new()
+        .context("failed to create temp file for empty MCP config")?;
+    std::fs::write(tmp.path(), r#"{"mcpServers":{}}"#)
+        .context("failed to write empty MCP config")?;
+
     let output = Command::new("claude")
-        .args(["-p", "say ok", "--output-format", "json", "--max-turns", "1"])
+        .args([
+            "-p", "say ok",
+            "--output-format", "json",
+            "--max-turns", "1",
+            "--mcp-config",
+        ])
+        .arg(tmp.path())
+        .arg("--strict-mcp-config")
         .output()
         .await
         .context(
