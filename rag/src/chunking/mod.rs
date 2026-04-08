@@ -21,12 +21,18 @@ impl CodeLanguage {
 }
 
 pub fn detect_language(filename: &str) -> Option<CodeLanguage> {
-    let ext = filename.rsplit('.').next()?;
+    // Find the last dot that is not at position 0 (hidden files like ".rs" have no real extension).
+    let dot_pos = filename.rfind('.')?;
+    if dot_pos == 0 {
+        return None;
+    }
+    let ext = &filename[dot_pos + 1..];
     match ext {
         "rs" => Some(CodeLanguage::Rust),
         "py" => Some(CodeLanguage::Python),
         "ts" | "tsx" => Some(CodeLanguage::TypeScript),
         "java" => Some(CodeLanguage::Java),
+        // ".js" is intentionally not mapped — JavaScript support is out of scope per spec.
         _ => None,
     }
 }
@@ -255,6 +261,34 @@ mod tests {
 
     #[test]
     fn detect_language_dot_only_extension() {
-        assert_eq!(detect_language(".rs"), Some(CodeLanguage::Rust));
+        // ".rs" is a hidden file with no real extension — must return None.
+        assert_eq!(detect_language(".rs"), None);
+    }
+
+    // --- ts_language() smoke tests ---
+    // Each variant must produce a valid tree-sitter Language (node_kind_count > 0).
+
+    #[test]
+    fn ts_language_rust_is_valid() {
+        let lang = CodeLanguage::Rust.ts_language();
+        assert!(lang.node_kind_count() > 0);
+    }
+
+    #[test]
+    fn ts_language_python_is_valid() {
+        let lang = CodeLanguage::Python.ts_language();
+        assert!(lang.node_kind_count() > 0);
+    }
+
+    #[test]
+    fn ts_language_typescript_is_valid() {
+        let lang = CodeLanguage::TypeScript.ts_language();
+        assert!(lang.node_kind_count() > 0);
+    }
+
+    #[test]
+    fn ts_language_java_is_valid() {
+        let lang = CodeLanguage::Java.ts_language();
+        assert!(lang.node_kind_count() > 0);
     }
 }
