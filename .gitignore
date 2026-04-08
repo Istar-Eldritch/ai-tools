@@ -1,3 +1,5 @@
 .pi/spec-pipeline
 /node_modules
 */target
+rag/.fastembed_cache/
+rag/.mcp.json
