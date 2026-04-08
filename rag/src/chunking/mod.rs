@@ -784,4 +784,197 @@ impl Foo {
         // Also has a function chunk
         assert!(chunks.iter().any(|c| c.node_type == "function_item"));
     }
+
+    // --- TypeScript chunk_code tests ---
+
+    #[test]
+    fn chunk_code_ts_import_preamble() {
+        let source = r#"import { foo } from "foo";
+import { bar } from "bar";
+
+function greet() {
+    console.log("hello");
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
+        assert!(!chunks.is_empty());
+        assert_eq!(chunks[0].node_type, "preamble");
+        assert!(chunks[0].content.contains("import { foo }"));
+        assert!(chunks[0].content.contains("import { bar }"));
+    }
+
+    #[test]
+    fn chunk_code_ts_function_extraction() {
+        let source = r#"function add(a: number, b: number): number {
+    return a + b;
+}
+
+function subtract(a: number, b: number): number {
+    return a - b;
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "function_declaration");
+        assert!(chunks[0].content.contains("function add"));
+        assert_eq!(chunks[0].start_line, 1);
+        assert_eq!(chunks[0].end_line, 3);
+        assert_eq!(chunks[1].node_type, "function_declaration");
+        assert!(chunks[1].content.contains("function subtract"));
+        assert_eq!(chunks[1].start_line, 5);
+        assert_eq!(chunks[1].end_line, 7);
+    }
+
+    #[test]
+    fn chunk_code_ts_class_expansion() {
+        let source = r#"class Calculator {
+    add(a: number, b: number): number {
+        return a + b;
+    }
+
+    multiply(a: number, b: number): number {
+        return a * b;
+    }
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
+        // class is a container → 2 method chunks
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "method_definition");
+        assert!(chunks[0].context.is_some());
+        assert!(chunks[0].context.as_ref().unwrap().contains("class Calculator {"));
+        assert!(chunks[0].content.contains("add(a: number"));
+        assert_eq!(chunks[1].node_type, "method_definition");
+        assert!(chunks[1].context.is_some());
+        assert!(chunks[1].context.as_ref().unwrap().contains("class Calculator {"));
+        assert!(chunks[1].content.contains("multiply(a: number"));
+    }
+
+    #[test]
+    fn chunk_code_ts_interface_extraction() {
+        let source = r#"interface User {
+    name: string;
+    age: number;
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].node_type, "interface_declaration");
+        assert!(chunks[0].content.contains("interface User"));
+        assert!(chunks[0].content.contains("name: string"));
+        assert!(chunks[0].content.contains("age: number"));
+    }
+
+    #[test]
+    fn chunk_code_ts_export_statement() {
+        let source = r#"export function greet(name: string): string {
+    return `Hello, ${name}`;
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].node_type, "export_statement");
+        assert!(chunks[0].content.contains("export function greet"));
+    }
+
+    // --- Java chunk_code tests ---
+
+    #[test]
+    fn chunk_code_java_package_import_preamble() {
+        let source = r#"package com.example.app;
+
+import java.util.List;
+import java.util.Map;
+
+public class App {
+    public static void main(String[] args) {
+        System.out.println("hello");
+    }
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Java, &config);
+        assert!(!chunks.is_empty());
+        assert_eq!(chunks[0].node_type, "preamble");
+        assert!(chunks[0].content.contains("package com.example.app"));
+        assert!(chunks[0].content.contains("import java.util.List"));
+        assert!(chunks[0].content.contains("import java.util.Map"));
+    }
+
+    #[test]
+    fn chunk_code_java_class_with_methods() {
+        let source = r#"public class Calculator {
+    public int add(int a, int b) {
+        return a + b;
+    }
+
+    public int multiply(int a, int b) {
+        return a * b;
+    }
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Java, &config);
+        // class is a container → 2 method chunks
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "method_declaration");
+        assert!(chunks[0].context.is_some());
+        assert!(chunks[0].context.as_ref().unwrap().contains("public class Calculator {"));
+        assert!(chunks[0].content.contains("public int add"));
+        assert_eq!(chunks[1].node_type, "method_declaration");
+        assert!(chunks[1].context.is_some());
+        assert!(chunks[1].context.as_ref().unwrap().contains("public class Calculator {"));
+        assert!(chunks[1].content.contains("public int multiply"));
+    }
+
+    #[test]
+    fn chunk_code_java_interface_extraction() {
+        let source = r#"public interface Repository {
+    void save(Object entity);
+
+    Object findById(int id);
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Java, &config);
+        // interface is a container in Java → expands into method_declaration chunks
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "method_declaration");
+        assert!(chunks[0].context.is_some());
+        assert!(chunks[0].context.as_ref().unwrap().contains("public interface Repository {"));
+        assert!(chunks[0].content.contains("void save"));
+        assert_eq!(chunks[1].node_type, "method_declaration");
+        assert!(chunks[1].context.is_some());
+        assert!(chunks[1].content.contains("Object findById"));
+    }
+
 }
