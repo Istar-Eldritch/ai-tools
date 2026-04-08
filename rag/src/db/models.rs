@@ -42,7 +42,7 @@ pub struct SearchResult {
     pub source_project: Option<String>,
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, FromRow, Serialize)]
 pub struct SourceSummary {
     pub id: Uuid,
     pub filename: String,
