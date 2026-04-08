@@ -168,21 +168,24 @@ impl ClaudeRunner {
 
         let mut cmd = tokio::process::Command::new("claude");
         cmd.arg("-p")
+            .arg("--bare")
+            .arg("--no-session-persistence")
             .arg("--output-format")
             .arg("json")
+            .arg("--json-schema")
+            .arg(&self.phase_output_schema)
             .arg("--model")
             .arg(model)
-            .arg("--system-prompt")
+            .arg("--system-prompt-file")
             .arg(system_prompt)
-            .arg("--output-schema")
-            .arg(&self.phase_output_schema)
             .arg("--max-turns")
-            .arg("50")
-            .arg("--no-tool-confirmation");
+            .arg("50");
 
-        // If a RAG MCP config is available, pass it.
+        // If a RAG MCP config is available, pass it with strict mode.
         if let Some(ref mcp_config) = self.rag_mcp_config {
-            cmd.arg("--mcp-config").arg(mcp_config);
+            cmd.arg("--mcp-config")
+                .arg(mcp_config)
+                .arg("--strict-mcp-config");
         }
 
         cmd.stdin(Stdio::piped())
