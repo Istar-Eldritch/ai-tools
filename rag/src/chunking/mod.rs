@@ -254,6 +254,7 @@ fn process_node(
     language: CodeLanguage,
     config: &ChunkConfig,
     context: Option<&str>,
+    prefix: Option<&str>,
     chunks: &mut Vec<CodeChunk>,
 ) {
     let kind = node.kind();
@@ -278,16 +279,32 @@ fn process_node(
         if has_extractable {
             let body = body_opt.unwrap();
             let mut cursor = body.walk();
+            let mut first = true;
             for child in body.children(&mut cursor) {
                 if is_extractable_node(child.kind(), language) {
-                    process_node(
-                        &child,
-                        source,
-                        language,
-                        config,
-                        Some(&sig),
-                        chunks,
-                    );
+                    if first && prefix.is_some() {
+                        process_node(
+                            &child,
+                            source,
+                            language,
+                            config,
+                            Some(&sig),
+                            prefix,
+                            chunks,
+                        );
+                        first = false;
+                    } else {
+                        process_node(
+                            &child,
+                            source,
+                            language,
+                            config,
+                            Some(&sig),
+                            None,
+                            chunks,
+                        );
+                        first = false;
+                    }
                 }
             }
             return;
@@ -295,10 +312,12 @@ fn process_node(
         // No extractable children → emit as single chunk (fall through)
     }
 
-    // Build content with optional context prefix
-    let content = match context {
-        Some(ctx) => format!("{}\n{}", ctx, node_text),
-        None => node_text.to_string(),
+    // Build content with optional context prefix and optional merge-buffer prefix
+    let content = match (context, prefix) {
+        (Some(ctx), Some(pfx)) => format!("{}\n{}\n{}", ctx, pfx, node_text),
+        (None, Some(pfx)) => format!("{}\n{}", pfx, node_text),
+        (Some(ctx), None) => format!("{}\n{}", ctx, node_text),
+        (None, None) => node_text.to_string(),
     };
 
     // R8 – Oversized leaf: split via chunk_text with overlap=0
@@ -339,6 +358,69 @@ fn process_node(
         node_type: kind.to_string(),
         context: context.map(|s| s.to_string()),
     });
+}
+
+struct MergeBuffer {
+    text: String,
+    start_line: usize,
+    end_line: usize,
+}
+
+impl MergeBuffer {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            start_line: 0,
+            end_line: 0,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    fn push(&mut self, text: &str, start_line: usize, end_line: usize) {
+        if self.text.is_empty() {
+            self.start_line = start_line;
+        } else {
+            self.text.push('\n');
+        }
+        self.text.push_str(text);
+        self.end_line = end_line;
+    }
+
+    fn drain(&mut self) -> (String, usize, usize) {
+        let text = std::mem::take(&mut self.text);
+        let sl = self.start_line;
+        let el = self.end_line;
+        self.start_line = 0;
+        self.end_line = 0;
+        (text, sl, el)
+    }
+
+    fn flush(&mut self, context: Option<&str>, chunks: &mut Vec<CodeChunk>) {
+        if self.is_empty() {
+            return;
+        }
+        let (text, start_line, end_line) = self.drain();
+        let content = match context {
+            Some(ctx) => format!("{}\n{}", ctx, text),
+            None => text,
+        };
+        let idx = chunks.len();
+        chunks.push(CodeChunk {
+            index: idx,
+            content,
+            start_line,
+            end_line,
+            node_type: "non_extractable".to_string(),
+            context: context.map(|s| s.to_string()),
+        });
+    }
 }
 
 /// Parse and chunk source code using tree-sitter for structure-aware splitting.
@@ -414,10 +496,44 @@ pub fn chunk_code(source: &str, language: CodeLanguage, config: &ChunkConfig) ->
         }
     }
 
-    // R6/R7/R8 – Process remaining top-level nodes
+    // R6/R7/R8 – Process remaining top-level nodes with forward-merge buffer
+    let mut merge_buf = MergeBuffer::new();
+
     for node in &top_level[preamble_end..] {
-        process_node(node, source, language, config, None, &mut chunks);
+        let kind = node.kind();
+        let is_ext = is_extractable_node(kind, language);
+        let is_cont = is_container_node(kind, language);
+
+        if !is_ext && !is_cont {
+            // R1.1: accumulate in merge buffer
+            let node_text = &source[node.byte_range()];
+            let start_line = node.start_position().row + 1;
+            let end_line = node.end_position().row + 1;
+            merge_buf.push(node_text, start_line, end_line);
+            continue;
+        }
+
+        // Extractable or container node
+        let prefix = if !merge_buf.is_empty() {
+            let node_text = &source[node.byte_range()];
+            if merge_buf.len() + 1 + node_text.len() > config.chunk_size {
+                // R1.3: overflow → flush buffer standalone
+                merge_buf.flush(None, &mut chunks);
+                None
+            } else {
+                // R1.2: prepend buffer to this chunk
+                let (pfx, _, _) = merge_buf.drain();
+                Some(pfx)
+            }
+        } else {
+            None
+        };
+
+        process_node(node, source, language, config, None, prefix.as_deref(), &mut chunks);
     }
+
+    // R1.4: flush remaining buffer
+    merge_buf.flush(None, &mut chunks);
 
     // Fix up indices to be contiguous
     for (i, chunk) in chunks.iter_mut().enumerate() {
@@ -1015,6 +1131,97 @@ public class App {
         assert_eq!(chunks[1].node_type, "method_declaration");
         assert!(chunks[1].context.is_some());
         assert!(chunks[1].content.contains("Object findById"));
+    }
+
+    // --- Phase 2: Forward-merge non-extractable node tests ---
+
+    #[test]
+    fn chunk_code_non_extractable_merged_into_next() {
+        // A top-level comment before a function gets merged into the function's content.
+        let source = r#"// this is a comment
+fn foo() -> i32 {
+    42
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        // The comment should be merged into the function chunk, not standalone.
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].node_type, "function_item");
+        assert!(chunks[0].content.contains("// this is a comment"));
+        assert!(chunks[0].content.contains("fn foo()"));
+    }
+
+    #[test]
+    fn chunk_code_non_extractable_overflow_flush() {
+        // Buffer + next node > chunk_size causes standalone flush of the buffer.
+        // Comment is ~103 chars, function is ~19 chars, combined ~123 > chunk_size of 100.
+        let long_comment = format!("// {}", "x".repeat(100));
+        let source = format!(
+            "{}\nfn foo() {{\n    42\n}}",
+            long_comment
+        );
+        let config = ChunkConfig {
+            chunk_size: 100,
+            overlap: 0,
+            min_chunk_size: 0,
+        };
+        let chunks = chunk_code(&source, CodeLanguage::Rust, &config);
+        // The comment should be flushed standalone because combined would exceed chunk_size.
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks[0].node_type, "non_extractable");
+        assert!(chunks[0].content.contains(&"x".repeat(50)));
+        // The function chunk follows (may be split if oversized, but first non-text chunk is function).
+        let fn_chunk = chunks.iter().find(|c| c.node_type == "function_item");
+        assert!(fn_chunk.is_some());
+    }
+
+    #[test]
+    fn chunk_code_non_extractable_eof_flush() {
+        // Non-extractable at end of file flushes standalone.
+        let source = r#"fn foo() -> i32 {
+    42
+}
+
+// trailing comment
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].node_type, "function_item");
+        assert_eq!(chunks[1].node_type, "non_extractable");
+        assert!(chunks[1].content.contains("// trailing comment"));
+    }
+
+    #[test]
+    fn chunk_code_non_extractable_content_layout() {
+        // Verifies R3.1: when merged, content is prefix\nnode_text (no context at top-level).
+        let source = r#"// header comment
+fn bar() {
+    1
+}
+"#;
+        let config = ChunkConfig {
+            chunk_size: 2048,
+            overlap: 0,
+            min_chunk_size: 0,
+        };
+        let chunks = chunk_code(source, CodeLanguage::Rust, &config);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].node_type, "function_item");
+        // Content should start with the comment, then a newline, then the function.
+        let content = &chunks[0].content;
+        assert!(content.starts_with("// header comment\nfn bar()"));
+        // context should be None since this is a top-level node (no container).
+        assert!(chunks[0].context.is_none());
     }
 
 }
