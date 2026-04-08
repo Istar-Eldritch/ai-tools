@@ -77,8 +77,9 @@ impl SearchPipeline {
             .map_err(|e| AppError::Internal(format!("embedding task panicked: {e}")))?
             ?;
 
-        // Fetch extra candidates to allow for dedup filtering
-        let fetch_k = k.saturating_mul(self.dedup_candidate_factor).min(100);
+        // Fetch extra candidates to allow for dedup filtering.
+        // Cap at 300 (3x the max k of 100) to bound DB work.
+        let fetch_k = k.saturating_mul(self.dedup_candidate_factor).min(300);
         let candidates = queries::search_chunks(
             &self.pool,
             &query_vector,
