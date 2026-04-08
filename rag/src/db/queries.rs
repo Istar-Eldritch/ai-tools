@@ -183,6 +183,41 @@ pub async fn update_source_metadata(
     Ok(row)
 }
 
+pub async fn get_sources_by_directory(
+    pool: &PgPool,
+    directory: &str,
+    project: Option<&str>,
+) -> AppResult<Vec<Source>> {
+    let rows = sqlx::query_as::<_, Source>(
+        "SELECT * FROM sources WHERE metadata->>'directory' = $1
+           AND ($2::text IS NULL OR project = $2)"
+    )
+    .bind(directory)
+    .bind(project)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn rename_source(
+    pool: &PgPool,
+    id: Uuid,
+    new_filename: &str,
+    new_metadata: &serde_json::Value,
+    new_content_type: &str,
+) -> AppResult<Source> {
+    let row = sqlx::query_as::<_, Source>(
+        "UPDATE sources SET filename = $2, metadata = $3, content_type = $4 WHERE id = $1 RETURNING *"
+    )
+    .bind(id)
+    .bind(new_filename)
+    .bind(new_metadata)
+    .bind(new_content_type)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
 pub async fn replace_chunks(pool: &PgPool, source_id: Uuid, new_chunks: &[NewChunk]) -> AppResult<u64> {
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM chunks WHERE source_id = $1")

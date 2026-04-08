@@ -36,6 +36,14 @@ impl IngestPipeline {
         }
     }
 
+    pub fn chunk_config(&self) -> &ChunkConfig {
+        &self.chunk_config
+    }
+
+    pub fn storage(&self) -> &S3Storage {
+        &self.storage
+    }
+
     pub async fn ingest(
         &self,
         content: &str,
