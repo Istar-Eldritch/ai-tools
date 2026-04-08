@@ -27,4 +27,7 @@ pub enum AppError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("not found: {0}")]
+    NotFound(String),
 }
