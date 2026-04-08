@@ -87,26 +87,6 @@ async fn main() -> anyhow::Result<()> {
                 "spec-pipeline-mcp server starting"
             );
 
-            // -- Startup validation: fail fast before opening MCP transport --
-            tracing::info!("Validating Claude CLI availability...");
-            let claude_version =
-                spec_pipeline_mcp::validation::validate_claude_cli()
-                    .await
-                    .inspect_err(|e| {
-                        tracing::error!(error = %e, "Claude CLI validation failed");
-                        eprintln!("FATAL: {e:#}");
-                    })?;
-            tracing::info!(claude_version = %claude_version, "Claude CLI found");
-
-            tracing::info!("Probing Claude credentials...");
-            spec_pipeline_mcp::validation::validate_claude_credentials()
-                .await
-                .inspect_err(|e| {
-                    tracing::error!(error = %e, "Claude credential validation failed");
-                    eprintln!("FATAL: {e:#}");
-                })?;
-            tracing::info!("Claude credentials validated");
-
             let store = SessionStore::new(state_dir.clone())?;
             let registry = Arc::new(SessionRegistry::new(store)?);
 
@@ -131,10 +111,30 @@ async fn main() -> anyhow::Result<()> {
 
             tracing::info!("MCP server ready; listening on stdio");
 
+            // Start serving on stdio FIRST so the MCP handshake completes
+            // before any slow validation. The client will timeout and kill us
+            // if we don't respond to the initialize request quickly.
             let service = server
                 .serve(stdio())
                 .await
                 .inspect_err(|e| tracing::error!(error = ?e, "MCP serve error"))?;
+
+            // Validate Claude CLI availability in the background after the
+            // MCP transport is established. Failures are logged as warnings
+            // rather than crashing the server — tool calls that need the CLI
+            // will produce clear errors on their own.
+            tokio::spawn(async move {
+                tracing::info!("Validating Claude CLI availability...");
+                match spec_pipeline_mcp::validation::validate_claude_cli().await {
+                    Ok(version) => tracing::info!(claude_version = %version, "Claude CLI found"),
+                    Err(e) => tracing::warn!(error = %e, "Claude CLI validation failed (tools that need it will error)"),
+                }
+                tracing::info!("Probing Claude credentials...");
+                match spec_pipeline_mcp::validation::validate_claude_credentials().await {
+                    Ok(()) => tracing::info!("Claude credentials validated"),
+                    Err(e) => tracing::warn!(error = %e, "Claude credential validation failed (tools that need it will error)"),
+                }
+            });
 
             service.waiting().await?;
 
