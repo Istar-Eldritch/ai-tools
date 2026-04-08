@@ -11,7 +11,7 @@ use rag_mcp::error::AppError;
 use rag_mcp::pipelines::{
     delete::DeletePipeline,
     ingest::IngestPipeline,
-    search::SearchPipeline,
+    search::{SearchFilter, SearchPipeline},
 };
 
 // -- Request parameter structs --
@@ -34,6 +34,15 @@ pub struct SearchParams {
     pub query: String,
     /// Number of results to return (1–100). Defaults to 5.
     pub k: Option<i64>,
+    /// Glob pattern to filter results by source filename (case-sensitive).
+    /// Supports `*` (any sequence) and `?` (single character).
+    /// Example: `"docs/*.md"` matches any `.md` file under `docs/`.
+    pub filename_glob: Option<String>,
+    /// JSONB containment filter on source metadata.
+    /// Must be a JSON object. A source matches if its metadata contains
+    /// every key/value pair in this object.
+    /// Example: `{"project": "rag", "lang": "en"}`.
+    pub source_metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -90,15 +99,19 @@ impl McpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Search the knowledge base with a natural language query. Returns a JSON array of the top-k most semantically relevant chunks, each with content, source_filename, chunk_index, similarity score, and source_metadata. k defaults to 5 (range: 1-100).")]
+    #[tool(description = "Search the knowledge base with a natural language query. Returns a JSON array of the top-k most semantically relevant chunks, each with content, source_filename, chunk_index, similarity score, and source_metadata. k defaults to 5 (range: 1-100). Optional: filename_glob filters by source filename (glob pattern, case-sensitive); source_metadata filters by JSONB containment (must be a JSON object).")]
     async fn search(
         &self,
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<CallToolResult, McpError> {
         let k = params.k.unwrap_or(5);
+        let filters = SearchFilter {
+            filename_glob: params.filename_glob,
+            source_metadata: params.source_metadata,
+        };
         let result: Result<_, McpError> = self
             .search
-            .search(&params.query, k)
+            .search(&params.query, k, filters)
             .await
             .map_err(app_error_to_mcp_error);
         let results = result?;

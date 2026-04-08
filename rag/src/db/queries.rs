@@ -77,6 +77,8 @@ pub async fn search_chunks(
     pool: &PgPool,
     embedding: &Vector,
     k: i64,
+    filename_like: Option<&str>,
+    source_metadata: Option<&serde_json::Value>,
 ) -> AppResult<Vec<SearchResult>> {
     let rows = sqlx::query_as::<_, SearchResult>(
         "SELECT
@@ -90,11 +92,15 @@ pub async fn search_chunks(
              1.0 - (c.embedding <=> $1) AS similarity
          FROM chunks c
          JOIN sources s ON s.id = c.source_id
+         WHERE ($3::text IS NULL OR s.filename LIKE $3 ESCAPE '\\')
+           AND ($4::jsonb IS NULL OR s.metadata @> $4)
          ORDER BY c.embedding <=> $1
          LIMIT $2"
     )
     .bind(embedding)
     .bind(k)
+    .bind(filename_like)
+    .bind(source_metadata)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -106,4 +112,86 @@ pub async fn delete_chunks_by_source(pool: &PgPool, source_id: Uuid) -> AppResul
         .execute(pool)
         .await?;
     Ok(result.rows_affected())
+}
+
+/// Translates a glob pattern to a SQL LIKE pattern.
+///
+/// Metacharacter mapping:
+/// - `*`  ->  `%`  (match any sequence)
+/// - `?`  ->  `_`  (match exactly one character)
+///
+/// SQL LIKE special characters that appear literally in the input are escaped
+/// with a backslash so they are treated as literals:
+/// - `%`  ->  `\%`
+/// - `_`  ->  `\_`
+/// - `\`  ->  `\\`
+///
+/// Use the result with `LIKE $n ESCAPE '\'` in SQL.
+pub fn glob_to_like(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len() + 4);
+    for ch in pattern.chars() {
+        match ch {
+            '*' => out.push('%'),
+            '?' => out.push('_'),
+            '%' => {
+                out.push('\\');
+                out.push('%');
+            }
+            '_' => {
+                out.push('\\');
+                out.push('_');
+            }
+            '\\' => {
+                out.push('\\');
+                out.push('\\');
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod glob_tests {
+    use super::glob_to_like;
+
+    #[test]
+    fn star_becomes_percent() {
+        assert_eq!(glob_to_like("*.md"), "%.md");
+    }
+
+    #[test]
+    fn question_becomes_underscore() {
+        assert_eq!(glob_to_like("src/?.rs"), "src/_.rs");
+    }
+
+    #[test]
+    fn literal_percent_escaped() {
+        assert_eq!(glob_to_like("100%off"), r"100\%off");
+    }
+
+    #[test]
+    fn literal_underscore_escaped() {
+        assert_eq!(glob_to_like("some_file"), r"some\_file");
+    }
+
+    #[test]
+    fn backslash_doubled() {
+        assert_eq!(glob_to_like(r"path\to"), r"path\\to");
+    }
+
+    #[test]
+    fn combined_metacharacters() {
+        assert_eq!(glob_to_like("docs/*.md"), "docs/%.md");
+    }
+
+    #[test]
+    fn empty_pattern() {
+        assert_eq!(glob_to_like(""), "");
+    }
+
+    #[test]
+    fn no_metacharacters() {
+        assert_eq!(glob_to_like("README.md"), "README.md");
+    }
 }
