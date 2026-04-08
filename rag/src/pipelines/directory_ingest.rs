@@ -90,6 +90,7 @@ impl DirectoryIngestPipeline {
         let mut summary = IngestDirectorySummary::default();
 
         // Walk directory and filter by patterns
+        let mut walk_errors: Vec<String> = Vec::new();
         let eligible_paths: Vec<std::path::PathBuf> = WalkDir::new(root)
             .follow_links(false)
             .into_iter()
@@ -108,19 +109,22 @@ impl DirectoryIngestPipeline {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "directory walk error");
+                    walk_errors.push(e.to_string());
                     None
                 }
             })
             .collect();
 
-        summary.total_files_matched = eligible_paths.len() as u64;
+        for msg in walk_errors {
+            summary.failed += 1;
+            push_error(&mut summary.errors, msg);
+        }
 
         // Read files, detect binary, compute hashes
         let mut prepared: Vec<PreparedFile> = Vec::new();
         for abs_path in &eligible_paths {
             let rel_path = abs_path.strip_prefix(root).unwrap();
-            let rel_str = rel_path.to_string_lossy().to_string();
+            let rel_str = rel_path.to_str().expect("validated as UTF-8 in walk step").to_string();
 
             let raw_bytes = match std::fs::read(abs_path) {
                 Ok(b) => b,
@@ -266,6 +270,22 @@ impl DirectoryIngestPipeline {
             }
         }
 
+        // total_files_matched is the union of all outcomes
+        summary.total_files_matched = summary.ingested
+            + summary.skipped_unchanged
+            + summary.skipped_binary
+            + summary.skipped_empty
+            + summary.failed;
+
+        // Add overflow sentinel if errors were truncated
+        let total_errors = summary.failed as usize;
+        if total_errors > MAX_ERRORS {
+            summary.errors.push(format!(
+                "... and {} more",
+                total_errors - MAX_ERRORS
+            ));
+        }
+
         Ok(summary)
     }
 }
@@ -337,8 +357,6 @@ fn compile_glob_set(patterns: &[String]) -> AppResult<GlobSet> {
 fn push_error(errors: &mut Vec<String>, msg: String) {
     if errors.len() < MAX_ERRORS {
         errors.push(msg);
-    } else if errors.len() == MAX_ERRORS {
-        errors.push("... and more errors truncated".into());
     }
 }
 
@@ -472,7 +490,14 @@ mod tests {
         for i in 0..60 {
             push_error(&mut errors, format!("error {i}"));
         }
-        assert_eq!(errors.len(), 51);
-        assert!(errors[50].contains("... and more"));
+        assert_eq!(errors.len(), MAX_ERRORS);
+    }
+
+    #[test]
+    fn build_file_metadata_overwrites_reserved_keys() {
+        let user = serde_json::json!({"directory": "old", "content_hash": "old"});
+        let meta = build_file_metadata(&user, "/new/dir", "sha256:new");
+        assert_eq!(meta["directory"], "/new/dir");
+        assert_eq!(meta["content_hash"], "sha256:new");
     }
 }
