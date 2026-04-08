@@ -2,7 +2,7 @@ use bytes::Bytes;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::chunking::{chunk_markdown, chunk_text, ChunkConfig};
+use crate::chunking::{chunk_code, chunk_markdown, chunk_text, detect_language, ChunkConfig};
 use crate::db::models::{NewChunk, NewSource, Source};
 use crate::db::queries;
 use crate::embedding::EmbeddingService;
@@ -61,14 +61,41 @@ impl IngestPipeline {
             return Err(e);
         }
 
-        let chunks = if content_type.to_lowercase().contains("markdown") {
-            chunk_markdown(content, &self.chunk_config)
-        } else {
-            chunk_text(content, &self.chunk_config)
-        };
+        // Collect (index, content, metadata) triples from either code or text chunking.
+        let chunk_triples: Vec<(usize, String, serde_json::Value)> =
+            if let Some(lang) = detect_language(filename) {
+                chunk_code(content, lang, &self.chunk_config)
+                    .into_iter()
+                    .map(|c| {
+                        let meta = serde_json::json!({
+                            "start_line": c.start_line,
+                            "end_line": c.end_line,
+                            "node_type": c.node_type,
+                            "context": c.context,
+                        });
+                        (c.index, c.content, meta)
+                    })
+                    .collect()
+            } else {
+                let text_chunks = if content_type.to_lowercase().contains("markdown") {
+                    chunk_markdown(content, &self.chunk_config)
+                } else {
+                    chunk_text(content, &self.chunk_config)
+                };
+                text_chunks
+                    .into_iter()
+                    .map(|c| {
+                        (
+                            c.index,
+                            c.content,
+                            serde_json::Value::Object(Default::default()),
+                        )
+                    })
+                    .collect()
+            };
 
         let svc = self.embedding.clone();
-        let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
+        let texts: Vec<String> = chunk_triples.iter().map(|(_, c, _)| c.clone()).collect();
         let join_result = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
             svc.embed_batch(&refs)
@@ -87,16 +114,16 @@ impl IngestPipeline {
             Ok(Ok(v)) => v,
         };
 
-        let new_chunks: Vec<NewChunk> = chunks
-            .iter()
+        let new_chunks: Vec<NewChunk> = chunk_triples
+            .into_iter()
             .zip(vectors.into_iter())
-            .map(|(chunk, embedding)| NewChunk {
+            .map(|((index, content, metadata), embedding)| NewChunk {
                 id: Uuid::new_v4(),
                 source_id,
-                chunk_index: chunk.index as i32,
-                content: chunk.content.clone(),
+                chunk_index: index as i32,
+                content,
                 embedding,
-                metadata: serde_json::Value::Object(Default::default()),
+                metadata,
             })
             .collect();
 
