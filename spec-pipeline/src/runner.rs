@@ -93,6 +93,7 @@ pub struct PhaseContext {
     pub phase: String,
     pub sub_phase: Option<String>,
     pub prior_artifacts: Vec<String>,
+    pub context_refs: Vec<String>,
     pub gate_history: Vec<GateHistoryEntry>,
     pub revision_feedback: Option<String>,
     pub revision: u32,

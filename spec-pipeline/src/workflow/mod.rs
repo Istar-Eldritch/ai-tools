@@ -100,15 +100,29 @@ impl WorkflowPhase for EpicState {
 impl HasGate for BrainstormState {
     fn gate_content(&self) -> Option<GateContent> {
         match self {
-            BrainstormState::AwaitingApproval { artifact_path } => Some(GateContent {
-                summary: "Brainstorm draft is ready for review.".to_string(),
-                artifact_path: Some(artifact_path.clone()),
-                suggested_actions: vec![
-                    "approve".to_string(),
-                    "revise".to_string(),
-                    "cancel".to_string(),
-                ],
-            }),
+            BrainstormState::AwaitingApproval {
+                artifact_path,
+                revision,
+            } => {
+                let mut actions = vec!["approve".to_string()];
+                if *revision < crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    actions.push("revise".to_string());
+                }
+                actions.push("cancel".to_string());
+                let summary = if *revision >= crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    format!(
+                        "Brainstorm draft is ready for review. Revision limit ({}) reached — please approve or cancel.",
+                        crate::phase_runner::FEEDBACK_DEPTH_LIMIT
+                    )
+                } else {
+                    "Brainstorm draft is ready for review.".to_string()
+                };
+                Some(GateContent {
+                    summary,
+                    artifact_path: Some(artifact_path.clone()),
+                    suggested_actions: actions,
+                })
+            }
             BrainstormState::ErrorGate { message, .. } => Some(GateContent {
                 summary: format!("Error: {message}"),
                 artifact_path: None,
@@ -126,15 +140,29 @@ impl HasGate for BrainstormState {
 impl HasGate for SpecState {
     fn gate_content(&self) -> Option<GateContent> {
         match self {
-            SpecState::AwaitingApproval { artifact_path } => Some(GateContent {
-                summary: "Spec draft is ready for review.".to_string(),
-                artifact_path: Some(artifact_path.clone()),
-                suggested_actions: vec![
-                    "approve".to_string(),
-                    "revise".to_string(),
-                    "cancel".to_string(),
-                ],
-            }),
+            SpecState::AwaitingApproval {
+                artifact_path,
+                revision,
+            } => {
+                let mut actions = vec!["approve".to_string()];
+                if *revision < crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    actions.push("revise".to_string());
+                }
+                actions.push("cancel".to_string());
+                let summary = if *revision >= crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    format!(
+                        "Spec draft is ready for review. Revision limit ({}) reached — please approve or cancel.",
+                        crate::phase_runner::FEEDBACK_DEPTH_LIMIT
+                    )
+                } else {
+                    "Spec draft is ready for review.".to_string()
+                };
+                Some(GateContent {
+                    summary,
+                    artifact_path: Some(artifact_path.clone()),
+                    suggested_actions: actions,
+                })
+            }
             SpecState::ErrorGate { message, .. } => Some(GateContent {
                 summary: format!("Error: {message}"),
                 artifact_path: None,
@@ -152,15 +180,29 @@ impl HasGate for SpecState {
 impl HasGate for EpicState {
     fn gate_content(&self) -> Option<GateContent> {
         match self {
-            EpicState::AwaitingApproval { artifact_path } => Some(GateContent {
-                summary: "Epic draft is ready for review.".to_string(),
-                artifact_path: Some(artifact_path.clone()),
-                suggested_actions: vec![
-                    "approve".to_string(),
-                    "revise".to_string(),
-                    "cancel".to_string(),
-                ],
-            }),
+            EpicState::AwaitingApproval {
+                artifact_path,
+                revision,
+            } => {
+                let mut actions = vec!["approve".to_string()];
+                if *revision < crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    actions.push("revise".to_string());
+                }
+                actions.push("cancel".to_string());
+                let summary = if *revision >= crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    format!(
+                        "Epic draft is ready for review. Revision limit ({}) reached — please approve or cancel.",
+                        crate::phase_runner::FEEDBACK_DEPTH_LIMIT
+                    )
+                } else {
+                    "Epic draft is ready for review.".to_string()
+                };
+                Some(GateContent {
+                    summary,
+                    artifact_path: Some(artifact_path.clone()),
+                    suggested_actions: actions,
+                })
+            }
             EpicState::ErrorGate { message, .. } => Some(GateContent {
                 summary: format!("Error: {message}"),
                 artifact_path: None,

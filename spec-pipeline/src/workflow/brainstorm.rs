@@ -19,7 +19,11 @@ pub enum BrainstormState {
     },
     /// Draft is ready for user approval.
     #[serde(rename = "awaiting_approval")]
-    AwaitingApproval { artifact_path: PathBuf },
+    AwaitingApproval {
+        artifact_path: PathBuf,
+        #[serde(default)]
+        revision: u32,
+    },
     /// Workflow completed successfully.
     #[serde(rename = "complete")]
     Complete { artifact_path: PathBuf },
@@ -85,7 +89,7 @@ impl BrainstormState {
     pub fn artifact_paths(&self) -> Vec<&PathBuf> {
         match self {
             Self::Synthesis { draft_path, .. } => vec![draft_path],
-            Self::AwaitingApproval { artifact_path } => vec![artifact_path],
+            Self::AwaitingApproval { artifact_path, .. } => vec![artifact_path],
             Self::Complete { artifact_path } => vec![artifact_path],
             _ => vec![],
         }

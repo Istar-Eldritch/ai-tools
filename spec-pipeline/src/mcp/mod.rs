@@ -131,24 +131,54 @@ impl McpServer {
             )
             .map_err(anyhow_to_mcp)?;
 
-        // Spawn the async workflow loop for brainstorm sessions.
-        if workflow_type == WorkflowType::Brainstorm {
+        // Spawn the async workflow loop for the appropriate workflow type.
+        {
             let registry = Arc::clone(&self.registry);
             let runner = Arc::clone(&self.runner);
             let gate_channels = Arc::clone(&self.gate_channels);
             let model_config = self.model_config.clone();
             let prompts = Arc::clone(&self.prompts);
-            tokio::spawn(async move {
-                phase_runner::run_brainstorm_session(
-                    session_id,
-                    registry,
-                    runner,
-                    gate_channels,
-                    model_config,
-                    prompts,
-                )
-                .await;
-            });
+            match workflow_type {
+                WorkflowType::Brainstorm => {
+                    tokio::spawn(async move {
+                        phase_runner::run_brainstorm_session(
+                            session_id,
+                            registry,
+                            runner,
+                            gate_channels,
+                            model_config,
+                            prompts,
+                        )
+                        .await;
+                    });
+                }
+                WorkflowType::Spec => {
+                    tokio::spawn(async move {
+                        phase_runner::run_spec_session(
+                            session_id,
+                            registry,
+                            runner,
+                            gate_channels,
+                            model_config,
+                            prompts,
+                        )
+                        .await;
+                    });
+                }
+                WorkflowType::Epic => {
+                    tokio::spawn(async move {
+                        phase_runner::run_epic_session(
+                            session_id,
+                            registry,
+                            runner,
+                            gate_channels,
+                            model_config,
+                            prompts,
+                        )
+                        .await;
+                    });
+                }
+            }
         }
 
         let json = serde_json::json!({
