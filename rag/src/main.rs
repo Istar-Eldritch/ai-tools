@@ -1,12 +1,26 @@
-mod chunking;
 mod mcp;
 
 use clap::{Parser, Subcommand};
+use rag_mcp::chunking::ChunkConfig;
 use rag_mcp::config::Config;
 use rag_mcp::db;
+use rag_mcp::embedding::EmbeddingService;
+use rag_mcp::pipelines::delete::DeletePipeline;
+use rag_mcp::pipelines::ingest::IngestPipeline;
+use rag_mcp::pipelines::search::SearchPipeline;
+use rag_mcp::storage::S3Storage;
+use rmcp::transport::stdio;
+use rmcp::ServiceExt;
+use tracing_subscriber::EnvFilter;
+
+use crate::mcp::McpServer;
 
 #[derive(Parser)]
-#[command(name = "rag-mcp", version, about = "RAG MCP Server — semantic search over a document knowledge base")]
+#[command(
+    name = "rag-mcp",
+    version,
+    about = "RAG MCP Server — semantic search over a document knowledge base"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -14,7 +28,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the MCP server
+    /// Start the MCP server (stdio transport)
     Serve(Config),
 }
 
@@ -30,9 +44,52 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Serve(config) => {
-            println!("RAG MCP server starting.");
-            let _pool = db::connect(&config.database_url, config.db_max_connections).await?;
-            println!("Database connected and migrations applied.");
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .with_writer(std::io::stderr)
+                .with_ansi(false)
+                .init();
+
+            tracing::info!("RAG MCP server starting");
+
+            let pool = db::connect(&config.database_url, config.db_max_connections).await?;
+            tracing::info!("database connected and migrations applied");
+
+            let storage = S3Storage::new(&config).await?;
+            tracing::info!("S3 storage initialised");
+
+            let embedding = EmbeddingService::new(&config.embedding_model)?;
+            tracing::info!(model = %config.embedding_model, "embedding service loaded");
+
+            let chunk_config = ChunkConfig {
+                chunk_size: config.chunk_size,
+                overlap: config.chunk_overlap,
+            };
+
+            let ingest_pipeline = IngestPipeline::new(
+                pool.clone(),
+                storage.clone(),
+                chunk_config,
+                embedding.clone(),
+            );
+            let search_pipeline = SearchPipeline::new(pool.clone(), embedding.clone());
+            let delete_pipeline = DeletePipeline::new(pool.clone(), storage.clone());
+
+            let server = McpServer::new(ingest_pipeline, search_pipeline, delete_pipeline);
+
+            tracing::info!("MCP server ready; listening on stdio");
+
+            let service = server
+                .serve(stdio())
+                .await
+                .inspect_err(|e| tracing::error!(error = ?e, "MCP serve error"))?;
+
+            service.waiting().await?;
+
+            tracing::info!("MCP server shut down cleanly");
             Ok(())
         }
     }
