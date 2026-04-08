@@ -80,6 +80,26 @@ async fn main() -> anyhow::Result<()> {
                 "spec-pipeline-mcp server starting"
             );
 
+            // -- Startup validation: fail fast before opening MCP transport --
+            tracing::info!("Validating Claude CLI availability...");
+            let claude_version =
+                spec_pipeline_mcp::validation::validate_claude_cli()
+                    .await
+                    .inspect_err(|e| {
+                        tracing::error!(error = %e, "Claude CLI validation failed");
+                        eprintln!("FATAL: {e:#}");
+                    })?;
+            tracing::info!(claude_version = %claude_version, "Claude CLI found");
+
+            tracing::info!("Probing Claude credentials...");
+            spec_pipeline_mcp::validation::validate_claude_credentials()
+                .await
+                .inspect_err(|e| {
+                    tracing::error!(error = %e, "Claude credential validation failed");
+                    eprintln!("FATAL: {e:#}");
+                })?;
+            tracing::info!("Claude credentials validated");
+
             let server = McpServer::new();
 
             tracing::info!("MCP server ready; listening on stdio");
