@@ -71,6 +71,7 @@ impl DirectoryIngestPipeline {
         include: &[String],
         exclude: &[String],
         metadata: serde_json::Value,
+        project: Option<String>,
         on_progress: Option<&ProgressCallback>,
         ct: &CancellationToken,
     ) -> AppResult<IngestDirectorySummary> {
@@ -181,7 +182,7 @@ impl DirectoryIngestPipeline {
 
         // Batch dedup lookup
         let filenames: Vec<&str> = prepared.iter().map(|f| f.relative_path.as_str()).collect();
-        let existing_sources = queries::get_sources_by_filenames(&self.pool, &filenames, None).await?;
+        let existing_sources = queries::get_sources_by_filenames(&self.pool, &filenames, project.as_deref()).await?;
 
         let mut source_map: HashMap<&str, &Source> = HashMap::new();
         for source in &existing_sources {
@@ -224,10 +225,12 @@ impl DirectoryIngestPipeline {
         // Bounded-concurrency ingestion with progress reporting
         let total_actions = actions.len() as f64;
         let mut completed = 0u64;
+        let project_clone = project.clone();
         let mut result_stream = stream::iter(actions)
-            .map(|action| {
+            .map(move |action| {
                 let ingest = self.ingest.clone();
                 let delete = self.delete.clone();
+                let project = project_clone.clone();
                 async move {
                     match action {
                         FileAction::New(file, meta) => ingest
@@ -236,6 +239,7 @@ impl DirectoryIngestPipeline {
                                 &file.relative_path,
                                 &file.content_type,
                                 meta,
+                                project,
                             )
                             .await
                             .map(|_| ())
@@ -257,6 +261,7 @@ impl DirectoryIngestPipeline {
                                     &file.relative_path,
                                     &file.content_type,
                                     meta,
+                                    project,
                                 )
                                 .await
                                 .map(|_| ())

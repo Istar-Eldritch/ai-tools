@@ -1,3 +1,4 @@
+use pgvector::Vector;
 use sqlx::PgPool;
 
 use crate::db::models::SearchResult;
@@ -24,11 +25,23 @@ pub struct SearchFilter {
 pub struct SearchPipeline {
     pool: PgPool,
     embedding: EmbeddingService,
+    dedup_threshold: f64,
+    dedup_candidate_factor: i64,
 }
 
 impl SearchPipeline {
-    pub fn new(pool: PgPool, embedding: EmbeddingService) -> Self {
-        Self { pool, embedding }
+    pub fn new(
+        pool: PgPool,
+        embedding: EmbeddingService,
+        dedup_threshold: f64,
+        dedup_candidate_factor: i64,
+    ) -> Self {
+        Self {
+            pool,
+            embedding,
+            dedup_threshold,
+            dedup_candidate_factor,
+        }
     }
 
     pub async fn search(
@@ -64,16 +77,162 @@ impl SearchPipeline {
             .map_err(|e| AppError::Internal(format!("embedding task panicked: {e}")))?
             ?;
 
-        let results = queries::search_chunks(
+        // Fetch extra candidates to allow for dedup filtering
+        let fetch_k = k.saturating_mul(self.dedup_candidate_factor).min(100);
+        let candidates = queries::search_chunks(
             &self.pool,
             &query_vector,
-            k,
+            fetch_k,
             filename_like.as_deref(),
             filters.source_metadata.as_ref(),
             filters.project.as_deref(),
         )
         .await?;
 
+        // Greedy dedup: keep a candidate only if its cosine similarity to
+        // every already-accepted result is at most the threshold.
+        let results = dedup_results(candidates, k as usize, self.dedup_threshold);
+
         Ok(results)
+    }
+}
+
+/// Greedy deduplication: iterate candidates (already sorted by descending
+/// similarity to the query) and accept each one only if its cosine similarity
+/// to every previously accepted result is at most `threshold`.
+fn dedup_results(
+    candidates: Vec<SearchResult>,
+    k: usize,
+    threshold: f64,
+) -> Vec<SearchResult> {
+    // threshold == 1.0 means all candidates pass (no dedup)
+    if threshold >= 1.0 {
+        return candidates.into_iter().take(k).collect();
+    }
+
+    let mut accepted: Vec<SearchResult> = Vec::with_capacity(k);
+
+    for candidate in candidates {
+        if accepted.len() >= k {
+            break;
+        }
+        let dominated = accepted.iter().any(|kept| {
+            cosine_similarity(&candidate.embedding, &kept.embedding) >= threshold
+        });
+        if !dominated {
+            accepted.push(candidate);
+        }
+    }
+
+    accepted
+}
+
+/// Compute cosine similarity between two pgvector vectors.
+/// Returns a value in [-1, 1] for unit vectors; 0 for zero-length vectors.
+fn cosine_similarity(a: &Vector, b: &Vector) -> f64 {
+    let a_slice = a.as_slice();
+    let b_slice = b.as_slice();
+    if a_slice.len() != b_slice.len() || a_slice.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f64;
+    let mut norm_a = 0.0f64;
+    let mut norm_b = 0.0f64;
+    for (ai, bi) in a_slice.iter().zip(b_slice.iter()) {
+        let a = *ai as f64;
+        let b = *bi as f64;
+        dot += a * b;
+        norm_a += a * a;
+        norm_b += b * b;
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pgvector::Vector;
+
+    fn make_result(embedding: Vec<f32>, content: &str) -> SearchResult {
+        SearchResult {
+            chunk_id: uuid::Uuid::new_v4(),
+            source_id: uuid::Uuid::new_v4(),
+            chunk_index: 0,
+            content: content.to_string(),
+            embedding: Vector::from(embedding),
+            source_filename: "test.txt".to_string(),
+            source_metadata: serde_json::json!({}),
+            chunk_metadata: serde_json::json!({}),
+            similarity: 0.9,
+            source_project: None,
+        }
+    }
+
+    #[test]
+    fn dedup_threshold_1_0_passes_all() {
+        let candidates = vec![
+            make_result(vec![1.0, 0.0, 0.0], "a"),
+            make_result(vec![1.0, 0.0, 0.0], "b"), // identical embedding
+            make_result(vec![0.0, 1.0, 0.0], "c"),
+        ];
+        let results = dedup_results(candidates, 5, 1.0);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn dedup_removes_near_identical() {
+        let candidates = vec![
+            make_result(vec![1.0, 0.0, 0.0], "a"),
+            make_result(vec![1.0, 0.001, 0.0], "b"), // very similar to a
+            make_result(vec![0.0, 1.0, 0.0], "c"),   // different
+        ];
+        let results = dedup_results(candidates, 5, 0.97);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content, "a");
+        assert_eq!(results[1].content, "c");
+    }
+
+    #[test]
+    fn dedup_threshold_0_keeps_only_first() {
+        let candidates = vec![
+            make_result(vec![1.0, 0.0, 0.0], "a"),
+            make_result(vec![0.0, 1.0, 0.0], "b"),
+            make_result(vec![0.0, 0.0, 1.0], "c"),
+        ];
+        let results = dedup_results(candidates, 5, 0.0);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "a");
+    }
+
+    #[test]
+    fn dedup_respects_k_limit() {
+        let candidates = vec![
+            make_result(vec![1.0, 0.0, 0.0], "a"),
+            make_result(vec![0.0, 1.0, 0.0], "b"),
+            make_result(vec![0.0, 0.0, 1.0], "c"),
+        ];
+        let results = dedup_results(candidates, 2, 1.0);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn cosine_similarity_identical_vectors() {
+        let a = Vector::from(vec![1.0f32, 0.0, 0.0]);
+        let b = Vector::from(vec![1.0f32, 0.0, 0.0]);
+        let sim = cosine_similarity(&a, &b);
+        assert!((sim - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_similarity_orthogonal_vectors() {
+        let a = Vector::from(vec![1.0f32, 0.0, 0.0]);
+        let b = Vector::from(vec![0.0f32, 1.0, 0.0]);
+        let sim = cosine_similarity(&a, &b);
+        assert!(sim.abs() < 1e-6);
     }
 }

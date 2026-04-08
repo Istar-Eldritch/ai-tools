@@ -13,6 +13,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use rag_mcp::db::queries::{self as db_queries, glob_to_like};
 use rag_mcp::error::AppError;
 use rag_mcp::pipelines::{
     delete::DeletePipeline,
@@ -33,6 +34,8 @@ pub struct IngestParams {
     pub content_type: String,
     /// Arbitrary JSON metadata to attach to the source record.
     pub metadata: Option<serde_json::Value>,
+    /// Project name to associate with this source.
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -73,6 +76,22 @@ pub struct IngestDirectoryParams {
     /// Arbitrary JSON metadata attached to every ingested source.
     /// Must be a JSON object if provided.
     pub metadata: Option<serde_json::Value>,
+    /// Project name to associate with all ingested sources.
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListSourcesParams {
+    /// Filter results to a specific project name.
+    pub project: Option<String>,
+    /// Glob pattern to filter results by source filename (case-sensitive).
+    /// Supports `*` (any sequence) and `?` (single character).
+    /// Example: `"docs/*.md"` matches any `.md` file under `docs/`.
+    pub filename_glob: Option<String>,
+    /// Maximum number of results to return (1–500). Defaults to 100.
+    pub limit: Option<i64>,
+    /// Pagination offset. Defaults to 0.
+    pub offset: Option<i64>,
 }
 
 // -- McpServer --
@@ -80,6 +99,7 @@ pub struct IngestDirectoryParams {
 #[derive(Clone)]
 pub struct McpServer {
     tool_router: ToolRouter<McpServer>,
+    pool: sqlx::PgPool,
     ingest: IngestPipeline,
     search: SearchPipeline,
     delete: DeletePipeline,
@@ -88,6 +108,7 @@ pub struct McpServer {
 
 impl McpServer {
     pub fn new(
+        pool: sqlx::PgPool,
         ingest: IngestPipeline,
         search: SearchPipeline,
         delete: DeletePipeline,
@@ -95,6 +116,7 @@ impl McpServer {
     ) -> Self {
         Self {
             tool_router: Self::tool_router(),
+            pool,
             ingest,
             search,
             delete,
@@ -117,7 +139,7 @@ impl McpServer {
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
         let result: Result<_, McpError> = self
             .ingest
-            .ingest(&params.content, &params.filename, &params.content_type, metadata)
+            .ingest(&params.content, &params.filename, &params.content_type, metadata, params.project)
             .await
             .map_err(app_error_to_mcp_error);
         let source = result?;
@@ -210,12 +232,38 @@ impl McpServer {
                 &params.include,
                 &exclude,
                 metadata,
+                params.project,
                 on_progress.as_ref(),
                 &ct,
             )
             .await
             .map_err(app_error_to_mcp_error)?;
         let json = serde_json::to_string(&summary)
+            .map_err(|e| McpError::internal_error(format!("serialization error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "List sources in the knowledge base with optional project and filename filtering. Returns a JSON array of source records, each with id, filename, content_type, project, metadata, created_at, and chunk_count. Supports pagination via limit/offset.")]
+    async fn list_sources(
+        &self,
+        Parameters(params): Parameters<ListSourcesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = params.limit.unwrap_or(100).min(500).max(1);
+        let offset = params.offset.unwrap_or(0).max(0);
+        let filename_like: Option<String> =
+            params.filename_glob.as_deref().map(glob_to_like);
+
+        let results = db_queries::list_sources(
+            &self.pool,
+            params.project.as_deref(),
+            filename_like.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+        .map_err(app_error_to_mcp_error)?;
+
+        let json = serde_json::to_string(&results)
             .map_err(|e| McpError::internal_error(format!("serialization error: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }

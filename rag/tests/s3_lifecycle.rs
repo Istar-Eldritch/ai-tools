@@ -34,6 +34,8 @@ async fn setup_minio() -> (S3Storage, ContainerAsync<GenericImage>) {
         chunk_size: 2048,
         chunk_overlap: 200,
         min_chunk_size: 0,
+        dedup_threshold: 0.97,
+        dedup_candidate_factor: 3,
     };
 
     let storage = S3Storage::new(&config)

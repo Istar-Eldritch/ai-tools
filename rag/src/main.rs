@@ -111,7 +111,12 @@ async fn main() -> anyhow::Result<()> {
                 chunk_config,
                 embedding.clone(),
             );
-            let search_pipeline = SearchPipeline::new(pool.clone(), embedding.clone());
+            let search_pipeline = SearchPipeline::new(
+                pool.clone(),
+                embedding.clone(),
+                config.dedup_threshold,
+                config.dedup_candidate_factor,
+            );
             let delete_pipeline = DeletePipeline::new(pool.clone(), storage.clone());
 
             let directory_ingest_pipeline = DirectoryIngestPipeline::new(
@@ -121,6 +126,7 @@ async fn main() -> anyhow::Result<()> {
             );
 
             let server = McpServer::new(
+                pool.clone(),
                 ingest_pipeline,
                 search_pipeline,
                 delete_pipeline,

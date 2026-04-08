@@ -38,6 +38,7 @@ impl IngestPipeline {
         filename: &str,
         content_type: &str,
         metadata: serde_json::Value,
+        project: Option<String>,
     ) -> AppResult<Source> {
         if content.trim().is_empty() {
             return Err(AppError::Validation("content must not be empty".into()));
@@ -52,7 +53,7 @@ impl IngestPipeline {
             filename: filename.to_owned(),
             content_type: content_type.to_owned(),
             metadata,
-            project: None,
+            project,
         };
         let source = queries::insert_source(&self.pool, &new_source).await?;
 

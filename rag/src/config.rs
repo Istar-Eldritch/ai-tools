@@ -41,4 +41,15 @@ pub struct Config {
     /// Minimum chunk size in characters; chunks smaller than this are merged
     #[arg(long, env = "MIN_CHUNK_SIZE", default_value = "50")]
     pub min_chunk_size: usize,
+
+    /// Cosine similarity threshold for search-time deduplication (0.0–1.0).
+    /// Candidates whose similarity to an already-selected result exceeds this
+    /// threshold are discarded. 1.0 disables dedup; 0.0 keeps only one result.
+    #[arg(long, env = "DEDUP_THRESHOLD", default_value = "0.97")]
+    pub dedup_threshold: f64,
+
+    /// Candidate fetch multiplier for dedup. The search pipeline fetches
+    /// k * this factor candidates before applying the dedup filter.
+    #[arg(long, env = "DEDUP_CANDIDATE_FACTOR", default_value = "3")]
+    pub dedup_candidate_factor: i64,
 }
