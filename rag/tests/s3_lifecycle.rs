@@ -33,6 +33,7 @@ async fn setup_minio() -> (S3Storage, ContainerAsync<GenericImage>) {
         embedding_model: String::new(),
         chunk_size: 2048,
         chunk_overlap: 200,
+        min_chunk_size: 0,
     };
 
     let storage = S3Storage::new(&config)

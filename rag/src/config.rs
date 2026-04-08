@@ -37,4 +37,8 @@ pub struct Config {
     /// Overlap between consecutive chunks in characters
     #[arg(long, env = "CHUNK_OVERLAP", default_value = "200")]
     pub chunk_overlap: usize,
+
+    /// Minimum chunk size in characters; chunks smaller than this are merged
+    #[arg(long, env = "MIN_CHUNK_SIZE", default_value = "50")]
+    pub min_chunk_size: usize,
 }

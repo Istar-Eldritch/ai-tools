@@ -57,6 +57,7 @@ pub struct TextChunk {
 pub struct ChunkConfig {
     pub chunk_size: usize,
     pub overlap: usize,
+    pub min_chunk_size: usize,
 }
 
 impl Default for ChunkConfig {
@@ -64,6 +65,7 @@ impl Default for ChunkConfig {
         Self {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 50,
         }
     }
 }
@@ -78,7 +80,15 @@ impl ChunkConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(200);
-        Self { chunk_size, overlap }
+        let min_chunk_size = std::env::var("MIN_CHUNK_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50);
+        Self {
+            chunk_size,
+            overlap,
+            min_chunk_size,
+        }
     }
 
     fn to_ts_config(self) -> TSChunkConfig<text_splitter::Characters> {
@@ -222,6 +232,7 @@ fn error_fallback(source: &str, config: &ChunkConfig) -> Vec<CodeChunk> {
     let no_overlap = ChunkConfig {
         chunk_size: config.chunk_size,
         overlap: 0,
+        min_chunk_size: 0,
     };
     chunk_text(source, &no_overlap)
         .into_iter()
@@ -295,6 +306,7 @@ fn process_node(
         let no_overlap = ChunkConfig {
             chunk_size: config.chunk_size,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let sub_chunks = chunk_text(&content, &no_overlap);
         // When this node is a child of a container (i.e. `context` is Some), the container
@@ -386,6 +398,7 @@ pub fn chunk_code(source: &str, language: CodeLanguage, config: &ChunkConfig) ->
             let no_overlap = ChunkConfig {
                 chunk_size: config.chunk_size,
                 overlap: 0,
+                min_chunk_size: 0,
             };
             for tc in chunk_text(preamble_text, &no_overlap) {
                 let idx = chunks.len();
@@ -444,6 +457,7 @@ mod tests {
         let config = ChunkConfig {
             chunk_size: 100,
             overlap: 10,
+            min_chunk_size: 0,
         };
         let text = "a ".repeat(5000); // 10000 chars
         let chunks = chunk_text(&text, &config);
@@ -468,6 +482,7 @@ mod tests {
         let config = ChunkConfig {
             chunk_size: 500,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let md = "# Section 1\n\nShort paragraph.\n\n# Section 2\n\nAnother paragraph.";
         let chunks = chunk_markdown(md, &config);
@@ -484,22 +499,27 @@ mod tests {
         unsafe {
             std::env::set_var("CHUNK_SIZE", "512");
             std::env::set_var("CHUNK_OVERLAP", "50");
+            std::env::set_var("MIN_CHUNK_SIZE", "25");
         }
         let config = ChunkConfig::from_env();
         assert_eq!(config.chunk_size, 512);
         assert_eq!(config.overlap, 50);
+        assert_eq!(config.min_chunk_size, 25);
 
         // Test invalid env var falls back to default
         unsafe {
             std::env::set_var("CHUNK_SIZE", "notanumber");
+            std::env::set_var("MIN_CHUNK_SIZE", "notanumber");
         }
         let config = ChunkConfig::from_env();
         assert_eq!(config.chunk_size, 2048); // falls back to default
+        assert_eq!(config.min_chunk_size, 50); // falls back to default
 
         // Cleanup
         unsafe {
             std::env::remove_var("CHUNK_SIZE");
             std::env::remove_var("CHUNK_OVERLAP");
+            std::env::remove_var("MIN_CHUNK_SIZE");
         }
     }
 
@@ -595,6 +615,7 @@ fn main() {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Rust, &config);
         assert!(!chunks.is_empty());
@@ -616,6 +637,7 @@ fn bar() -> String {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Rust, &config);
         assert_eq!(chunks.len(), 2);
@@ -644,6 +666,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Rust, &config);
         // struct chunk + 2 method chunks
@@ -665,6 +688,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Rust, &config);
         assert_eq!(chunks.len(), 1);
@@ -678,6 +702,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Python, &config);
         assert!(!chunks.is_empty());
@@ -698,6 +723,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Python, &config);
         // class is a container → 2 method chunks
@@ -719,6 +745,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 200,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(&source, CodeLanguage::Rust, &config);
         assert!(chunks.len() > 1);
@@ -736,6 +763,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Rust, &config);
         assert!(!chunks.is_empty());
@@ -758,6 +786,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 200,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Rust, &config);
         assert_eq!(chunks.len(), 1);
@@ -775,6 +804,7 @@ impl Foo {
         let config = ChunkConfig {
             chunk_size: 200,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(&source, CodeLanguage::Rust, &config);
         // There should be multiple preamble chunks plus at least one function chunk
@@ -799,6 +829,7 @@ function greet() {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
         assert!(!chunks.is_empty());
@@ -820,6 +851,7 @@ function subtract(a: number, b: number): number {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
         assert_eq!(chunks.len(), 2);
@@ -848,6 +880,7 @@ function subtract(a: number, b: number): number {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
         // class is a container → 2 method chunks
@@ -872,6 +905,7 @@ function subtract(a: number, b: number): number {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
         assert_eq!(chunks.len(), 1);
@@ -890,6 +924,7 @@ function subtract(a: number, b: number): number {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::TypeScript, &config);
         assert_eq!(chunks.len(), 1);
@@ -915,6 +950,7 @@ public class App {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Java, &config);
         assert!(!chunks.is_empty());
@@ -939,6 +975,7 @@ public class App {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Java, &config);
         // class is a container → 2 method chunks
@@ -964,6 +1001,7 @@ public class App {
         let config = ChunkConfig {
             chunk_size: 2048,
             overlap: 0,
+            min_chunk_size: 0,
         };
         let chunks = chunk_code(source, CodeLanguage::Java, &config);
         // interface is a container in Java → expands into method_declaration chunks.

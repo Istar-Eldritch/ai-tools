@@ -68,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
             let chunk_config = ChunkConfig {
                 chunk_size: config.chunk_size,
                 overlap: config.chunk_overlap,
+                min_chunk_size: config.min_chunk_size,
             };
 
             let ingest_pipeline = IngestPipeline::new(
