@@ -6,6 +6,7 @@ use rag_mcp::config::Config;
 use rag_mcp::db;
 use rag_mcp::embedding::EmbeddingService;
 use rag_mcp::pipelines::delete::DeletePipeline;
+use rag_mcp::pipelines::directory_ingest::DirectoryIngestPipeline;
 use rag_mcp::pipelines::ingest::IngestPipeline;
 use rag_mcp::pipelines::search::SearchPipeline;
 use rag_mcp::storage::S3Storage;
@@ -78,7 +79,18 @@ async fn main() -> anyhow::Result<()> {
             let search_pipeline = SearchPipeline::new(pool.clone(), embedding.clone());
             let delete_pipeline = DeletePipeline::new(pool.clone(), storage.clone());
 
-            let server = McpServer::new(ingest_pipeline, search_pipeline, delete_pipeline);
+            let directory_ingest_pipeline = DirectoryIngestPipeline::new(
+                ingest_pipeline.clone(),
+                delete_pipeline.clone(),
+                pool.clone(),
+            );
+
+            let server = McpServer::new(
+                ingest_pipeline,
+                search_pipeline,
+                delete_pipeline,
+                directory_ingest_pipeline,
+            );
 
             tracing::info!("MCP server ready; listening on stdio");
 

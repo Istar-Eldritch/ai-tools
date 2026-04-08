@@ -37,6 +37,14 @@ pub async fn get_source_by_s3_key(pool: &PgPool, s3_key: &str) -> AppResult<Opti
     Ok(row)
 }
 
+pub async fn get_sources_by_filenames(pool: &PgPool, filenames: &[&str]) -> AppResult<Vec<Source>> {
+    let rows = sqlx::query_as::<_, Source>("SELECT * FROM sources WHERE filename = ANY($1)")
+        .bind(filenames)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
 /// Deletes a source by ID. Associated chunks are removed automatically via
 /// the `ON DELETE CASCADE` foreign key constraint on the `chunks` table.
 pub async fn delete_source(pool: &PgPool, id: Uuid) -> AppResult<bool> {

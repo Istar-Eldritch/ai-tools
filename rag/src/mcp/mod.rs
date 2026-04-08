@@ -10,6 +10,7 @@ use uuid::Uuid;
 use rag_mcp::error::AppError;
 use rag_mcp::pipelines::{
     delete::DeletePipeline,
+    directory_ingest::DirectoryIngestPipeline,
     ingest::IngestPipeline,
     search::{SearchFilter, SearchPipeline},
 };
@@ -51,6 +52,21 @@ pub struct DeleteSourceParams {
     pub source_id: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct IngestDirectoryParams {
+    /// Absolute path to a directory on the local filesystem.
+    pub path: String,
+    /// Glob patterns for files to include (e.g., ["**/*.rs", "**/*.md"]).
+    /// At least one pattern is required.
+    pub include: Vec<String>,
+    /// Glob patterns for files to exclude (e.g., ["**/target/**"]).
+    /// Applied after include. Defaults to empty.
+    pub exclude: Option<Vec<String>>,
+    /// Arbitrary JSON metadata attached to every ingested source.
+    /// Must be a JSON object if provided.
+    pub metadata: Option<serde_json::Value>,
+}
+
 // -- McpServer --
 
 #[derive(Clone)]
@@ -59,6 +75,7 @@ pub struct McpServer {
     ingest: IngestPipeline,
     search: SearchPipeline,
     delete: DeletePipeline,
+    directory_ingest: DirectoryIngestPipeline,
 }
 
 impl McpServer {
@@ -66,12 +83,14 @@ impl McpServer {
         ingest: IngestPipeline,
         search: SearchPipeline,
         delete: DeletePipeline,
+        directory_ingest: DirectoryIngestPipeline,
     ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             ingest,
             search,
             delete,
+            directory_ingest,
         }
     }
 }
@@ -140,6 +159,25 @@ impl McpServer {
         Ok(CallToolResult::success(vec![Content::text(
             "source deleted",
         )]))
+    }
+
+    #[tool(description = "Ingest all matching files from a local directory into the knowledge base. Walks the directory recursively, filters by include/exclude glob patterns, detects binary files, deduplicates by content hash, and ingests with bounded concurrency. Returns a summary with counts of ingested, skipped, and failed files.")]
+    async fn ingest_directory(
+        &self,
+        Parameters(params): Parameters<IngestDirectoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let metadata = params
+            .metadata
+            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        let exclude = params.exclude.unwrap_or_default();
+        let summary = self
+            .directory_ingest
+            .ingest_directory(&params.path, &params.include, &exclude, metadata)
+            .await
+            .map_err(app_error_to_mcp_error)?;
+        let json = serde_json::to_string(&summary)
+            .map_err(|e| McpError::internal_error(format!("serialization error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }
 
