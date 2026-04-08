@@ -131,6 +131,10 @@ pub fn chunk_markdown(text: &str, config: &ChunkConfig) -> Vec<TextChunk> {
 
 fn is_preamble_node(kind: &str, language: CodeLanguage) -> bool {
     match language {
+        // "mod_item" covers both `mod foo;` (external module declarations) and inline `mod foo { … }`
+        // blocks. Inline modules are a rare edge case but are intentionally included so that a
+        // top-level `mod tests { … }` at the very beginning of a file is treated as preamble rather
+        // than being expanded as a container.
         CodeLanguage::Rust => matches!(kind, "use_declaration" | "mod_item" | "attribute_item"),
         CodeLanguage::Python => matches!(kind, "import_statement" | "import_from_statement"),
         CodeLanguage::TypeScript => matches!(kind, "import_statement"),
@@ -147,6 +151,9 @@ fn is_extractable_node(kind: &str, language: CodeLanguage) -> bool {
                 | "enum_item"
                 | "trait_item"
                 | "impl_item"
+                // NOTE: tree-sitter-rust ≥0.24 emits "type_item" for `type Foo = …` declarations.
+                // The spec calls this node "type_alias", which was the name used in older grammar
+                // versions. Use "type_item" here to match the actual grammar at the pinned version.
                 | "type_item"
                 | "const_item"
                 | "macro_definition"
@@ -209,6 +216,9 @@ fn container_body<'a>(node: &Node<'a>, _source: &str) -> Option<Node<'a>> {
 
 /// Falls back to `chunk_text`, promoting each `TextChunk` to `CodeChunk`.
 fn error_fallback(source: &str, config: &ChunkConfig) -> Vec<CodeChunk> {
+    // R9 mandates zero overlap for all code splitting paths (oversized leaves, oversized preamble,
+    // and this error-fallback path). Overlap is intentionally forced to 0 here rather than using
+    // `config.overlap` directly, consistent with the same pattern applied elsewhere in this module.
     let no_overlap = ChunkConfig {
         chunk_size: config.chunk_size,
         overlap: 0,
@@ -287,6 +297,11 @@ fn process_node(
             overlap: 0,
         };
         let sub_chunks = chunk_text(&content, &no_overlap);
+        // When this node is a child of a container (i.e. `context` is Some), the container
+        // signature is already embedded at the top of `content` (see the `format!` above).
+        // `context` in the emitted chunks is therefore set to the node's own first source line
+        // (the function/method signature) rather than propagating the incoming container context —
+        // the container identity is not lost; it is present in the content field of each sub-chunk.
         let first_source_line = node_text.lines().next().unwrap_or("").to_string();
         for tc in sub_chunks {
             let idx = chunks.len();
