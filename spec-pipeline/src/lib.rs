@@ -1,4 +1,5 @@
 pub mod config;
+pub mod notifier;
 pub mod phase_runner;
 pub mod prompts;
 pub mod runner;

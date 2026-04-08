@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use spec_pipeline_mcp::config::Config;
+use spec_pipeline_mcp::notifier::SessionNotifier;
 use spec_pipeline_mcp::phase_runner::GateChannelMap;
 use spec_pipeline_mcp::prompts::PromptStore;
 use spec_pipeline_mcp::runner::ClaudeRunner;
@@ -101,12 +102,15 @@ async fn main() -> anyhow::Result<()> {
             let gate_channels = Arc::new(GateChannelMap::default());
             let model_config = ModelConfig::default();
 
+            let notifier = SessionNotifier::new();
+
             let server = McpServer::new(
                 registry,
                 runner,
                 gate_channels,
                 model_config,
                 prompts,
+                notifier,
             );
 
             tracing::info!("MCP server ready; listening on stdio");

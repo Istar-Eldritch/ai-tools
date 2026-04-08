@@ -6,6 +6,7 @@ use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::notifier::{SessionEvent, SessionNotifier, progress_for};
 use crate::prompts::PromptStore;
 use crate::runner::{ClaudeRunner, PhaseContext, RawPhaseOutput, RunnerError};
 use crate::session::SessionRegistry;
@@ -45,6 +46,7 @@ pub async fn run_brainstorm_session(
     gate_channels: Arc<GateChannelMap>,
     model_config: ModelConfig,
     prompts: Arc<PromptStore>,
+    notifier: SessionNotifier,
 ) {
     info!(%session_id, "brainstorm session loop starting");
 
@@ -139,6 +141,7 @@ pub async fn run_brainstorm_session(
             &gate_channels,
             &prompts,
             setup,
+            &notifier,
         )
         .await
         {
@@ -162,6 +165,7 @@ pub async fn run_spec_session(
     gate_channels: Arc<GateChannelMap>,
     model_config: ModelConfig,
     prompts: Arc<PromptStore>,
+    notifier: SessionNotifier,
 ) {
     info!(%session_id, "spec session loop starting");
 
@@ -241,6 +245,7 @@ pub async fn run_spec_session(
             &gate_channels,
             &prompts,
             setup,
+            &notifier,
         )
         .await
         {
@@ -264,6 +269,7 @@ pub async fn run_epic_session(
     gate_channels: Arc<GateChannelMap>,
     model_config: ModelConfig,
     prompts: Arc<PromptStore>,
+    notifier: SessionNotifier,
 ) {
     info!(%session_id, "epic session loop starting");
 
@@ -343,6 +349,7 @@ pub async fn run_epic_session(
             &gate_channels,
             &prompts,
             setup,
+            &notifier,
         )
         .await
         {
@@ -373,6 +380,7 @@ async fn run_phase_and_process(
     gate_channels: &Arc<GateChannelMap>,
     prompts: &Arc<PromptStore>,
     setup: PhaseSetup,
+    notifier: &SessionNotifier,
 ) -> LoopAction {
     // Get prompt path
     let prompt_path = match prompts.get(&setup.prompt_key) {
@@ -390,6 +398,24 @@ async fn run_phase_and_process(
             return LoopAction::Break;
         }
     };
+
+    // Notify: phase starting
+    {
+        let (progress, total) = progress_for(&setup.workflow_type, &setup.context.phase, false);
+        notifier
+            .notify(&SessionEvent {
+                session_id,
+                workflow_type: setup.workflow_type.clone(),
+                session_state: "Running".into(),
+                phase: setup.context.phase.clone(),
+                sub_phase: setup.context.sub_phase.clone(),
+                message: format!("{}: {} phase running", setup.workflow_type, setup.context.phase),
+                gate_content: None,
+                progress,
+                total,
+            })
+            .await;
+    }
 
     // Run the phase (no lock held)
     info!(
@@ -420,6 +446,9 @@ async fn run_phase_and_process(
                 InternalAction::Continue => LoopAction::Continue,
                 InternalAction::Break => LoopAction::Break,
                 InternalAction::AwaitGate => {
+                    // Notify: session waiting at gate
+                    notify_current_state(session_id, registry, notifier).await;
+
                     match await_gate_response(session_id, gate_channels).await {
                         Some(response) => {
                             if apply_gate_response(
@@ -427,6 +456,7 @@ async fn run_phase_and_process(
                                 response,
                                 registry,
                                 &setup.workflow_type,
+                                notifier,
                             )
                             .await
                             {
@@ -460,11 +490,20 @@ async fn run_phase_and_process(
             )
             .await;
 
+            // Notify: error gate
+            notify_current_state(session_id, registry, notifier).await;
+
             // Wait for user to decide (retry or cancel)
             match await_gate_response(session_id, gate_channels).await {
                 Some(response) => {
-                    if apply_gate_response(session_id, response, registry, &setup.workflow_type)
-                        .await
+                    if apply_gate_response(
+                        session_id,
+                        response,
+                        registry,
+                        &setup.workflow_type,
+                        notifier,
+                    )
+                    .await
                     {
                         LoopAction::Continue
                     } else {
@@ -905,6 +944,7 @@ async fn apply_gate_response(
     response: GateResponse,
     registry: &Arc<SessionRegistry>,
     workflow_type: &str,
+    notifier: &SessionNotifier,
 ) -> bool {
     // Snapshot the current workflow state
     let ws = {
@@ -919,14 +959,19 @@ async fn apply_gate_response(
         session.workflow_state.clone()
     };
 
-    match response {
+    let result = match response {
         GateResponse::Approve => apply_approve(session_id, registry, &ws, workflow_type).await,
         GateResponse::Revise { feedback } => {
             apply_revise(session_id, registry, &ws, workflow_type, &feedback).await
         }
         GateResponse::Cancel => apply_cancel(session_id, registry, workflow_type).await,
         GateResponse::Retry => apply_retry(session_id, registry, &ws, workflow_type).await,
-    }
+    };
+
+    // Notify after applying the gate response (complete, cancelled, or next phase)
+    notify_current_state(session_id, registry, notifier).await;
+
+    result
 }
 
 async fn apply_approve(
@@ -1137,6 +1182,63 @@ async fn apply_retry(
     }
     info!(%session_id, %workflow_type, "retrying failed phase");
     true // continue loop
+}
+
+// ---------------------------------------------------------------------------
+// Notification helper
+// ---------------------------------------------------------------------------
+
+/// Read the current session state and emit an MCP notification.
+async fn notify_current_state(
+    session_id: Uuid,
+    registry: &Arc<SessionRegistry>,
+    notifier: &SessionNotifier,
+) {
+    let handle = match registry.get(session_id) {
+        Some(h) => h,
+        None => return,
+    };
+    let session = handle.lock().await;
+
+    let state = session.session_state();
+    let phase = session.workflow_state.phase_name().to_string();
+    let sub_phase = session.workflow_state.sub_phase_name().map(|s| s.to_string());
+    let wt = session.workflow_state.workflow_type().to_string();
+    let state_str = format!("{state:?}");
+    let gate_content = session
+        .workflow_state
+        .gate_content()
+        .and_then(|gc| serde_json::to_value(gc).ok());
+
+    let at_gate = matches!(
+        state_str.as_str(),
+        "WaitingAtGate" | "ErrorGate"
+    );
+    let (progress, total) = progress_for(&wt, &phase, at_gate);
+
+    let message = match state_str.as_str() {
+        "Complete" => format!("{wt}: complete"),
+        "Cancelled" => format!("{wt}: cancelled"),
+        "ErrorGate" => format!("{wt}: error in {phase} phase"),
+        "WaitingAtGate" => format!("{wt}: waiting for input ({phase})"),
+        _ => format!("{wt}: {phase} phase running"),
+    };
+
+    drop(session);
+
+    notifier
+        .notify(&SessionEvent {
+            session_id,
+            workflow_type: wt,
+            session_state: state_str,
+            phase,
+            sub_phase,
+            message,
+            gate_content,
+            progress,
+            total,
+        })
+        .await;
 }
 
 // ---------------------------------------------------------------------------

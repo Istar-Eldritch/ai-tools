@@ -3,13 +3,18 @@ use std::sync::Arc;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo},
+    model::{
+        CallToolResult, Content, Implementation, InitializeRequestParams, InitializeResult,
+        ServerCapabilities, ServerInfo,
+    },
     schemars, tool, tool_handler, tool_router,
+    service::{RoleServer, RequestContext},
 };
 use serde::Deserialize;
 use tracing::info;
 use uuid::Uuid;
 
+use spec_pipeline_mcp::notifier::{PeerHandle, SessionNotifier};
 use spec_pipeline_mcp::phase_runner::{self, GateChannelMap};
 use spec_pipeline_mcp::prompts::PromptStore;
 use spec_pipeline_mcp::runner::ClaudeRunner;
@@ -74,6 +79,8 @@ pub struct McpServer {
     gate_channels: Arc<GateChannelMap>,
     model_config: ModelConfig,
     prompts: Arc<PromptStore>,
+    notifier: SessionNotifier,
+    peer_handle: PeerHandle,
     tool_router: ToolRouter<McpServer>,
 }
 
@@ -84,13 +91,17 @@ impl McpServer {
         gate_channels: Arc<GateChannelMap>,
         model_config: ModelConfig,
         prompts: Arc<PromptStore>,
+        notifier: SessionNotifier,
     ) -> Self {
+        let peer_handle = notifier.peer_handle();
         Self {
             registry,
             runner,
             gate_channels,
             model_config,
             prompts,
+            notifier,
+            peer_handle,
             tool_router: Self::tool_router(),
         }
     }
@@ -138,6 +149,7 @@ impl McpServer {
             let gate_channels = Arc::clone(&self.gate_channels);
             let model_config = self.model_config.clone();
             let prompts = Arc::clone(&self.prompts);
+            let notifier = self.notifier.clone();
             match workflow_type {
                 WorkflowType::Brainstorm => {
                     tokio::spawn(async move {
@@ -148,6 +160,7 @@ impl McpServer {
                             gate_channels,
                             model_config,
                             prompts,
+                            notifier,
                         )
                         .await;
                     });
@@ -161,6 +174,7 @@ impl McpServer {
                             gate_channels,
                             model_config,
                             prompts,
+                            notifier,
                         )
                         .await;
                     });
@@ -174,6 +188,7 @@ impl McpServer {
                             gate_channels,
                             model_config,
                             prompts,
+                            notifier,
                         )
                         .await;
                     });
@@ -363,11 +378,36 @@ impl McpServer {
 #[tool_handler]
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "spec-pipeline-mcp",
-                env!("CARGO_PKG_VERSION"),
-            ))
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_logging()
+                .build(),
+        )
+        .with_server_info(Implementation::new(
+            "spec-pipeline-mcp",
+            env!("CARGO_PKG_VERSION"),
+        ))
+    }
+
+    fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
+        let peer = context.peer.clone();
+        async move {
+            // Store the peer so background tasks can send notifications
+            {
+                let mut guard = self.peer_handle.write().await;
+                *guard = Some(peer);
+            }
+            // Replicate default initialize behavior
+            if context.peer.peer_info().is_none() {
+                context.peer.set_peer_info(request);
+            }
+            Ok(self.get_info())
+        }
     }
 }
 
