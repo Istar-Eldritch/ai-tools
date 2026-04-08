@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::AppResult;
-use super::models::{NewChunk, NewSource, SearchResult, Source, SourceSummary};
+use super::models::{Chunk, NewChunk, NewSource, SearchResult, Source, SourceSummary};
 
 pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Source> {
     let row = sqlx::query_as::<_, Source>(
@@ -153,6 +153,60 @@ pub async fn list_sources(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+pub async fn get_chunks_by_source(pool: &PgPool, source_id: Uuid) -> AppResult<Vec<Chunk>> {
+    let rows = sqlx::query_as::<_, Chunk>(
+        "SELECT id, source_id, chunk_index, content, embedding, metadata, created_at
+         FROM chunks WHERE source_id = $1"
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn update_source_metadata(
+    pool: &PgPool,
+    id: Uuid,
+    metadata: &serde_json::Value,
+    content_type: &str,
+) -> AppResult<Source> {
+    let row = sqlx::query_as::<_, Source>(
+        "UPDATE sources SET metadata = $2, content_type = $3 WHERE id = $1 RETURNING *"
+    )
+    .bind(id)
+    .bind(metadata)
+    .bind(content_type)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn replace_chunks(pool: &PgPool, source_id: Uuid, new_chunks: &[NewChunk]) -> AppResult<u64> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM chunks WHERE source_id = $1")
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await?;
+    let mut count: u64 = 0;
+    for chunk in new_chunks {
+        let result = sqlx::query(
+            "INSERT INTO chunks (id, source_id, chunk_index, content, embedding, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6)"
+        )
+        .bind(chunk.id)
+        .bind(chunk.source_id)
+        .bind(chunk.chunk_index)
+        .bind(&chunk.content)
+        .bind(&chunk.embedding)
+        .bind(&chunk.metadata)
+        .execute(&mut *tx)
+        .await?;
+        count += result.rows_affected();
+    }
+    tx.commit().await?;
+    Ok(count)
 }
 
 pub async fn delete_chunks_by_source(pool: &PgPool, source_id: Uuid) -> AppResult<u64> {

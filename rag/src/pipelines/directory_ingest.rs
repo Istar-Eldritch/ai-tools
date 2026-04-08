@@ -22,6 +22,7 @@ const MAX_ERRORS: usize = 50;
 #[derive(Clone)]
 pub struct DirectoryIngestPipeline {
     ingest: IngestPipeline,
+    #[allow(dead_code)]
     delete: DeletePipeline,
     pool: PgPool,
 }
@@ -52,7 +53,7 @@ enum FileAction {
     Update {
         file: PreparedFile,
         metadata: serde_json::Value,
-        old_source_id: uuid::Uuid,
+        old_source: Source,
     },
 }
 
@@ -213,7 +214,7 @@ impl DirectoryIngestPipeline {
                     continue;
                 }
                 actions.push(FileAction::Update {
-                    old_source_id: existing.id,
+                    old_source: (*existing).clone(),
                     metadata: file_metadata,
                     file,
                 });
@@ -229,7 +230,6 @@ impl DirectoryIngestPipeline {
         let mut result_stream = stream::iter(actions)
             .map(move |action| {
                 let ingest = self.ingest.clone();
-                let delete = self.delete.clone();
                 let project = project_clone.clone();
                 async move {
                     match action {
@@ -247,18 +247,12 @@ impl DirectoryIngestPipeline {
                         FileAction::Update {
                             file,
                             metadata: meta,
-                            old_source_id,
+                            old_source,
                         } => {
-                            if let Err(e) = delete.delete(old_source_id).await {
-                                return Err((
-                                    file.relative_path,
-                                    format!("delete old source failed: {e}"),
-                                ));
-                            }
                             ingest
-                                .ingest(
+                                .update_in_place(
+                                    &old_source,
                                     &file.content,
-                                    &file.relative_path,
                                     &file.content_type,
                                     meta,
                                     project,

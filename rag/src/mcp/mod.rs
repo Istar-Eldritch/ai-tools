@@ -192,7 +192,7 @@ impl McpServer {
         )]))
     }
 
-    #[tool(description = "Ingest all matching files from a local directory into the knowledge base. Walks the directory recursively, filters by include/exclude glob patterns, detects binary files, deduplicates by content hash, and ingests with bounded concurrency. Returns a summary with counts of ingested, skipped, and failed files.")]
+    #[tool(description = "Ingest all matching files from a local directory into the knowledge base. Walks the directory recursively, filters by include/exclude glob patterns, detects binary files, deduplicates by content hash, and ingests with bounded concurrency. Updates preserve source IDs and reuse embeddings for unchanged chunks. Returns a summary with counts of ingested, skipped, and failed files.")]
     async fn ingest_directory(
         &self,
         ct: CancellationToken,
