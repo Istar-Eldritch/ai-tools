@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
 use rmcp::{
-    ErrorData as McpError, ServerHandler,
+    ErrorData as McpError, Peer, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo},
+    model::{
+        CallToolResult, Content, Implementation, Meta, ProgressNotificationParam,
+        ServerCapabilities, ServerInfo,
+    },
     schemars, tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
@@ -10,7 +15,7 @@ use uuid::Uuid;
 use rag_mcp::error::AppError;
 use rag_mcp::pipelines::{
     delete::DeletePipeline,
-    directory_ingest::DirectoryIngestPipeline,
+    directory_ingest::{DirectoryIngestPipeline, ProgressCallback},
     ingest::IngestPipeline,
     search::{SearchFilter, SearchPipeline},
 };
@@ -164,15 +169,44 @@ impl McpServer {
     #[tool(description = "Ingest all matching files from a local directory into the knowledge base. Walks the directory recursively, filters by include/exclude glob patterns, detects binary files, deduplicates by content hash, and ingests with bounded concurrency. Returns a summary with counts of ingested, skipped, and failed files.")]
     async fn ingest_directory(
         &self,
+        meta: Meta,
+        client: Peer<RoleServer>,
         Parameters(params): Parameters<IngestDirectoryParams>,
     ) -> Result<CallToolResult, McpError> {
         let metadata = params
             .metadata
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
         let exclude = params.exclude.unwrap_or_default();
+
+        let on_progress: Option<ProgressCallback> =
+            meta.get_progress_token().map(|token| {
+                let client = client.clone();
+                Arc::new(move |progress: f64, total: Option<f64>, message: &str| {
+                    let client = client.clone();
+                    let token = token.clone();
+                    let message = message.to_string();
+                    tokio::spawn(async move {
+                        let _ = client
+                            .notify_progress(ProgressNotificationParam {
+                                progress_token: token,
+                                progress,
+                                total,
+                                message: Some(message),
+                            })
+                            .await;
+                    });
+                }) as ProgressCallback
+            });
+
         let summary = self
             .directory_ingest
-            .ingest_directory(&params.path, &params.include, &exclude, metadata)
+            .ingest_directory(
+                &params.path,
+                &params.include,
+                &exclude,
+                metadata,
+                on_progress.as_ref(),
+            )
             .await
             .map_err(app_error_to_mcp_error)?;
         let json = serde_json::to_string(&summary)

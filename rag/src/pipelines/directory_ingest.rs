@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -14,7 +15,7 @@ use crate::error::{AppError, AppResult};
 use crate::pipelines::delete::DeletePipeline;
 use crate::pipelines::ingest::IngestPipeline;
 
-const CONCURRENCY_LIMIT: usize = 8;
+const CONCURRENCY_LIMIT: usize = 1;
 const MAX_ERRORS: usize = 50;
 
 #[derive(Clone)]
@@ -34,6 +35,9 @@ pub struct IngestDirectorySummary {
     pub errors: Vec<String>,
     pub total_files_matched: u64,
 }
+
+/// Callback for reporting progress: `(current, total, message)`.
+pub type ProgressCallback = Arc<dyn Fn(f64, Option<f64>, &str) + Send + Sync>;
 
 struct PreparedFile {
     relative_path: String,
@@ -66,6 +70,7 @@ impl DirectoryIngestPipeline {
         include: &[String],
         exclude: &[String],
         metadata: serde_json::Value,
+        on_progress: Option<&ProgressCallback>,
     ) -> AppResult<IngestDirectorySummary> {
         let root = Path::new(path);
         if !root.is_dir() {
@@ -214,8 +219,10 @@ impl DirectoryIngestPipeline {
             }
         }
 
-        // Bounded-concurrency ingestion
-        let results: Vec<Result<(), (String, String)>> = stream::iter(actions)
+        // Bounded-concurrency ingestion with progress reporting
+        let total_actions = actions.len() as f64;
+        let mut completed = 0u64;
+        let mut result_stream = stream::iter(actions)
             .map(|action| {
                 let ingest = self.ingest.clone();
                 let delete = self.delete.clone();
@@ -256,17 +263,24 @@ impl DirectoryIngestPipeline {
                     }
                 }
             })
-            .buffer_unordered(CONCURRENCY_LIMIT)
-            .collect()
-            .await;
+            .buffer_unordered(CONCURRENCY_LIMIT);
 
-        for result in results {
+        while let Some(result) = result_stream.next().await {
+            completed += 1;
             match result {
                 Ok(()) => summary.ingested += 1,
                 Err((filename, err_msg)) => {
                     summary.failed += 1;
                     push_error(&mut summary.errors, format!("{filename}: {err_msg}"));
                 }
+            }
+            if let Some(cb) = &on_progress {
+                let total = total_actions as u64;
+                cb(
+                    completed as f64,
+                    Some(total_actions),
+                    &format!("Processed {completed}/{total} files"),
+                );
             }
         }
 

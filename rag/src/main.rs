@@ -12,7 +12,10 @@ use rag_mcp::pipelines::search::SearchPipeline;
 use rag_mcp::storage::S3Storage;
 use rmcp::transport::stdio;
 use rmcp::ServiceExt;
+use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::mcp::McpServer;
 
@@ -45,16 +48,47 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Serve(config) => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("info")),
-                )
+            let log_dir = std::env::var("RAG_LOG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+                    PathBuf::from(home).join(".local/state/rag-mcp")
+                });
+            std::fs::create_dir_all(&log_dir).ok();
+
+            let file_appender = tracing_appender::rolling::daily(&log_dir, "rag-mcp.log");
+
+            let env_filter = EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info"));
+
+            let stderr_layer = tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_ansi(false)
+                .with_ansi(false);
+
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_writer(file_appender)
+                .with_ansi(false);
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(stderr_layer)
+                .with(file_layer)
                 .init();
 
-            tracing::info!("RAG MCP server starting");
+            // Log panics through tracing so they hit the file appender
+            let panic_log_dir = log_dir.clone();
+            std::panic::set_hook(Box::new(move |info| {
+                let backtrace = std::backtrace::Backtrace::force_capture();
+                tracing::error!(%info, %backtrace, "PANIC");
+                // Also write directly to a crash file in case tracing fails to flush
+                let crash_path = panic_log_dir.join("crash.log");
+                let _ = std::fs::write(
+                    &crash_path,
+                    format!("{info}\n\n{backtrace}"),
+                );
+            }));
+
+            tracing::info!(log_dir = %log_dir.display(), "RAG MCP server starting");
 
             let pool = db::connect(&config.database_url, config.db_max_connections).await?;
             tracing::info!("database connected and migrations applied");
