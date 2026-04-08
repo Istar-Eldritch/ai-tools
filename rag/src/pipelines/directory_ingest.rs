@@ -181,7 +181,7 @@ impl DirectoryIngestPipeline {
 
         // Batch dedup lookup
         let filenames: Vec<&str> = prepared.iter().map(|f| f.relative_path.as_str()).collect();
-        let existing_sources = queries::get_sources_by_filenames(&self.pool, &filenames).await?;
+        let existing_sources = queries::get_sources_by_filenames(&self.pool, &filenames, None).await?;
 
         let mut source_map: HashMap<&str, &Source> = HashMap::new();
         for source in &existing_sources {

@@ -50,6 +50,8 @@ pub struct SearchParams {
     /// every key/value pair in this object.
     /// Example: `{"project": "rag", "lang": "en"}`.
     pub source_metadata: Option<serde_json::Value>,
+    /// Filter results to a specific project name.
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -133,6 +135,7 @@ impl McpServer {
         let filters = SearchFilter {
             filename_glob: params.filename_glob,
             source_metadata: params.source_metadata,
+            project: params.project,
         };
         let result: Result<_, McpError> = self
             .search

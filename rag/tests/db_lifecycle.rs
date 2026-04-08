@@ -68,7 +68,7 @@ async fn source_chunk_lifecycle() {
 
     // 5. search_chunks — query near emb_a, expect chunk 0 first
     let query_emb = Vector::from(emb_a);
-    let results = queries::search_chunks(&pool, &query_emb, 10, None, None).await.unwrap();
+    let results = queries::search_chunks(&pool, &query_emb, 10, None, None, None).await.unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].content, "first chunk");
     assert!(results[0].similarity > results[1].similarity);

@@ -56,7 +56,7 @@ async fn search_no_filter_returns_all_chunks() {
     ).await;
 
     let query_emb = unit_embedding(0);
-    let results = queries::search_chunks(&pool, &query_emb, 10, None, None)
+    let results = queries::search_chunks(&pool, &query_emb, 10, None, None, None)
         .await
         .unwrap();
     assert_eq!(results.len(), 2);
@@ -76,7 +76,7 @@ async fn search_filename_glob_filters_by_extension() {
     let query_emb = unit_embedding(0);
     let like_pattern = queries::glob_to_like("*.md");
     let results = queries::search_chunks(
-        &pool, &query_emb, 10, Some(&like_pattern), None,
+        &pool, &query_emb, 10, Some(&like_pattern), None, None,
     )
     .await
     .unwrap();
@@ -99,7 +99,7 @@ async fn search_filename_glob_question_mark() {
     let query_emb = unit_embedding(0);
     let like_pattern = queries::glob_to_like("?.rs");
     let results = queries::search_chunks(
-        &pool, &query_emb, 10, Some(&like_pattern), None,
+        &pool, &query_emb, 10, Some(&like_pattern), None, None,
     )
     .await
     .unwrap();
@@ -119,7 +119,7 @@ async fn search_filename_glob_no_match_returns_empty() {
     let query_emb = unit_embedding(0);
     let like_pattern = queries::glob_to_like("*.go");
     let results = queries::search_chunks(
-        &pool, &query_emb, 10, Some(&like_pattern), None,
+        &pool, &query_emb, 10, Some(&like_pattern), None, None,
     )
     .await
     .unwrap();
@@ -141,7 +141,7 @@ async fn search_metadata_containment_filter() {
     let query_emb = unit_embedding(0);
     let meta_filter = json!({"lang": "en"});
     let results = queries::search_chunks(
-        &pool, &query_emb, 10, None, Some(&meta_filter),
+        &pool, &query_emb, 10, None, Some(&meta_filter), None,
     )
     .await
     .unwrap();
@@ -171,7 +171,7 @@ async fn search_combined_filters_and_semantics() {
     let like_pattern = queries::glob_to_like("docs/*.md");
     let meta_filter = json!({"project": "rag"});
     let results = queries::search_chunks(
-        &pool, &query_emb, 10, Some(&like_pattern), Some(&meta_filter),
+        &pool, &query_emb, 10, Some(&like_pattern), Some(&meta_filter), None,
     )
     .await
     .unwrap();
@@ -190,7 +190,7 @@ async fn search_unfiltered_caller_unchanged() {
 
     let query_emb = unit_embedding(0);
     // Passing None, None is equivalent to SearchFilter::default()
-    let results = queries::search_chunks(&pool, &query_emb, 10, None, None)
+    let results = queries::search_chunks(&pool, &query_emb, 10, None, None, None)
         .await
         .unwrap();
     assert_eq!(results.len(), 1);

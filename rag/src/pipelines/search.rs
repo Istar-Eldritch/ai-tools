@@ -16,6 +16,8 @@ pub struct SearchFilter {
     /// Must be a JSON object if `Some`. A source matches if its metadata
     /// contains every key/value pair in this value.
     pub source_metadata: Option<serde_json::Value>,
+    /// Filter results to a specific project.
+    pub project: Option<String>,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,7 @@ impl SearchPipeline {
             k,
             filename_like.as_deref(),
             filters.source_metadata.as_ref(),
+            filters.project.as_deref(),
         )
         .await?;
 

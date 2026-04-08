@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::AppResult;
-use super::models::{NewChunk, NewSource, SearchResult, Source};
+use super::models::{NewChunk, NewSource, SearchResult, Source, SourceSummary};
 
 pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Source> {
     let row = sqlx::query_as::<_, Source>(
@@ -38,11 +38,19 @@ pub async fn get_source_by_s3_key(pool: &PgPool, s3_key: &str) -> AppResult<Opti
     Ok(row)
 }
 
-pub async fn get_sources_by_filenames(pool: &PgPool, filenames: &[&str]) -> AppResult<Vec<Source>> {
-    let rows = sqlx::query_as::<_, Source>("SELECT * FROM sources WHERE filename = ANY($1)")
-        .bind(filenames)
-        .fetch_all(pool)
-        .await?;
+pub async fn get_sources_by_filenames(
+    pool: &PgPool,
+    filenames: &[&str],
+    project: Option<&str>,
+) -> AppResult<Vec<Source>> {
+    let rows = sqlx::query_as::<_, Source>(
+        "SELECT * FROM sources WHERE filename = ANY($1)
+           AND ($2::text IS NULL OR project = $2)"
+    )
+    .bind(filenames)
+    .bind(project)
+    .fetch_all(pool)
+    .await?;
     Ok(rows)
 }
 
@@ -88,6 +96,7 @@ pub async fn search_chunks(
     k: i64,
     filename_like: Option<&str>,
     source_metadata: Option<&serde_json::Value>,
+    project: Option<&str>,
 ) -> AppResult<Vec<SearchResult>> {
     let rows = sqlx::query_as::<_, SearchResult>(
         "SELECT
@@ -95,14 +104,17 @@ pub async fn search_chunks(
              c.source_id,
              c.chunk_index,
              c.content,
+             c.embedding,
              s.filename    AS source_filename,
              s.metadata    AS source_metadata,
              c.metadata    AS chunk_metadata,
-             1.0 - (c.embedding <=> $1) AS similarity
+             1.0 - (c.embedding <=> $1) AS similarity,
+             s.project     AS source_project
          FROM chunks c
          JOIN sources s ON s.id = c.source_id
          WHERE ($3::text IS NULL OR s.filename LIKE $3 ESCAPE '\\')
            AND ($4::jsonb IS NULL OR s.metadata @> $4)
+           AND ($5::text IS NULL OR s.project = $5)
          ORDER BY c.embedding <=> $1
          LIMIT $2"
     )
@@ -110,6 +122,34 @@ pub async fn search_chunks(
     .bind(k)
     .bind(filename_like)
     .bind(source_metadata)
+    .bind(project)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn list_sources(
+    pool: &PgPool,
+    project: Option<&str>,
+    filename_like: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> AppResult<Vec<SourceSummary>> {
+    let rows = sqlx::query_as::<_, SourceSummary>(
+        "SELECT s.id, s.filename, s.content_type, s.project, s.metadata,
+                s.created_at, COUNT(c.id) AS chunk_count
+         FROM sources s
+         LEFT JOIN chunks c ON c.source_id = s.id
+         WHERE ($1::text IS NULL OR s.project = $1)
+           AND ($2::text IS NULL OR s.filename LIKE $2 ESCAPE '\\')
+         GROUP BY s.id
+         ORDER BY s.created_at DESC
+         LIMIT $3 OFFSET $4"
+    )
+    .bind(project)
+    .bind(filename_like)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await?;
     Ok(rows)
