@@ -3,3 +3,5 @@
 */target
 rag/.fastembed_cache/
 rag/.mcp.json
+spec-pipeline/.fastembed_cache/
+spec-pipeline/.mcp.json
