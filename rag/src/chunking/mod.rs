@@ -1,4 +1,45 @@
 use text_splitter::{ChunkConfig as TSChunkConfig, MarkdownSplitter, TextSplitter};
+use tree_sitter::Language;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeLanguage {
+    Rust,
+    Python,
+    TypeScript,
+    Java,
+}
+
+impl CodeLanguage {
+    pub fn ts_language(&self) -> Language {
+        match self {
+            CodeLanguage::Rust => tree_sitter_rust::LANGUAGE.into(),
+            CodeLanguage::Python => tree_sitter_python::LANGUAGE.into(),
+            CodeLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            CodeLanguage::Java => tree_sitter_java::LANGUAGE.into(),
+        }
+    }
+}
+
+pub fn detect_language(filename: &str) -> Option<CodeLanguage> {
+    let ext = filename.rsplit('.').next()?;
+    match ext {
+        "rs" => Some(CodeLanguage::Rust),
+        "py" => Some(CodeLanguage::Python),
+        "ts" | "tsx" => Some(CodeLanguage::TypeScript),
+        "java" => Some(CodeLanguage::Java),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CodeChunk {
+    pub index: usize,
+    pub content: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub node_type: String,
+    pub context: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct TextChunk {
@@ -165,5 +206,55 @@ mod tests {
             std::env::remove_var("CHUNK_SIZE");
             std::env::remove_var("CHUNK_OVERLAP");
         }
+    }
+
+    #[test]
+    fn detect_language_rust() {
+        assert_eq!(detect_language("main.rs"), Some(CodeLanguage::Rust));
+    }
+
+    #[test]
+    fn detect_language_python() {
+        assert_eq!(detect_language("script.py"), Some(CodeLanguage::Python));
+    }
+
+    #[test]
+    fn detect_language_typescript() {
+        assert_eq!(detect_language("app.ts"), Some(CodeLanguage::TypeScript));
+    }
+
+    #[test]
+    fn detect_language_tsx() {
+        assert_eq!(detect_language("component.tsx"), Some(CodeLanguage::TypeScript));
+    }
+
+    #[test]
+    fn detect_language_java() {
+        assert_eq!(detect_language("Main.java"), Some(CodeLanguage::Java));
+    }
+
+    #[test]
+    fn detect_language_unknown_extension() {
+        assert_eq!(detect_language("style.css"), None);
+    }
+
+    #[test]
+    fn detect_language_no_extension() {
+        assert_eq!(detect_language("Makefile"), None);
+    }
+
+    #[test]
+    fn detect_language_nested_extensions() {
+        assert_eq!(detect_language("foo.test.ts"), Some(CodeLanguage::TypeScript));
+    }
+
+    #[test]
+    fn detect_language_hidden_file() {
+        assert_eq!(detect_language(".gitignore"), None);
+    }
+
+    #[test]
+    fn detect_language_dot_only_extension() {
+        assert_eq!(detect_language(".rs"), Some(CodeLanguage::Rust));
     }
 }
