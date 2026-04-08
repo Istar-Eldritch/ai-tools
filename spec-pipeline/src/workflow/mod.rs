@@ -283,4 +283,37 @@ impl WorkflowState {
             Self::Epic(s) => s.is_error_gate(),
         }
     }
+
+    /// Transition a Running state into an ErrorGate, preserving the workflow type.
+    ///
+    /// Used during session recovery to move sessions that were running when the
+    /// process crashed into an error state so the user can decide what to do.
+    pub fn to_error_gate(&self) -> Self {
+        match self {
+            Self::Brainstorm(s) => {
+                let phase = s.phase_name().to_string();
+                Self::Brainstorm(BrainstormState::ErrorGate {
+                    message: "Session interrupted; recovered after restart.".to_string(),
+                    failed_phase: phase,
+                    exit_code: None,
+                })
+            }
+            Self::Spec(s) => {
+                let phase = s.phase_name().to_string();
+                Self::Spec(SpecState::ErrorGate {
+                    message: "Session interrupted; recovered after restart.".to_string(),
+                    failed_phase: phase,
+                    exit_code: None,
+                })
+            }
+            Self::Epic(s) => {
+                let phase = s.phase_name().to_string();
+                Self::Epic(EpicState::ErrorGate {
+                    message: "Session interrupted; recovered after restart.".to_string(),
+                    failed_phase: phase,
+                    exit_code: None,
+                })
+            }
+        }
+    }
 }
