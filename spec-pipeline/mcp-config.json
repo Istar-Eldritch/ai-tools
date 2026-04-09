@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rag": {
+      "command": "rag-mcp",
+      "args": ["serve"],
+      "env": {
+        "DATABASE_URL": "postgres://rag:rag@localhost:5432/rag"
+      }
+    }
+  }
+}

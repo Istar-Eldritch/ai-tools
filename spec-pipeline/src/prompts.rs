@@ -160,6 +160,18 @@ to an empty string (the synthesis phase will produce the real artifact).
 {"type": "done", "summary": "<brief summary of discoveries>", "artifact_path": ""}
 ```
 
+## RAG-First Strategy
+
+If any RAG (retrieval-augmented generation) tools are available, use them as
+your **first step** before reading files or using other exploration tools.
+RAG search returns semantically relevant chunks from a knowledge base, letting
+you quickly orient yourself without costly full-file reads.
+
+- Start with 1-3 broad RAG queries covering the topic and key concepts.
+- Use the results to identify which files and areas are relevant.
+- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
+  for details the RAG results don't cover.
+
 ## Guidelines
 
 - On the FIRST turn, read the topic and any context_refs carefully, then either
@@ -277,6 +289,18 @@ an empty string (the drafting phase will produce the real artifact).
 {"type": "done", "summary": "<brief summary of research findings>", "artifact_path": ""}
 ```
 
+## RAG-First Strategy
+
+If any RAG (retrieval-augmented generation) tools are available, use them as
+your **first step** before reading files or using other exploration tools.
+RAG search returns semantically relevant chunks from a knowledge base, letting
+you quickly orient yourself without costly full-file reads.
+
+- Start with 1-3 broad RAG queries covering the topic and key concepts.
+- Use the results to identify which files and areas are relevant.
+- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
+  for details the RAG results don't cover.
+
 ## Guidelines
 
 - On the FIRST turn, read the topic and any context_refs carefully.
@@ -382,6 +406,18 @@ You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
 ```json
 {"type": "done", "summary": "<brief summary of extracted children>", "artifact_path": ""}
 ```
+
+## RAG-First Strategy
+
+If any RAG (retrieval-augmented generation) tools are available, use them as
+your **first step** before reading files or using other exploration tools.
+RAG search returns semantically relevant chunks from a knowledge base, letting
+you quickly orient yourself without costly full-file reads.
+
+- Start with 1-3 broad RAG queries covering the topic and key concepts.
+- Use the results to identify which files and areas are relevant.
+- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
+  for details the RAG results don't cover.
 
 ## Guidelines
 
@@ -520,6 +556,18 @@ You receive a JSON object on stdin with these fields:
 - `context_refs` — includes the spec tmp path and any user-provided context.
 - `revision_feedback` — review feedback if this is a re-plan (null on first run).
 - `revision` — current revision number.
+
+## RAG-First Strategy
+
+If any RAG (retrieval-augmented generation) tools are available, use them as
+your **first step** before reading files or using other exploration tools.
+RAG search returns semantically relevant chunks from a knowledge base, letting
+you quickly orient yourself without costly full-file reads.
+
+- Start with 1-3 broad RAG queries covering the topic and key concepts.
+- Use the results to identify which files and areas are relevant.
+- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
+  for details the RAG results don't cover.
 
 ## Task
 
