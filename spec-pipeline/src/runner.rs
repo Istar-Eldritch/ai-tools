@@ -83,7 +83,9 @@ pub enum RawPhaseOutput {
 
     #[serde(rename = "done")]
     Done {
+        #[serde(default)]
         artifact_path: String,
+        #[serde(default)]
         summary: String,
     },
 }

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use rmcp::model::{
     LoggingLevel, LoggingMessageNotificationParam, NumberOrString, ProgressNotificationParam,
@@ -17,6 +18,27 @@ use crate::workflow::SessionState;
 /// Handle to the MCP client peer, populated during the MCP handshake.
 pub type PeerHandle = Arc<RwLock<Option<Peer<RoleServer>>>>;
 
+/// The type of session event being emitted.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEventType {
+    PhaseTransition,
+    GateArrived,
+    GateResponseReceived,
+    WorkflowComplete,
+    WorkflowError,
+    WorkflowCancelled,
+    Keepalive,
+}
+
+/// Error details included in `workflow_error` events.
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorContent {
+    pub message: String,
+    pub failed_phase: String,
+    pub exit_code: Option<i32>,
+}
+
 /// Per-session watch channels so MCP tool handlers can block until state changes.
 type StateWatchMap = DashMap<Uuid, watch::Sender<SessionState>>;
 
@@ -30,8 +52,10 @@ pub struct SessionNotifier {
 /// Describes a session state change event.
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionEvent {
+    pub schema_version: &'static str,
     pub session_id: Uuid,
     pub workflow_type: String,
+    pub event_type: SessionEventType,
     pub session_state: String,
     pub phase: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,7 +64,10 @@ pub struct SessionEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate_content: Option<serde_json::Value>,
     pub progress: f64,
-    pub total: f64,
+    pub total_cost_usd: f64,
+    pub timestamp: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorContent>,
 }
 
 impl SessionNotifier {
@@ -73,9 +100,10 @@ impl SessionNotifier {
         self.watches.remove(&session_id);
     }
 
-    /// Emit both `notifications/progress` and `notifications/message` for the event,
-    /// and signal the watch channel so blocking tool calls wake up.
-    pub async fn notify(&self, event: &SessionEvent) {
+    /// Emit a structured `spec/sessionEvent` custom MCP notification,
+    /// plus the existing `notifications/progress` for progress-bar clients.
+    /// Also signals the watch channel so blocking tool calls wake up.
+    pub async fn notify_event(&self, event: &SessionEvent) {
         // Signal watch channel
         if let Some(tx) = self.watches.get(&event.session_id) {
             let state = parse_session_state(&event.session_state);
@@ -88,27 +116,30 @@ impl SessionNotifier {
             None => return, // peer not yet available (pre-handshake)
         };
 
-        // notifications/progress — session UUID as token
+        // spec/sessionEvent — structured custom notification
+        let params = serde_json::to_value(event).unwrap_or_default();
+        let custom = rmcp::model::CustomNotification::new("spec/sessionEvent", Some(params));
+        if let Err(e) = peer
+            .send_notification(rmcp::model::ServerNotification::CustomNotification(custom))
+            .await
+        {
+            warn!(error = %e, "failed to send spec/sessionEvent notification");
+        }
+
+        // notifications/progress — retained for progress-bar clients
+        let at_gate = matches!(event.session_state.as_str(), "WaitingAtGate" | "ErrorGate");
+        let (progress, total) = progress_for(&event.workflow_type, &event.phase, at_gate);
         let progress_param = ProgressNotificationParam {
             progress_token: ProgressToken(NumberOrString::String(
                 event.session_id.to_string().into(),
             )),
-            progress: event.progress,
-            total: Some(event.total),
+            progress,
+            total: Some(total),
             message: Some(event.message.clone()),
         };
 
         if let Err(e) = peer.notify_progress(progress_param).await {
             warn!(error = %e, "failed to send progress notification");
-        }
-
-        // notifications/message — structured JSON payload
-        let data = serde_json::to_value(event).unwrap_or_default();
-        let log_param = LoggingMessageNotificationParam::new(LoggingLevel::Info, data)
-            .with_logger("spec-pipeline");
-
-        if let Err(e) = peer.notify_logging_message(log_param).await {
-            warn!(error = %e, "failed to send logging notification");
         }
     }
 
@@ -125,7 +156,7 @@ impl SessionNotifier {
             "phase": phase,
             "child_event": message,
         });
-        let log_param = LoggingMessageNotificationParam::new(LoggingLevel::Info, data)
+        let log_param = LoggingMessageNotificationParam::new(LoggingLevel::Debug, data)
             .with_logger("spec-pipeline.agent");
 
         if let Err(e) = peer.notify_logging_message(log_param).await {
@@ -133,14 +164,49 @@ impl SessionNotifier {
         }
     }
 
-    /// Send a keepalive progress notification (used during blocking waits).
-    pub async fn send_keepalive(&self, session_id: Uuid, message: &str, progress: f64, total: f64) {
+    /// Send a keepalive — both as spec/sessionEvent and as notifications/progress.
+    pub async fn send_keepalive(
+        &self,
+        session_id: Uuid,
+        workflow_type: &str,
+        phase: &str,
+        message: &str,
+        progress: f64,
+        total: f64,
+    ) {
         let guard = self.peer.read().await;
         let peer = match guard.as_ref() {
             Some(p) => p,
             None => return,
         };
 
+        // spec/sessionEvent keepalive
+        let event = SessionEvent {
+            schema_version: "1",
+            session_id,
+            workflow_type: workflow_type.to_string(),
+            event_type: SessionEventType::Keepalive,
+            session_state: "WaitingAtGate".into(),
+            phase: phase.to_string(),
+            sub_phase: None,
+            message: message.to_string(),
+            gate_content: None,
+            progress,
+            total_cost_usd: 0.0,
+            timestamp: Utc::now(),
+            error: None,
+        };
+
+        let params = serde_json::to_value(&event).unwrap_or_default();
+        let custom = rmcp::model::CustomNotification::new("spec/sessionEvent", Some(params));
+        if let Err(e) = peer
+            .send_notification(rmcp::model::ServerNotification::CustomNotification(custom))
+            .await
+        {
+            warn!(error = %e, "failed to send keepalive spec/sessionEvent notification");
+        }
+
+        // Also send progress notification (existing behavior)
         let progress_param = ProgressNotificationParam {
             progress_token: ProgressToken(NumberOrString::String(
                 session_id.to_string().into(),

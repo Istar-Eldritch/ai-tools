@@ -634,3 +634,267 @@ fn gate_response_configure_serialization() {
     assert!(json.contains("configure"));
     assert!(json.contains("planner"));
 }
+
+// ---------------------------------------------------------------------------
+// Notification infrastructure tests (Phase 2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn session_event_serialization() {
+    use spec_pipeline_mcp::notifier::{SessionEvent, SessionEventType};
+
+    let event = SessionEvent {
+        schema_version: "1",
+        session_id: uuid::Uuid::new_v4(),
+        workflow_type: "brainstorm".to_string(),
+        event_type: SessionEventType::PhaseTransition,
+        session_state: "Running".to_string(),
+        phase: "discovery".to_string(),
+        sub_phase: Some("exploring".to_string()),
+        message: "brainstorm: discovery phase running".to_string(),
+        gate_content: None,
+        progress: 1.0,
+        total_cost_usd: 0.042,
+        timestamp: chrono::Utc::now(),
+        error: None,
+    };
+
+    let json = serde_json::to_value(&event).expect("serialize SessionEvent");
+
+    assert_eq!(json["schema_version"], "1");
+    assert_eq!(json["workflow_type"], "brainstorm");
+    assert_eq!(json["event_type"], "phase_transition");
+    assert_eq!(json["session_state"], "Running");
+    assert_eq!(json["phase"], "discovery");
+    assert_eq!(json["sub_phase"], "exploring");
+    assert!(json.get("gate_content").is_none() || json["gate_content"].is_null());
+    assert!(json.get("error").is_none() || json["error"].is_null());
+    assert!(json["progress"].as_f64().unwrap() > 0.0);
+    assert!(json["total_cost_usd"].as_f64().is_some());
+    assert!(json["timestamp"].as_str().is_some());
+}
+
+#[test]
+fn session_event_gate_arrived_includes_gate_content() {
+    use spec_pipeline_mcp::notifier::{SessionEvent, SessionEventType};
+
+    let gate = serde_json::json!({
+        "summary": "Brainstorm draft is ready for review.",
+        "artifact_path": "/tmp/brainstorm.md",
+        "suggested_actions": ["approve", "revise", "cancel"],
+    });
+
+    let event = SessionEvent {
+        schema_version: "1",
+        session_id: uuid::Uuid::new_v4(),
+        workflow_type: "brainstorm".to_string(),
+        event_type: SessionEventType::GateArrived,
+        session_state: "WaitingAtGate".to_string(),
+        phase: "awaiting_approval".to_string(),
+        sub_phase: None,
+        message: "brainstorm: waiting for input".to_string(),
+        gate_content: Some(gate),
+        progress: 3.0,
+        total_cost_usd: 0.15,
+        timestamp: chrono::Utc::now(),
+        error: None,
+    };
+
+    let json = serde_json::to_value(&event).expect("serialize");
+
+    assert_eq!(json["event_type"], "gate_arrived");
+    assert_eq!(json["session_state"], "WaitingAtGate");
+    assert!(json["gate_content"].is_object());
+    assert_eq!(json["gate_content"]["summary"], "Brainstorm draft is ready for review.");
+}
+
+#[test]
+fn session_event_error_includes_error_content() {
+    use spec_pipeline_mcp::notifier::{SessionEvent, SessionEventType, ErrorContent};
+
+    let event = SessionEvent {
+        schema_version: "1",
+        session_id: uuid::Uuid::new_v4(),
+        workflow_type: "spec".to_string(),
+        event_type: SessionEventType::WorkflowError,
+        session_state: "ErrorGate".to_string(),
+        phase: "drafting".to_string(),
+        sub_phase: None,
+        message: "spec: error in drafting phase".to_string(),
+        gate_content: None,
+        progress: 2.0,
+        total_cost_usd: 0.5,
+        timestamp: chrono::Utc::now(),
+        error: Some(ErrorContent {
+            message: "Claude subprocess exited with code 1".to_string(),
+            failed_phase: "drafting".to_string(),
+            exit_code: Some(1),
+        }),
+    };
+
+    let json = serde_json::to_value(&event).expect("serialize");
+
+    assert_eq!(json["event_type"], "workflow_error");
+    assert_eq!(json["session_state"], "ErrorGate");
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["message"], "Claude subprocess exited with code 1");
+    assert_eq!(json["error"]["failed_phase"], "drafting");
+    assert_eq!(json["error"]["exit_code"], 1);
+}
+
+#[test]
+fn session_event_type_serde_variants() {
+    use spec_pipeline_mcp::notifier::SessionEventType;
+
+    let cases = vec![
+        (SessionEventType::PhaseTransition, "phase_transition"),
+        (SessionEventType::GateArrived, "gate_arrived"),
+        (SessionEventType::GateResponseReceived, "gate_response_received"),
+        (SessionEventType::WorkflowComplete, "workflow_complete"),
+        (SessionEventType::WorkflowError, "workflow_error"),
+        (SessionEventType::WorkflowCancelled, "workflow_cancelled"),
+        (SessionEventType::Keepalive, "keepalive"),
+    ];
+
+    for (variant, expected) in cases {
+        let json = serde_json::to_value(&variant).expect("serialize");
+        assert_eq!(
+            json.as_str().unwrap(),
+            expected,
+            "SessionEventType::{variant:?} should serialize to \"{expected}\""
+        );
+    }
+}
+
+#[test]
+fn notification_progress_values() {
+    use spec_pipeline_mcp::notifier::progress_for;
+
+    // Brainstorm: 4 total
+    assert_eq!(progress_for("brainstorm", "discovery", false), (1.0, 4.0));
+    assert_eq!(progress_for("brainstorm", "discovery", true), (1.5, 4.0));
+    assert_eq!(progress_for("brainstorm", "synthesis", false), (2.0, 4.0));
+    assert_eq!(progress_for("brainstorm", "awaiting_approval", false), (3.0, 4.0));
+    assert_eq!(progress_for("brainstorm", "complete", false), (4.0, 4.0));
+
+    // Implement: 8 total
+    assert_eq!(progress_for("implement", "phase_extraction", false), (1.0, 8.0));
+    assert_eq!(progress_for("implement", "implementation", false), (5.0, 8.0));
+    assert_eq!(progress_for("implement", "complete", false), (8.0, 8.0));
+}
+
+#[tokio::test]
+async fn notifier_watch_channel_signals_state_change() {
+    use spec_pipeline_mcp::notifier::{SessionNotifier, SessionEvent, SessionEventType};
+    use spec_pipeline_mcp::workflow::SessionState;
+
+    let notifier = SessionNotifier::new();
+    let session_id = uuid::Uuid::new_v4();
+    let mut rx = notifier.create_watch(session_id);
+
+    // Initial state is Running
+    assert_eq!(*rx.borrow(), SessionState::Running);
+
+    // Emit a gate_arrived event (WaitingAtGate)
+    notifier
+        .notify_event(&SessionEvent {
+            schema_version: "1",
+            session_id,
+            workflow_type: "brainstorm".to_string(),
+            event_type: SessionEventType::GateArrived,
+            session_state: "WaitingAtGate".to_string(),
+            phase: "awaiting_approval".to_string(),
+            sub_phase: None,
+            message: "test gate".to_string(),
+            gate_content: None,
+            progress: 3.0,
+            total_cost_usd: 0.0,
+            timestamp: chrono::Utc::now(),
+            error: None,
+        })
+        .await;
+
+    // Watch should have received the state change
+    rx.changed().await.expect("watch should signal");
+    assert_eq!(*rx.borrow(), SessionState::WaitingAtGate);
+}
+
+#[tokio::test]
+async fn notifier_without_peer_does_not_panic() {
+    use spec_pipeline_mcp::notifier::{SessionNotifier, SessionEvent, SessionEventType};
+
+    let notifier = SessionNotifier::new();
+    let session_id = uuid::Uuid::new_v4();
+
+    // No peer set — should silently return without error (NF-4)
+    notifier
+        .notify_event(&SessionEvent {
+            schema_version: "1",
+            session_id,
+            workflow_type: "spec".to_string(),
+            event_type: SessionEventType::PhaseTransition,
+            session_state: "Running".to_string(),
+            phase: "research".to_string(),
+            sub_phase: None,
+            message: "test".to_string(),
+            gate_content: None,
+            progress: 1.0,
+            total_cost_usd: 0.0,
+            timestamp: chrono::Utc::now(),
+            error: None,
+        })
+        .await;
+
+    // If we reach here without panic, the test passes (requirement NF-4)
+}
+
+#[test]
+fn keepalive_event_serialization() {
+    use spec_pipeline_mcp::notifier::{SessionEvent, SessionEventType};
+
+    let event = SessionEvent {
+        schema_version: "1",
+        session_id: uuid::Uuid::new_v4(),
+        workflow_type: "brainstorm".to_string(),
+        event_type: SessionEventType::Keepalive,
+        session_state: "WaitingAtGate".to_string(),
+        phase: "awaiting_approval".to_string(),
+        sub_phase: None,
+        message: "Still waiting for input...".to_string(),
+        gate_content: None,
+        progress: 3.0,
+        total_cost_usd: 0.0,
+        timestamp: chrono::Utc::now(),
+        error: None,
+    };
+
+    let json = serde_json::to_value(&event).expect("serialize");
+    assert_eq!(json["event_type"], "keepalive");
+    assert_eq!(json["session_state"], "WaitingAtGate");
+}
+
+#[test]
+fn error_content_serialization() {
+    use spec_pipeline_mcp::notifier::ErrorContent;
+
+    let error = ErrorContent {
+        message: "Claude subprocess exited with code 1".to_string(),
+        failed_phase: "synthesis".to_string(),
+        exit_code: Some(1),
+    };
+
+    let json = serde_json::to_value(&error).expect("serialize");
+    assert_eq!(json["message"], "Claude subprocess exited with code 1");
+    assert_eq!(json["failed_phase"], "synthesis");
+    assert_eq!(json["exit_code"], 1);
+
+    // Without exit code
+    let error_no_code = ErrorContent {
+        message: "Unknown error".to_string(),
+        failed_phase: "discovery".to_string(),
+        exit_code: None,
+    };
+
+    let json = serde_json::to_value(&error_no_code).expect("serialize");
+    assert!(json["exit_code"].is_null());
+}

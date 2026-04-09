@@ -14,7 +14,10 @@ use serde::Deserialize;
 use tracing::info;
 use uuid::Uuid;
 
-use spec_pipeline_mcp::notifier::{PeerHandle, SessionNotifier};
+use chrono::Utc;
+use spec_pipeline_mcp::notifier::{
+    PeerHandle, SessionEvent as NotifEvent, SessionEventType, SessionNotifier,
+};
 use spec_pipeline_mcp::phase_runner::{self, GateChannelMap};
 use spec_pipeline_mcp::prompts::PromptStore;
 use spec_pipeline_mcp::runner::ClaudeRunner;
@@ -160,7 +163,7 @@ impl McpServer {
 #[tool_router]
 impl McpServer {
     #[tool(
-        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, epic, or implement) and topic. For implement workflows, topic must be the path to an existing spec file. Returns immediately with the session ID in Running state. Poll with spec_status to track progress until the session reaches a gate, completes, or errors."
+        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, epic, or implement) and topic. For implement workflows, topic must be the path to an existing spec file. Returns immediately with the session ID in Running state. Subscribe to spec/sessionEvent notifications for real-time progress updates. The server emits structured notifications on every phase transition, gate arrival, completion, and error — no polling required. Use spec_status only for a one-time snapshot (e.g. on reconnect)."
     )]
     async fn spec_start(
         &self,
@@ -207,12 +210,40 @@ impl McpServer {
         // Spawn the async workflow loop for the appropriate workflow type.
         self.spawn_session_loop(session_id, workflow_type);
 
-        // Return immediately — caller polls via spec_status.
+        // Emit initial phase_transition so clients know the workflow started.
+        {
+            let phase = match workflow_type {
+                WorkflowType::Brainstorm => "discovery",
+                WorkflowType::Spec => "research",
+                WorkflowType::Epic => "child_extraction",
+                WorkflowType::Implement => "phase_extraction",
+            };
+
+            self.notifier
+                .notify_event(&NotifEvent {
+                    schema_version: "1",
+                    session_id,
+                    workflow_type: workflow_type.to_string(),
+                    event_type: SessionEventType::PhaseTransition,
+                    session_state: "Running".into(),
+                    phase: phase.to_string(),
+                    sub_phase: None,
+                    message: format!("Workflow started: {workflow_type}"),
+                    gate_content: None,
+                    progress: 0.0,
+                    total_cost_usd: 0.0,
+                    timestamp: Utc::now(),
+                    error: None,
+                })
+                .await;
+        }
+
+        // Return immediately — client receives progress via spec/sessionEvent notifications.
         build_session_snapshot(session_id, &self.registry).await
     }
 
     #[tool(
-        description = "Check the status of an existing spec-pipeline session. Returns detailed information about the session including workflow type, phase, state, and any gate content."
+        description = "Check the status of an existing spec-pipeline session. Returns detailed information about the session including workflow type, phase, state, and any gate content. Do not poll this tool — subscribe to spec/sessionEvent notifications for real-time updates. Use this only for a one-time snapshot, e.g. on reconnect."
     )]
     async fn spec_status(
         &self,
@@ -223,7 +254,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate. Returns immediately after delivering the response. Poll with spec_status to track progress until the session reaches the next gate, completes, or errors."
+        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate. Returns immediately after delivering the response. A gate_response_received notification is emitted, followed by phase_transition notifications as the workflow resumes. Subscribe to spec/sessionEvent notifications for real-time progress — no polling required."
     )]
     async fn spec_respond(
         &self,
@@ -329,7 +360,37 @@ impl McpServer {
             return build_session_snapshot(id, &self.registry).await;
         }
 
-        // Return immediately — caller polls via spec_status.
+        // Emit gate_response_received notification
+        {
+            let handle = self.registry.get(id).ok_or_else(|| {
+                McpError::internal_error(format!("Session {id} vanished"), None)
+            })?;
+            let session = handle.lock().await;
+            let wt = session.workflow_state.workflow_type().to_string();
+            let phase = session.workflow_state.phase_name().to_string();
+            let sub_phase = session.workflow_state.sub_phase_name().map(|s| s.to_string());
+            let cost = session.total_cost_usd;
+            drop(session);
+
+            self.notifier
+                .notify_event(&NotifEvent {
+                    schema_version: "1",
+                    session_id: id,
+                    workflow_type: wt,
+                    event_type: SessionEventType::GateResponseReceived,
+                    session_state: "Running".into(),
+                    phase,
+                    sub_phase,
+                    message: format!("Gate response accepted: {}", params.response_type),
+                    gate_content: None,
+                    progress: 0.0,
+                    total_cost_usd: cost,
+                    timestamp: Utc::now(),
+                    error: None,
+                })
+                .await;
+        }
+
         build_session_snapshot(id, &self.registry).await
     }
 
@@ -343,6 +404,36 @@ impl McpServer {
         let id = parse_uuid(&params.session_id)?;
 
         self.registry.cancel(id).await.map_err(anyhow_to_mcp)?;
+
+        // Emit cancellation notification
+        {
+            let handle = self.registry.get(id).ok_or_else(|| {
+                McpError::internal_error(format!("Session {id} vanished"), None)
+            })?;
+            let session = handle.lock().await;
+            let wt = session.workflow_state.workflow_type().to_string();
+            let phase = session.workflow_state.phase_name().to_string();
+            let cost = session.total_cost_usd;
+            drop(session);
+
+            self.notifier
+                .notify_event(&NotifEvent {
+                    schema_version: "1",
+                    session_id: id,
+                    workflow_type: wt,
+                    event_type: SessionEventType::WorkflowCancelled,
+                    session_state: "Cancelled".into(),
+                    phase,
+                    sub_phase: None,
+                    message: "Workflow cancelled by user".into(),
+                    gate_content: None,
+                    progress: 0.0,
+                    total_cost_usd: cost,
+                    timestamp: Utc::now(),
+                    error: None,
+                })
+                .await;
+        }
 
         let json = serde_json::json!({
             "session_id": id.to_string(),
@@ -469,11 +560,22 @@ async fn build_session_snapshot(
 
     let last_activity = registry.last_activity(session_id);
 
+    let state_str = format!("{:?}", state);
+    let event_type = match state_str.as_str() {
+        "Complete" => "workflow_complete",
+        "Cancelled" => "workflow_cancelled",
+        "ErrorGate" => "workflow_error",
+        "WaitingAtGate" => "gate_arrived",
+        _ => "phase_transition",
+    };
+
     let json = serde_json::json!({
+        "schema_version": "1",
         "session_id": session.id.to_string(),
         "topic": session.topic,
         "workflow_type": session.workflow_state.workflow_type().to_string(),
-        "session_state": format!("{:?}", state),
+        "event_type": event_type,
+        "session_state": state_str,
         "phase": session.workflow_state.phase_name(),
         "sub_phase": session.workflow_state.sub_phase_name(),
         "context_refs": session.context_refs,

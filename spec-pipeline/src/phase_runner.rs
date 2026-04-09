@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use tokio::sync::mpsc;
 
-use crate::notifier::{SessionEvent, SessionNotifier, progress_for};
+use chrono::Utc;
+use crate::notifier::{ErrorContent, SessionEvent, SessionEventType, SessionNotifier, progress_for};
 use crate::prompts::PromptStore;
 use crate::runner::{ChildEvent, ClaudeRunner, PhaseContext, RawPhaseOutput, RunnerError};
 use crate::session::SessionRegistry;
@@ -481,18 +482,35 @@ async fn run_phase_and_process(
 
     // Notify: phase starting
     {
-        let (progress, total) = progress_for(&setup.workflow_type, &setup.context.phase, false);
+        let (progress, _total) = progress_for(&setup.workflow_type, &setup.context.phase, false);
+
+        // Read cost from session
+        let total_cost_usd = registry
+            .get(session_id)
+            .map(|h| {
+                // Try lock; fall back to 0.0 if contended (non-blocking)
+                match h.try_lock() {
+                    Ok(s) => s.total_cost_usd,
+                    Err(_) => 0.0,
+                }
+            })
+            .unwrap_or(0.0);
+
         notifier
-            .notify(&SessionEvent {
+            .notify_event(&SessionEvent {
+                schema_version: "1",
                 session_id,
                 workflow_type: setup.workflow_type.clone(),
+                event_type: SessionEventType::PhaseTransition,
                 session_state: "Running".into(),
                 phase: setup.context.phase.clone(),
                 sub_phase: setup.context.sub_phase.clone(),
                 message: format!("{}: {} phase running", setup.workflow_type, setup.context.phase),
                 gate_content: None,
                 progress,
-                total,
+                total_cost_usd,
+                timestamp: Utc::now(),
+                error: None,
             })
             .await;
     }
@@ -1468,7 +1486,7 @@ async fn apply_retry(
 // Notification helper
 // ---------------------------------------------------------------------------
 
-/// Read the current session state and emit an MCP notification.
+/// Read the current session state and emit a structured spec/sessionEvent notification.
 async fn notify_current_state(
     session_id: Uuid,
     registry: &Arc<SessionRegistry>,
@@ -1494,7 +1512,15 @@ async fn notify_current_state(
         state_str.as_str(),
         "WaitingAtGate" | "ErrorGate"
     );
-    let (progress, total) = progress_for(&wt, &phase, at_gate);
+    let (progress, _total) = progress_for(&wt, &phase, at_gate);
+
+    let event_type = match state_str.as_str() {
+        "Complete" => SessionEventType::WorkflowComplete,
+        "Cancelled" => SessionEventType::WorkflowCancelled,
+        "ErrorGate" => SessionEventType::WorkflowError,
+        "WaitingAtGate" => SessionEventType::GateArrived,
+        _ => SessionEventType::PhaseTransition,
+    };
 
     let message = match state_str.as_str() {
         "Complete" => format!("{wt}: complete"),
@@ -1504,19 +1530,46 @@ async fn notify_current_state(
         _ => format!("{wt}: {phase} phase running"),
     };
 
+    // Build error content for error events
+    let error = if matches!(event_type, SessionEventType::WorkflowError) {
+        match &session.workflow_state {
+            WorkflowState::Brainstorm(BrainstormState::ErrorGate { message, failed_phase, exit_code }) => {
+                Some(ErrorContent { message: message.clone(), failed_phase: failed_phase.clone(), exit_code: *exit_code })
+            }
+            WorkflowState::Spec(SpecState::ErrorGate { message, failed_phase, exit_code }) => {
+                Some(ErrorContent { message: message.clone(), failed_phase: failed_phase.clone(), exit_code: *exit_code })
+            }
+            WorkflowState::Epic(EpicState::ErrorGate { message, failed_phase, exit_code }) => {
+                Some(ErrorContent { message: message.clone(), failed_phase: failed_phase.clone(), exit_code: *exit_code })
+            }
+            WorkflowState::Implement(ImplementState::ErrorGate { message, failed_phase, exit_code }) => {
+                Some(ErrorContent { message: message.clone(), failed_phase: failed_phase.clone(), exit_code: *exit_code })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let total_cost_usd = session.total_cost_usd;
+
     drop(session);
 
     notifier
-        .notify(&SessionEvent {
+        .notify_event(&SessionEvent {
+            schema_version: "1",
             session_id,
             workflow_type: wt,
+            event_type,
             session_state: state_str,
             phase,
             sub_phase,
             message,
             gate_content,
             progress,
-            total,
+            total_cost_usd,
+            timestamp: Utc::now(),
+            error,
         })
         .await;
 }
