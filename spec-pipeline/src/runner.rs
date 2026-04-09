@@ -249,6 +249,22 @@ impl ClaudeRunner {
             }
         }
 
+        // If the model didn't produce valid structured output, retry once.
+        // This can happen when Claude Code's --json-schema enforcement doesn't
+        // produce the structured_output field in the result event (e.g., the
+        // model's StructuredOutput tool call was mixed with other tool calls in
+        // the same turn, or the model produced text instead of schema output).
+        if let Err(RunnerError::InvalidPhaseOutput { .. }) = &result {
+            warn!(
+                phase = %context.phase,
+                error = %result.as_ref().unwrap_err(),
+                "invalid phase output — retrying once without session resumption"
+            );
+            return self
+                .run_phase_inner(context, model, system_prompt, &event_tx, None)
+                .await;
+        }
+
         result
     }
 
@@ -376,10 +392,10 @@ impl ClaudeRunner {
                                         if let Some(input) = block.get("input") {
                                             let serialized = serde_json::to_string(input)
                                                 .unwrap_or_default();
-                                            debug!(
+                                            info!(
                                                 input_len = serialized.len(),
-                                                input_preview = %truncate(&serialized, 120),
-                                                "captured StructuredOutput tool call"
+                                                input_preview = %truncate(&serialized, 200),
+                                                "captured StructuredOutput tool call from assistant event"
                                             );
                                             structured_output = Some(serialized);
                                         } else {
@@ -418,15 +434,37 @@ impl ClaudeRunner {
                                 .and_then(|n| n.as_u64())
                                 .unwrap_or(0);
 
+                            // Diagnostic: log availability of each source.
+                            info!(
+                                has_so_result_event = so_from_result_event.is_some(),
+                                has_so_tool_capture = so_from_tool_capture.is_some(),
+                                result_str_len = result_str.len(),
+                                stop_reason = stop_reason_str,
+                                num_turns = num_turns_val,
+                                subtype = v.get("subtype").and_then(|s| s.as_str()).unwrap_or(""),
+                                is_error = v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false),
+                                "result event received — structured output source diagnostics"
+                            );
+
                             // Pick the best source for the phase output.
                             let phase_result = if let Some(so) = so_from_result_event {
-                                debug!(source = "result_event.structured_output", "using structured output from result event");
+                                info!(source = "result_event.structured_output", len = so.len(), "using structured output from result event");
                                 so
                             } else if let Some(so) = so_from_tool_capture {
-                                debug!(source = "tool_use_capture", "using structured output from StructuredOutput tool call");
+                                info!(source = "tool_use_capture", len = so.len(), "using structured output from StructuredOutput tool call");
                                 so
                             } else if !result_str.is_empty() {
-                                debug!(source = "result_text", "using result text field (non-schema mode)");
+                                // Source #3: The result text field. This might
+                                // contain plain text (not JSON) if the model
+                                // didn't produce structured output. Try to parse
+                                // it as JSON first to give a better error later.
+                                warn!(
+                                    source = "result_text_fallback",
+                                    result_preview = %truncate(&result_str, 200),
+                                    stop_reason = stop_reason_str,
+                                    num_turns = num_turns_val,
+                                    "falling back to result text — structured output not captured from result event or tool call"
+                                );
                                 result_str.clone()
                             } else {
                                 warn!(
