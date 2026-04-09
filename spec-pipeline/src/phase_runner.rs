@@ -429,11 +429,15 @@ async fn run_phase_and_process(
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ChildEvent>();
 
-    // Spawn a task to forward child events to the MCP client.
+    // Spawn a task to forward child events: log them, store as last activity,
+    // and send as MCP notifications.
     let fwd_notifier = notifier.clone();
+    let fwd_registry = Arc::clone(registry);
     let fwd_phase = setup.context.phase.clone();
     let fwd_handle = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
+            info!(%session_id, phase = %fwd_phase, "{}", event.message);
+            fwd_registry.set_activity(session_id, event.message.clone());
             fwd_notifier
                 .notify_child_event(session_id, &fwd_phase, &event.message)
                 .await;

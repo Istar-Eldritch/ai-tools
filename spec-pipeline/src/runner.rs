@@ -19,8 +19,8 @@ pub enum RunnerError {
         stderr: String,
     },
 
-    #[error("claude subprocess timed out after {timeout_secs}s")]
-    Timeout { timeout_secs: u64 },
+    #[error("claude subprocess timed out after {timeout_secs}s; stderr: {stderr}")]
+    Timeout { timeout_secs: u64, stderr: String },
 
     #[error("failed to parse claude envelope: {source}")]
     InvalidEnvelope {
@@ -137,7 +137,7 @@ pub struct ChildEvent {
 // ---------------------------------------------------------------------------
 
 /// Default timeout for a single phase run (seconds).
-const DEFAULT_TIMEOUT_SECS: u64 = 300;
+const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
 pub struct ClaudeRunner {
     /// Path to the MCP config JSON file passed to `claude -p`.
@@ -145,10 +145,10 @@ pub struct ClaudeRunner {
     /// an empty `{"mcpServers":{}}` to prevent Claude from loading the
     /// user's default MCP servers (which would recursively spawn this server).
     mcp_config: PathBuf,
-    /// Temp directory that keeps the schema and MCP config files alive.
+    /// Temp directory that keeps the MCP config file alive (when using empty config).
     _schema_dir: tempfile::TempDir,
-    /// Path to the generated JSON schema for RawPhaseOutput.
-    phase_output_schema: PathBuf,
+    /// JSON schema string for RawPhaseOutput, passed inline to `--json-schema`.
+    phase_output_schema: String,
 }
 
 impl ClaudeRunner {
@@ -157,15 +157,22 @@ impl ClaudeRunner {
         let schema_dir =
             tempfile::TempDir::new().map_err(|e| RunnerError::SpawnFailed(e))?;
 
-        let schema = schemars::schema_for!(RawPhaseOutput);
-        let schema_json =
-            serde_json::to_string_pretty(&schema).map_err(RunnerError::SerializeFailed)?;
+        // Hand-written flat schema for RawPhaseOutput.  schemars produces a
+        // `oneOf` which the Claude API rejects at the top level, so we flatten
+        // the tagged enum into a single object with optional variant fields.
+        let schema_json = serde_json::json!({
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+                "type": { "type": "string", "enum": ["continue", "gate", "done"] },
+                "question": { "type": "string" },
+                "artifact_path": { "type": "string" },
+                "summary": { "type": "string" }
+            }
+        })
+        .to_string();
 
-        let schema_path = schema_dir.path().join("phase_output_schema.json");
-        std::fs::write(&schema_path, &schema_json)
-            .map_err(|e| RunnerError::SpawnFailed(e))?;
-
-        debug!(path = %schema_path.display(), "wrote phase output JSON schema");
+        debug!("generated phase output JSON schema");
 
         // Resolve the MCP config path. If a RAG config was provided, use it.
         // Otherwise write an empty config so `claude -p` won't load the user's
@@ -183,7 +190,7 @@ impl ClaudeRunner {
         Ok(Self {
             mcp_config,
             _schema_dir: schema_dir,
-            phase_output_schema: schema_path,
+            phase_output_schema: schema_json,
         })
     }
 
@@ -203,7 +210,6 @@ impl ClaudeRunner {
 
         let mut cmd = tokio::process::Command::new("claude");
         cmd.arg("-p")
-            .arg("--bare")
             .arg("--dangerously-skip-permissions")
             .arg("--no-session-persistence")
             .arg("--output-format")
@@ -264,6 +270,10 @@ impl ClaudeRunner {
 
         // Read stdout lines, forwarding events and capturing the result.
         let mut result_event: Option<ClaudeEnvelope> = None;
+        // --json-schema puts the structured output in a StructuredOutput tool
+        // call's input (inside an "assistant" event), NOT in the result event's
+        // `result` field.  Capture it here so we can use it as the result.
+        let mut structured_output: Option<String> = None;
 
         let stream_result = tokio::time::timeout(
             std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS),
@@ -289,14 +299,39 @@ impl ClaudeRunner {
                     match event_type {
                         "assistant" => {
                             extract_and_send_events(&v, &event_tx);
+                            // Capture StructuredOutput tool call input.
+                            if let Some(content) =
+                                v.pointer("/message/content").and_then(|c| c.as_array())
+                            {
+                                for block in content {
+                                    if block.get("type").and_then(|t| t.as_str())
+                                        == Some("tool_use")
+                                        && block.get("name").and_then(|n| n.as_str())
+                                            == Some("StructuredOutput")
+                                    {
+                                        if let Some(input) = block.get("input") {
+                                            structured_output =
+                                                Some(serde_json::to_string(input)
+                                                    .unwrap_or_default());
+                                        }
+                                    }
+                                }
+                            }
                         }
                         "result" => {
+                            let result_str = v
+                                .get("result")
+                                .and_then(|r| r.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             result_event = Some(ClaudeEnvelope {
-                                result: v
-                                    .get("result")
-                                    .and_then(|r| r.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
+                                // Prefer the StructuredOutput capture over the
+                                // (typically empty) result field.
+                                result: if result_str.is_empty() {
+                                    structured_output.take().unwrap_or_default()
+                                } else {
+                                    result_str
+                                },
                                 total_cost_usd: v
                                     .get("total_cost_usd")
                                     .and_then(|c| c.as_f64())
@@ -322,8 +357,24 @@ impl ClaudeRunner {
         .await;
 
         match stream_result {
-            Err(_) => return Err(RunnerError::Timeout { timeout_secs: DEFAULT_TIMEOUT_SECS }),
-            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                // Timeout: kill the child so it doesn't leak, then capture stderr.
+                child.kill().await.ok();
+                let stderr = stderr_handle.await.unwrap_or_default();
+                warn!(
+                    stderr = %stderr,
+                    timeout_secs = DEFAULT_TIMEOUT_SECS,
+                    "claude subprocess timed out — captured stderr"
+                );
+                return Err(RunnerError::Timeout {
+                    timeout_secs: DEFAULT_TIMEOUT_SECS,
+                    stderr,
+                });
+            }
+            Ok(Err(e)) => {
+                child.kill().await.ok();
+                return Err(e);
+            }
             Ok(Ok(())) => {}
         }
 
@@ -332,14 +383,29 @@ impl ClaudeRunner {
         let stderr = stderr_handle.await.unwrap_or_default();
 
         if !status.success() {
+            // Claude CLI puts errors in stdout (as JSON result events), not stderr.
+            // Include the result text so the caller gets an actionable message.
+            let error_detail = result_event
+                .as_ref()
+                .map(|e| e.result.clone())
+                .filter(|r| !r.is_empty())
+                .unwrap_or_default();
+            let combined = if error_detail.is_empty() {
+                stderr.clone()
+            } else if stderr.is_empty() {
+                error_detail
+            } else {
+                format!("{stderr}\n{error_detail}")
+            };
             warn!(
                 exit_code = status.code(),
                 stderr = %stderr,
+                result = %combined,
                 "claude subprocess exited with non-zero status"
             );
             return Err(RunnerError::SubprocessFailed {
                 exit_code: status.code(),
-                stderr,
+                stderr: combined,
             });
         }
 

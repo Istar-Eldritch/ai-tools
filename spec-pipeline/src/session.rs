@@ -153,6 +153,8 @@ impl SessionStore {
 pub struct SessionRegistry {
     sessions: DashMap<Uuid, Arc<Mutex<Session>>>,
     store: SessionStore,
+    /// Latest child-agent activity per session (in-memory only, not persisted).
+    activity: DashMap<Uuid, String>,
 }
 
 impl SessionRegistry {
@@ -161,6 +163,7 @@ impl SessionRegistry {
         let registry = Self {
             sessions: DashMap::new(),
             store,
+            activity: DashMap::new(),
         };
         registry.recover()?;
         Ok(registry)
@@ -253,6 +256,16 @@ impl SessionRegistry {
         summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         summaries.truncate(limit);
         summaries
+    }
+
+    /// Update the latest activity message for a session (in-memory only).
+    pub fn set_activity(&self, id: Uuid, message: String) {
+        self.activity.insert(id, message);
+    }
+
+    /// Get the latest activity message for a session, if any.
+    pub fn last_activity(&self, id: Uuid) -> Option<String> {
+        self.activity.get(&id).map(|v| v.clone())
     }
 
     /// Cancel a session by transitioning its workflow state to Cancelled.
