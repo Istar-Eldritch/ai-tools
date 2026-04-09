@@ -1562,9 +1562,9 @@ async fn apply_configure(
     }
 
     info!(%session_id, "implement config updated, re-presenting gate");
-    // Return false to NOT continue the loop — the session stays at the gate.
-    // The gate will be re-presented via the notification.
-    false
+    // Return true so the session loop continues and re-registers the gate
+    // channel for the updated Configuring state.
+    true
 }
 
 // ===========================================================================
@@ -1783,7 +1783,12 @@ pub async fn run_implement_session(
 
             // For phases that work with a plan, include the plan path.
             match &is {
-                ImplementState::PlanReview {
+                ImplementState::PlanGeneration {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::PlanReview {
                     phases,
                     current_phase_idx,
                     ..

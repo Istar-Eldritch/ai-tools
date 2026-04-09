@@ -160,7 +160,7 @@ impl McpServer {
 #[tool_router]
 impl McpServer {
     #[tool(
-        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, or epic) and topic. Returns immediately with the session ID in Running state. Poll with spec_status to track progress until the session reaches a gate, completes, or errors."
+        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, epic, or implement) and topic. For implement workflows, topic must be the path to an existing spec file. Returns immediately with the session ID in Running state. Poll with spec_status to track progress until the session reaches a gate, completes, or errors."
     )]
     async fn spec_start(
         &self,
