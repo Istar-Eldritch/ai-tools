@@ -160,17 +160,32 @@ to an empty string (the synthesis phase will produce the real artifact).
 {"type": "done", "summary": "<brief summary of discoveries>", "artifact_path": ""}
 ```
 
-## RAG-First Strategy
+## Research Strategy — Parallel Subagent Dispatch
 
-If any RAG (retrieval-augmented generation) tools are available, use them as
-your **first step** before reading files or using other exploration tools.
-RAG search returns semantically relevant chunks from a knowledge base, letting
-you quickly orient yourself without costly full-file reads.
+Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
+**Agent tool** to dispatch focused search subagents that run in parallel.
 
-- Start with 1-3 broad RAG queries covering the topic and key concepts.
-- Use the results to identify which files and areas are relevant.
-- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
-  for details the RAG results don't cover.
+### How to search
+
+1. **Analyse the topic** and identify 2-5 distinct questions that need answering
+   (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
+2. **Dispatch one Agent per question** in a single message, all with
+   `run_in_background: true` and `model: "haiku"`.
+3. Each subagent prompt MUST include:
+   - The specific question to answer.
+   - An instruction to use RAG tools first (if available), then fall back to
+     Grep/Glob/Read only for details RAG doesn't cover.
+   - A request for a concise summary (under 200 words) with file paths and
+     line numbers.
+4. **Wait for all subagents to complete**, then synthesise their findings.
+5. If gaps remain, dispatch a second round of targeted subagents.
+
+### Why
+
+- Subagents run concurrently → faster wall-clock time.
+- Each subagent has a small, focused context → cheaper token usage.
+- Haiku is sufficient for retrieval tasks → lower cost per search.
+- Results are summarised before reaching you → less context bloat.
 
 ## Guidelines
 
@@ -289,17 +304,32 @@ an empty string (the drafting phase will produce the real artifact).
 {"type": "done", "summary": "<brief summary of research findings>", "artifact_path": ""}
 ```
 
-## RAG-First Strategy
+## Research Strategy — Parallel Subagent Dispatch
 
-If any RAG (retrieval-augmented generation) tools are available, use them as
-your **first step** before reading files or using other exploration tools.
-RAG search returns semantically relevant chunks from a knowledge base, letting
-you quickly orient yourself without costly full-file reads.
+Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
+**Agent tool** to dispatch focused search subagents that run in parallel.
 
-- Start with 1-3 broad RAG queries covering the topic and key concepts.
-- Use the results to identify which files and areas are relevant.
-- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
-  for details the RAG results don't cover.
+### How to search
+
+1. **Analyse the topic** and identify 2-5 distinct questions that need answering
+   (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
+2. **Dispatch one Agent per question** in a single message, all with
+   `run_in_background: true` and `model: "haiku"`.
+3. Each subagent prompt MUST include:
+   - The specific question to answer.
+   - An instruction to use RAG tools first (if available), then fall back to
+     Grep/Glob/Read only for details RAG doesn't cover.
+   - A request for a concise summary (under 200 words) with file paths and
+     line numbers.
+4. **Wait for all subagents to complete**, then synthesise their findings.
+5. If gaps remain, dispatch a second round of targeted subagents.
+
+### Why
+
+- Subagents run concurrently → faster wall-clock time.
+- Each subagent has a small, focused context → cheaper token usage.
+- Haiku is sufficient for retrieval tasks → lower cost per search.
+- Results are summarised before reaching you → less context bloat.
 
 ## Guidelines
 
@@ -407,17 +437,32 @@ You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
 {"type": "done", "summary": "<brief summary of extracted children>", "artifact_path": ""}
 ```
 
-## RAG-First Strategy
+## Research Strategy — Parallel Subagent Dispatch
 
-If any RAG (retrieval-augmented generation) tools are available, use them as
-your **first step** before reading files or using other exploration tools.
-RAG search returns semantically relevant chunks from a knowledge base, letting
-you quickly orient yourself without costly full-file reads.
+Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
+**Agent tool** to dispatch focused search subagents that run in parallel.
 
-- Start with 1-3 broad RAG queries covering the topic and key concepts.
-- Use the results to identify which files and areas are relevant.
-- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
-  for details the RAG results don't cover.
+### How to search
+
+1. **Analyse the topic** and identify 2-5 distinct questions that need answering
+   (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
+2. **Dispatch one Agent per question** in a single message, all with
+   `run_in_background: true` and `model: "haiku"`.
+3. Each subagent prompt MUST include:
+   - The specific question to answer.
+   - An instruction to use RAG tools first (if available), then fall back to
+     Grep/Glob/Read only for details RAG doesn't cover.
+   - A request for a concise summary (under 200 words) with file paths and
+     line numbers.
+4. **Wait for all subagents to complete**, then synthesise their findings.
+5. If gaps remain, dispatch a second round of targeted subagents.
+
+### Why
+
+- Subagents run concurrently → faster wall-clock time.
+- Each subagent has a small, focused context → cheaper token usage.
+- Haiku is sufficient for retrieval tasks → lower cost per search.
+- Results are summarised before reaching you → less context bloat.
 
 ## Guidelines
 
@@ -557,17 +602,32 @@ You receive a JSON object on stdin with these fields:
 - `revision_feedback` — review feedback if this is a re-plan (null on first run).
 - `revision` — current revision number.
 
-## RAG-First Strategy
+## Research Strategy — Parallel Subagent Dispatch
 
-If any RAG (retrieval-augmented generation) tools are available, use them as
-your **first step** before reading files or using other exploration tools.
-RAG search returns semantically relevant chunks from a knowledge base, letting
-you quickly orient yourself without costly full-file reads.
+Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
+**Agent tool** to dispatch focused search subagents that run in parallel.
 
-- Start with 1-3 broad RAG queries covering the topic and key concepts.
-- Use the results to identify which files and areas are relevant.
-- Only then fall back to direct file reads (Read) or code search (Grep/Glob)
-  for details the RAG results don't cover.
+### How to search
+
+1. **Analyse the topic** and identify 2-5 distinct questions that need answering
+   (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
+2. **Dispatch one Agent per question** in a single message, all with
+   `run_in_background: true` and `model: "haiku"`.
+3. Each subagent prompt MUST include:
+   - The specific question to answer.
+   - An instruction to use RAG tools first (if available), then fall back to
+     Grep/Glob/Read only for details RAG doesn't cover.
+   - A request for a concise summary (under 200 words) with file paths and
+     line numbers.
+4. **Wait for all subagents to complete**, then synthesise their findings.
+5. If gaps remain, dispatch a second round of targeted subagents.
+
+### Why
+
+- Subagents run concurrently → faster wall-clock time.
+- Each subagent has a small, focused context → cheaper token usage.
+- Haiku is sufficient for retrieval tasks → lower cost per search.
+- Results are summarised before reaching you → less context bloat.
 
 ## Task
 
