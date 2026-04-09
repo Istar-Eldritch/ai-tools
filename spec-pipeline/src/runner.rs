@@ -60,6 +60,8 @@ pub struct ClaudeEnvelope {
     pub stop_reason: String,
     #[serde(default)]
     pub num_turns: u32,
+    #[serde(default)]
+    pub session_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +122,7 @@ pub struct PhaseRunResult {
     pub cost_usd: f64,
     pub stop_reason: String,
     pub num_turns: u32,
+    pub claude_session_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -204,15 +207,22 @@ impl ClaudeRunner {
         model: &str,
         system_prompt: &Path,
         event_tx: Option<mpsc::UnboundedSender<ChildEvent>>,
+        claude_session_id: Option<&str>,
     ) -> Result<PhaseRunResult, RunnerError> {
         let context_json =
             serde_json::to_string_pretty(context).map_err(RunnerError::SerializeFailed)?;
 
         let mut cmd = tokio::process::Command::new("claude");
         cmd.arg("-p")
-            .arg("--dangerously-skip-permissions")
-            .arg("--no-session-persistence")
-            .arg("--output-format")
+            .arg("--dangerously-skip-permissions");
+
+        if let Some(sid) = claude_session_id {
+            cmd.arg("--resume").arg(sid);
+        } else {
+            cmd.arg("--no-session-persistence");
+        }
+
+        cmd.arg("--output-format")
             .arg("stream-json")
             .arg("--verbose")
             .arg("--json-schema")
@@ -239,6 +249,7 @@ impl ClaudeRunner {
         info!(
             phase = %context.phase,
             model = model,
+            resuming = claude_session_id.is_some(),
             "spawning claude subprocess"
         );
 
@@ -389,6 +400,11 @@ impl ClaudeRunner {
                                     .and_then(|n| n.as_u64())
                                     .unwrap_or(0)
                                     as u32,
+                                session_id: v
+                                    .get("session_id")
+                                    .and_then(|s| s.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
                             });
                         }
                         _ => {} // skip system, rate_limit_event, etc.
@@ -483,6 +499,11 @@ impl ClaudeRunner {
             cost_usd: envelope.total_cost_usd,
             stop_reason: envelope.stop_reason,
             num_turns: envelope.num_turns,
+            claude_session_id: if envelope.session_id.is_empty() {
+                None
+            } else {
+                Some(envelope.session_id)
+            },
         })
     }
 }

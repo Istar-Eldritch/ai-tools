@@ -33,6 +33,15 @@ struct PhaseSetup {
     model: String,
     prompt_key: String,
     workflow_type: String,
+    /// Claude session ID from a prior invocation; enables `--resume` for cache reuse.
+    claude_session_id: Option<String>,
+}
+
+/// Result from `run_phase_and_process`, carrying the loop action and any
+/// Claude session ID that can be reused on the next iteration.
+struct PhaseResult {
+    action: LoopAction,
+    claude_session_id: Option<String>,
 }
 
 // ============================================================================
@@ -54,6 +63,9 @@ pub async fn run_brainstorm_session(
     notifier: SessionNotifier,
 ) {
     info!(%session_id, "brainstorm session loop starting");
+
+    let mut claude_session_id: Option<String> = None;
+    let mut last_prompt_key: Option<String> = None;
 
     loop {
         // -----------------------------------------------------------------
@@ -124,6 +136,13 @@ pub async fn run_brainstorm_session(
 
             let context_refs = session.context_refs.clone();
 
+            // Resume the Claude session if the prompt key hasn't changed.
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+                claude_session_id.take()
+            } else {
+                None
+            };
+
             PhaseSetup {
                 context: PhaseContext {
                     topic: session.topic.clone(),
@@ -139,9 +158,12 @@ pub async fn run_brainstorm_session(
                 model,
                 prompt_key: prompt_key.to_string(),
                 workflow_type: "brainstorm".to_string(),
+                claude_session_id: resume_id,
             }
             // lock dropped here
         };
+
+        let current_prompt_key = setup.prompt_key.clone();
 
         // Run phase and process result via the generic loop body
         match run_phase_and_process(
@@ -155,8 +177,12 @@ pub async fn run_brainstorm_session(
         )
         .await
         {
-            LoopAction::Continue => continue,
-            LoopAction::Break => break,
+            PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
+                claude_session_id = sid;
+                last_prompt_key = Some(current_prompt_key);
+                continue;
+            }
+            PhaseResult { action: LoopAction::Break, .. } => break,
         }
     }
 
@@ -178,6 +204,9 @@ pub async fn run_spec_session(
     notifier: SessionNotifier,
 ) {
     info!(%session_id, "spec session loop starting");
+
+    let mut claude_session_id: Option<String> = None;
+    let mut last_prompt_key: Option<String> = None;
 
     loop {
         let setup = {
@@ -237,6 +266,12 @@ pub async fn run_spec_session(
 
             let context_refs = session.context_refs.clone();
 
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+                claude_session_id.take()
+            } else {
+                None
+            };
+
             PhaseSetup {
                 context: PhaseContext {
                     topic: session.topic.clone(),
@@ -252,8 +287,11 @@ pub async fn run_spec_session(
                 model,
                 prompt_key: prompt_key.to_string(),
                 workflow_type: "spec".to_string(),
+                claude_session_id: resume_id,
             }
         };
+
+        let current_prompt_key = setup.prompt_key.clone();
 
         match run_phase_and_process(
             session_id,
@@ -266,8 +304,12 @@ pub async fn run_spec_session(
         )
         .await
         {
-            LoopAction::Continue => continue,
-            LoopAction::Break => break,
+            PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
+                claude_session_id = sid;
+                last_prompt_key = Some(current_prompt_key);
+                continue;
+            }
+            PhaseResult { action: LoopAction::Break, .. } => break,
         }
     }
 
@@ -289,6 +331,9 @@ pub async fn run_epic_session(
     notifier: SessionNotifier,
 ) {
     info!(%session_id, "epic session loop starting");
+
+    let mut claude_session_id: Option<String> = None;
+    let mut last_prompt_key: Option<String> = None;
 
     loop {
         let setup = {
@@ -346,6 +391,12 @@ pub async fn run_epic_session(
 
             let context_refs = session.context_refs.clone();
 
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+                claude_session_id.take()
+            } else {
+                None
+            };
+
             PhaseSetup {
                 context: PhaseContext {
                     topic: session.topic.clone(),
@@ -361,8 +412,11 @@ pub async fn run_epic_session(
                 model,
                 prompt_key: prompt_key.to_string(),
                 workflow_type: "epic".to_string(),
+                claude_session_id: resume_id,
             }
         };
+
+        let current_prompt_key = setup.prompt_key.clone();
 
         match run_phase_and_process(
             session_id,
@@ -375,8 +429,12 @@ pub async fn run_epic_session(
         )
         .await
         {
-            LoopAction::Continue => continue,
-            LoopAction::Break => break,
+            PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
+                claude_session_id = sid;
+                last_prompt_key = Some(current_prompt_key);
+                continue;
+            }
+            PhaseResult { action: LoopAction::Break, .. } => break,
         }
     }
 
@@ -403,7 +461,7 @@ async fn run_phase_and_process(
     prompts: &Arc<PromptStore>,
     setup: PhaseSetup,
     notifier: &SessionNotifier,
-) -> LoopAction {
+) -> PhaseResult {
     // Get prompt path
     let prompt_path = match prompts.get(&setup.prompt_key) {
         Some(p) => p.to_path_buf(),
@@ -417,7 +475,7 @@ async fn run_phase_and_process(
                 &setup.workflow_type,
             )
             .await;
-            return LoopAction::Break;
+            return PhaseResult { action: LoopAction::Break, claude_session_id: None };
         }
     };
 
@@ -465,7 +523,13 @@ async fn run_phase_and_process(
     });
 
     let result = runner
-        .run_phase(&setup.context, &setup.model, &prompt_path, Some(event_tx))
+        .run_phase(
+            &setup.context,
+            &setup.model,
+            &prompt_path,
+            Some(event_tx),
+            setup.claude_session_id.as_deref(),
+        )
         .await;
 
     // Drop sender is implicit (run_phase consumed it), wait for forwarder to drain.
@@ -474,6 +538,7 @@ async fn run_phase_and_process(
     // Process result
     match result {
         Ok(run_result) => {
+            let returned_session_id = run_result.claude_session_id.clone();
             let action = process_phase_output(
                 session_id,
                 registry,
@@ -485,8 +550,14 @@ async fn run_phase_and_process(
             .await;
 
             match action {
-                InternalAction::Continue => LoopAction::Continue,
-                InternalAction::Break => LoopAction::Break,
+                InternalAction::Continue => PhaseResult {
+                    action: LoopAction::Continue,
+                    claude_session_id: returned_session_id,
+                },
+                InternalAction::Break => PhaseResult {
+                    action: LoopAction::Break,
+                    claude_session_id: None,
+                },
                 InternalAction::AwaitGate => {
                     // Notify: session waiting at gate
                     notify_current_state(session_id, registry, notifier).await;
@@ -502,14 +573,25 @@ async fn run_phase_and_process(
                             )
                             .await
                             {
-                                LoopAction::Continue
+                                // Gate resolved to continue — propagate session ID
+                                // so the next invocation can resume Claude's context.
+                                PhaseResult {
+                                    action: LoopAction::Continue,
+                                    claude_session_id: returned_session_id,
+                                }
                             } else {
-                                LoopAction::Break
+                                PhaseResult {
+                                    action: LoopAction::Break,
+                                    claude_session_id: None,
+                                }
                             }
                         }
                         None => {
                             warn!(%session_id, "gate channel dropped without response");
-                            LoopAction::Break
+                            PhaseResult {
+                                action: LoopAction::Break,
+                                claude_session_id: None,
+                            }
                         }
                     }
                 }
@@ -547,9 +629,15 @@ async fn run_phase_and_process(
                     )
                     .await
                     {
-                        LoopAction::Continue
+                        PhaseResult {
+                            action: LoopAction::Continue,
+                            claude_session_id: None,
+                        }
                     } else {
-                        LoopAction::Break
+                        PhaseResult {
+                            action: LoopAction::Break,
+                            claude_session_id: None,
+                        }
                     }
                 }
                 None => {
@@ -557,7 +645,10 @@ async fn run_phase_and_process(
                         %session_id,
                         "gate channel dropped without response (error gate)"
                     );
-                    LoopAction::Break
+                    PhaseResult {
+                        action: LoopAction::Break,
+                        claude_session_id: None,
+                    }
                 }
             }
         }
@@ -1658,6 +1749,9 @@ pub async fn run_implement_session(
         }
     }
 
+    let mut claude_session_id: Option<String> = None;
+    let mut last_prompt_key: Option<String> = None;
+
     loop {
         // Read current state and build the phase setup.
         let setup = {
@@ -1870,6 +1964,12 @@ pub async fn run_implement_session(
                 _ => None,
             };
 
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+                claude_session_id.take()
+            } else {
+                None
+            };
+
             PhaseSetup {
                 context: PhaseContext {
                     topic: session.topic.clone(),
@@ -1885,9 +1985,12 @@ pub async fn run_implement_session(
                 model,
                 prompt_key: prompt_key.to_string(),
                 workflow_type: "implement".to_string(),
+                claude_session_id: resume_id,
             }
             // lock dropped here
         };
+
+        let current_prompt_key = setup.prompt_key.clone();
 
         match run_phase_and_process(
             session_id,
@@ -1900,8 +2003,12 @@ pub async fn run_implement_session(
         )
         .await
         {
-            LoopAction::Continue => continue,
-            LoopAction::Break => break,
+            PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
+                claude_session_id = sid;
+                last_prompt_key = Some(current_prompt_key);
+                continue;
+            }
+            PhaseResult { action: LoopAction::Break, .. } => break,
         }
     }
 
