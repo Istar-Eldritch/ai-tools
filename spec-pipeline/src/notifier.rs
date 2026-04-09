@@ -101,7 +101,8 @@ impl SessionNotifier {
     }
 
     /// Emit a structured `spec/sessionEvent` custom MCP notification,
-    /// plus the existing `notifications/progress` for progress-bar clients.
+    /// a `notifications/message` log notification for clients that display logs
+    /// (e.g. Claude Code), and `notifications/progress` for progress-bar clients.
     /// Also signals the watch channel so blocking tool calls wake up.
     pub async fn notify_event(&self, event: &SessionEvent) {
         // Signal watch channel
@@ -116,14 +117,21 @@ impl SessionNotifier {
             None => return, // peer not yet available (pre-handshake)
         };
 
-        // spec/sessionEvent — structured custom notification
+        // spec/sessionEvent — structured custom notification for programmatic clients
         let params = serde_json::to_value(event).unwrap_or_default();
-        let custom = rmcp::model::CustomNotification::new("spec/sessionEvent", Some(params));
+        let custom = rmcp::model::CustomNotification::new("spec/sessionEvent", Some(params.clone()));
         if let Err(e) = peer
             .send_notification(rmcp::model::ServerNotification::CustomNotification(custom))
             .await
         {
             warn!(error = %e, "failed to send spec/sessionEvent notification");
+        }
+
+        // notifications/message — log notification for clients like Claude Code
+        let log_param = LoggingMessageNotificationParam::new(LoggingLevel::Info, params)
+            .with_logger("spec-pipeline");
+        if let Err(e) = peer.notify_logging_message(log_param).await {
+            warn!(error = %e, "failed to send logging notification");
         }
 
         // notifications/progress — retained for progress-bar clients
