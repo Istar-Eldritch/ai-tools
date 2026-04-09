@@ -36,8 +36,9 @@ pub enum SessionState {
 #[serde(tag = "type")]
 pub enum GateResponse {
     /// User approved the gate; proceed to next phase.
+    /// Content carries an optional answer (e.g. for research questions).
     #[serde(rename = "approve")]
-    Approve,
+    Approve { content: Option<String> },
     /// User requested revisions with feedback.
     #[serde(rename = "revise")]
     Revise { feedback: String },

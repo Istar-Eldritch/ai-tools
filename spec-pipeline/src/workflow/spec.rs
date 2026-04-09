@@ -10,12 +10,23 @@ use super::types::PhaseRole;
 pub enum SpecState {
     /// Researching the problem space.
     #[serde(rename = "research")]
-    Research { turn: u32 },
+    Research {
+        turn: u32,
+        /// Answer from a prior gate question, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate_answer: Option<String>,
+    },
+    /// Research paused — waiting for user answer to a clarifying question.
+    #[serde(rename = "awaiting_answer")]
+    AwaitingAnswer { question: String },
     /// Drafting the specification document.
     #[serde(rename = "drafting")]
     Drafting {
         draft_path: PathBuf,
         revision: u32,
+        /// Revision feedback from the user, if this is a revision cycle.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        feedback: Option<String>,
     },
     /// Draft is ready for user approval.
     #[serde(rename = "awaiting_approval")]
@@ -44,6 +55,7 @@ impl SpecState {
     pub fn phase_name(&self) -> &str {
         match self {
             Self::Research { .. } => "research",
+            Self::AwaitingAnswer { .. } => "awaiting_answer",
             Self::Drafting { .. } => "drafting",
             Self::AwaitingApproval { .. } => "awaiting_approval",
             Self::Complete { .. } => "complete",
@@ -61,6 +73,7 @@ impl SpecState {
     pub fn phase_role(&self) -> PhaseRole {
         match self {
             Self::Research { .. } => PhaseRole::Discovery,
+            Self::AwaitingAnswer { .. } => PhaseRole::Discovery,
             Self::Drafting { .. } => PhaseRole::Synthesis,
             Self::AwaitingApproval { .. } => PhaseRole::Review,
             Self::Complete { .. } => PhaseRole::Review,

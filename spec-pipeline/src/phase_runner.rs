@@ -101,6 +101,11 @@ pub async fn run_brainstorm_session(
                 _ => 0,
             };
 
+            let revision_feedback = match &bs {
+                BrainstormState::Synthesis { feedback, .. } => feedback.clone(),
+                _ => None,
+            };
+
             let prior_artifacts: Vec<String> = bs
                 .artifact_paths()
                 .into_iter()
@@ -125,7 +130,7 @@ pub async fn run_brainstorm_session(
                     prior_artifacts,
                     context_refs,
                     gate_history: vec![],
-                    revision_feedback: None,
+                    revision_feedback,
                     revision,
                 },
                 model,
@@ -196,6 +201,7 @@ pub async fn run_spec_session(
                 // Terminal / gate states
                 SpecState::Complete { .. }
                 | SpecState::Cancelled
+                | SpecState::AwaitingAnswer { .. }
                 | SpecState::AwaitingApproval { .. }
                 | SpecState::ErrorGate { .. } => {
                     info!(%session_id, phase = ss.phase_name(), "session in terminal/gate state, exiting loop");
@@ -206,6 +212,12 @@ pub async fn run_spec_session(
             let revision = match &ss {
                 SpecState::Drafting { revision, .. } => *revision,
                 _ => 0,
+            };
+
+            let revision_feedback = match &ss {
+                SpecState::Research { gate_answer, .. } => gate_answer.clone(),
+                SpecState::Drafting { feedback, .. } => feedback.clone(),
+                _ => None,
             };
 
             let prior_artifacts: Vec<String> = ss
@@ -231,7 +243,7 @@ pub async fn run_spec_session(
                     prior_artifacts,
                     context_refs,
                     gate_history: vec![],
-                    revision_feedback: None,
+                    revision_feedback,
                     revision,
                 },
                 model,
@@ -312,6 +324,11 @@ pub async fn run_epic_session(
                 _ => 0,
             };
 
+            let revision_feedback = match &es {
+                EpicState::Drafting { feedback, .. } => feedback.clone(),
+                _ => None,
+            };
+
             let prior_artifacts: Vec<String> = es
                 .artifact_paths()
                 .into_iter()
@@ -335,7 +352,7 @@ pub async fn run_epic_session(
                     prior_artifacts,
                     context_refs,
                     gate_history: vec![],
-                    revision_feedback: None,
+                    revision_feedback,
                     revision,
                 },
                 model,
@@ -611,8 +628,8 @@ async fn process_brainstorm_output(
                 BrainstormState::Discovery(DiscoveryPhase::Exploring { turn }) => {
                     BrainstormState::Discovery(DiscoveryPhase::Exploring { turn: turn + 1 })
                 }
-                BrainstormState::Synthesis { draft_path, revision } => {
-                    BrainstormState::Synthesis { draft_path, revision }
+                BrainstormState::Synthesis { draft_path, revision, .. } => {
+                    BrainstormState::Synthesis { draft_path, revision, feedback: None }
                 }
                 other => {
                     warn!(%session_id, state = ?other, "unexpected Continue in state");
@@ -676,6 +693,7 @@ async fn process_brainstorm_output(
                     let new_state = BrainstormState::Synthesis {
                         draft_path: draft,
                         revision: 0,
+                        feedback: None,
                     };
                     if let Err(e) = registry
                         .update(session_id, move |s| {
@@ -743,9 +761,9 @@ async fn process_spec_output(
     match output {
         RawPhaseOutput::Continue => {
             let new_state = match ss_snapshot {
-                SpecState::Research { turn } => SpecState::Research { turn: turn + 1 },
-                SpecState::Drafting { draft_path, revision } => {
-                    SpecState::Drafting { draft_path, revision }
+                SpecState::Research { turn, .. } => SpecState::Research { turn: turn + 1, gate_answer: None },
+                SpecState::Drafting { draft_path, revision, .. } => {
+                    SpecState::Drafting { draft_path, revision, feedback: None }
                 }
                 other => {
                     warn!(%session_id, state = ?other, "unexpected Continue in spec state");
@@ -767,12 +785,21 @@ async fn process_spec_output(
         }
 
         RawPhaseOutput::Gate { question, .. } => {
-            // Spec research can produce gates for clarifying questions.
-            // We don't have a sub-state for it in SpecState, so we use ErrorGate
-            // as a holding pattern with the question text.
-            // For now, log and break -- spec gates are not supported in phase design.
-            warn!(%session_id, %question, phase = current_phase, "gate in spec workflow (not expected)");
-            InternalAction::Break
+            let new_state = SpecState::AwaitingAnswer {
+                question: question.clone(),
+            };
+            if let Err(e) = registry
+                .update(session_id, move |s| {
+                    s.total_cost_usd += cost_usd;
+                    s.workflow_state = WorkflowState::Spec(new_state);
+                })
+                .await
+            {
+                error!(%session_id, error = %e, "failed to persist spec Gate");
+                return InternalAction::Break;
+            }
+            info!(%session_id, %question, "spec research awaiting user answer at gate");
+            InternalAction::AwaitGate
         }
 
         RawPhaseOutput::Done {
@@ -791,6 +818,7 @@ async fn process_spec_output(
                     let new_state = SpecState::Drafting {
                         draft_path: draft,
                         revision: 0,
+                        feedback: None,
                     };
                     if let Err(e) = registry
                         .update(session_id, move |s| {
@@ -861,8 +889,8 @@ async fn process_epic_output(
                 EpicState::ChildExtraction { turn } => {
                     EpicState::ChildExtraction { turn: turn + 1 }
                 }
-                EpicState::Drafting { draft_path, revision } => {
-                    EpicState::Drafting { draft_path, revision }
+                EpicState::Drafting { draft_path, revision, .. } => {
+                    EpicState::Drafting { draft_path, revision, feedback: None }
                 }
                 other => {
                     warn!(%session_id, state = ?other, "unexpected Continue in epic state");
@@ -904,6 +932,7 @@ async fn process_epic_output(
                     let new_state = EpicState::Drafting {
                         draft_path: draft,
                         revision: 0,
+                        feedback: None,
                     };
                     if let Err(e) = registry
                         .update(session_id, move |s| {
@@ -961,7 +990,7 @@ async fn await_gate_response(
 
 /// Apply a gate response to the session, returning `true` if the loop should
 /// continue or `false` if it should break.  Works for all workflow types.
-async fn apply_gate_response(
+pub async fn apply_gate_response(
     session_id: Uuid,
     response: GateResponse,
     registry: &Arc<SessionRegistry>,
@@ -982,7 +1011,9 @@ async fn apply_gate_response(
     };
 
     let result = match response {
-        GateResponse::Approve => apply_approve(session_id, registry, &ws, workflow_type).await,
+        GateResponse::Approve { content } => {
+            apply_approve(session_id, registry, &ws, workflow_type, content).await
+        }
         GateResponse::Revise { feedback } => {
             apply_revise(session_id, registry, &ws, workflow_type, &feedback).await
         }
@@ -1001,11 +1032,21 @@ async fn apply_approve(
     registry: &Arc<SessionRegistry>,
     ws: &WorkflowState,
     workflow_type: &str,
+    content: Option<String>,
 ) -> bool {
     let new_ws = match ws {
         WorkflowState::Brainstorm(BrainstormState::AwaitingApproval { artifact_path, .. }) => {
             WorkflowState::Brainstorm(BrainstormState::Complete {
                 artifact_path: artifact_path.clone(),
+            })
+        }
+        WorkflowState::Spec(SpecState::AwaitingAnswer { question }) => {
+            // User answered the research question — resume research.
+            let answer = content.unwrap_or_default();
+            info!(%session_id, %question, %answer, "research question answered, resuming");
+            WorkflowState::Spec(SpecState::Research {
+                turn: 0,
+                gate_answer: Some(format!("Q: {question}\nA: {answer}")),
             })
         }
         WorkflowState::Spec(SpecState::AwaitingApproval { artifact_path, .. }) => {
@@ -1024,6 +1065,12 @@ async fn apply_approve(
         }
     };
 
+    // Check if this is a mid-workflow gate (e.g. research question) before persisting.
+    let should_continue = matches!(
+        ws,
+        WorkflowState::Spec(SpecState::AwaitingAnswer { .. })
+    );
+
     if let Err(e) = registry
         .update(session_id, move |s| {
             s.workflow_state = new_ws;
@@ -1033,8 +1080,14 @@ async fn apply_approve(
         error!(%session_id, error = %e, "failed to persist Approve");
         return false;
     }
-    info!(%session_id, %workflow_type, "approved, complete");
-    false // done
+
+    if should_continue {
+        info!(%session_id, %workflow_type, "approved gate, resuming workflow");
+        true // continue loop
+    } else {
+        info!(%session_id, %workflow_type, "approved, complete");
+        false // done
+    }
 }
 
 async fn apply_revise(
@@ -1082,14 +1135,17 @@ async fn apply_revise(
         "brainstorm" => WorkflowState::Brainstorm(BrainstormState::Synthesis {
             draft_path: artifact_path,
             revision: next_revision,
+            feedback: Some(feedback.to_string()),
         }),
         "spec" => WorkflowState::Spec(SpecState::Drafting {
             draft_path: artifact_path,
             revision: next_revision,
+            feedback: Some(feedback.to_string()),
         }),
         "epic" => WorkflowState::Epic(EpicState::Drafting {
             draft_path: artifact_path,
             revision: next_revision,
+            feedback: Some(feedback.to_string()),
         }),
         _ => {
             error!(%session_id, %workflow_type, "unknown workflow type in apply_revise");
@@ -1152,6 +1208,7 @@ async fn apply_retry(
                 "synthesis" => WorkflowState::Brainstorm(BrainstormState::Synthesis {
                     draft_path: PathBuf::from(""),
                     revision: 0,
+                    feedback: None,
                 }),
                 _ => {
                     warn!(%session_id, %failed_phase, "cannot retry unknown brainstorm phase");
@@ -1161,10 +1218,11 @@ async fn apply_retry(
         }
         WorkflowState::Spec(SpecState::ErrorGate { failed_phase, .. }) => {
             match failed_phase.as_str() {
-                "research" => WorkflowState::Spec(SpecState::Research { turn: 0 }),
+                "research" => WorkflowState::Spec(SpecState::Research { turn: 0, gate_answer: None }),
                 "drafting" => WorkflowState::Spec(SpecState::Drafting {
                     draft_path: PathBuf::from(""),
                     revision: 0,
+                    feedback: None,
                 }),
                 _ => {
                     warn!(%session_id, %failed_phase, "cannot retry unknown spec phase");
@@ -1180,6 +1238,7 @@ async fn apply_retry(
                 "drafting" => WorkflowState::Epic(EpicState::Drafting {
                     draft_path: PathBuf::from(""),
                     revision: 0,
+                    feedback: None,
                 }),
                 _ => {
                     warn!(%session_id, %failed_phase, "cannot retry unknown epic phase");

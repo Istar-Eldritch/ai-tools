@@ -11,7 +11,7 @@ use rmcp::{
     service::{RoleServer, RequestContext},
 };
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use spec_pipeline_mcp::notifier::{PeerHandle, SessionNotifier};
@@ -108,6 +108,45 @@ impl McpServer {
     }
 }
 
+impl McpServer {
+    /// Spawn the session loop for a given workflow type. Used both at creation
+    /// and when resuming a recovered session that was at a gate.
+    fn spawn_session_loop(&self, session_id: Uuid, workflow_type: WorkflowType) {
+        let registry = Arc::clone(&self.registry);
+        let runner = Arc::clone(&self.runner);
+        let gate_channels = Arc::clone(&self.gate_channels);
+        let model_config = self.model_config.clone();
+        let prompts = Arc::clone(&self.prompts);
+        let notifier = self.notifier.clone();
+        match workflow_type {
+            WorkflowType::Brainstorm => {
+                tokio::spawn(async move {
+                    phase_runner::run_brainstorm_session(
+                        session_id, registry, runner, gate_channels,
+                        model_config, prompts, notifier,
+                    ).await;
+                });
+            }
+            WorkflowType::Spec => {
+                tokio::spawn(async move {
+                    phase_runner::run_spec_session(
+                        session_id, registry, runner, gate_channels,
+                        model_config, prompts, notifier,
+                    ).await;
+                });
+            }
+            WorkflowType::Epic => {
+                tokio::spawn(async move {
+                    phase_runner::run_epic_session(
+                        session_id, registry, runner, gate_channels,
+                        model_config, prompts, notifier,
+                    ).await;
+                });
+            }
+        }
+    }
+}
+
 // -- Tool implementations --
 
 #[tool_router]
@@ -127,7 +166,7 @@ impl McpServer {
                     turn: 0,
                 }))
             }
-            WorkflowType::Spec => WorkflowState::Spec(SpecState::Research { turn: 0 }),
+            WorkflowType::Spec => WorkflowState::Spec(SpecState::Research { turn: 0, gate_answer: None }),
             WorkflowType::Epic => WorkflowState::Epic(EpicState::ChildExtraction { turn: 0 }),
         };
 
@@ -147,58 +186,7 @@ impl McpServer {
         let _rx = self.notifier.create_watch(session_id);
 
         // Spawn the async workflow loop for the appropriate workflow type.
-        {
-            let registry = Arc::clone(&self.registry);
-            let runner = Arc::clone(&self.runner);
-            let gate_channels = Arc::clone(&self.gate_channels);
-            let model_config = self.model_config.clone();
-            let prompts = Arc::clone(&self.prompts);
-            let notifier = self.notifier.clone();
-            match workflow_type {
-                WorkflowType::Brainstorm => {
-                    tokio::spawn(async move {
-                        phase_runner::run_brainstorm_session(
-                            session_id,
-                            registry,
-                            runner,
-                            gate_channels,
-                            model_config,
-                            prompts,
-                            notifier,
-                        )
-                        .await;
-                    });
-                }
-                WorkflowType::Spec => {
-                    tokio::spawn(async move {
-                        phase_runner::run_spec_session(
-                            session_id,
-                            registry,
-                            runner,
-                            gate_channels,
-                            model_config,
-                            prompts,
-                            notifier,
-                        )
-                        .await;
-                    });
-                }
-                WorkflowType::Epic => {
-                    tokio::spawn(async move {
-                        phase_runner::run_epic_session(
-                            session_id,
-                            registry,
-                            runner,
-                            gate_channels,
-                            model_config,
-                            prompts,
-                            notifier,
-                        )
-                        .await;
-                    });
-                }
-            }
-        }
+        self.spawn_session_loop(session_id, workflow_type);
 
         // Return immediately — caller polls via spec_status.
         build_session_snapshot(session_id, &self.registry).await
@@ -226,7 +214,7 @@ impl McpServer {
 
         // Parse response_type into a GateResponse
         let gate_response = match params.response_type.as_str() {
-            "approve" => GateResponse::Approve,
+            "approve" => GateResponse::Approve { content: params.content.clone() },
             "revise" => GateResponse::Revise {
                 feedback: params.content.unwrap_or_default(),
             },
@@ -284,12 +272,33 @@ impl McpServer {
                 }
             }
             None => {
+                // No gate channel — recovered session whose loop isn't running.
+                // Apply the response directly and restart the loop in the new state.
                 info!(
                     session_id = %id,
                     response_type = %params.response_type,
-                    "no gate channel found (session not waiting at a gate)"
+                    "no gate channel; applying response directly to recovered session"
                 );
-                false
+                let wt = {
+                    let h = self.registry.get(id).ok_or_else(|| {
+                        McpError::internal_error(format!("Session {id} vanished"), None)
+                    })?;
+                    let s = h.lock().await;
+                    s.workflow_state.workflow_type()
+                };
+                let should_continue = phase_runner::apply_gate_response(
+                    id,
+                    gate_response,
+                    &self.registry,
+                    &wt.to_string(),
+                    &self.notifier,
+                )
+                .await;
+                if should_continue {
+                    self.spawn_session_loop(id, wt);
+                }
+                // Response was applied directly; report success.
+                true
             }
         };
 

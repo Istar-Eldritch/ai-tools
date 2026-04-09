@@ -160,12 +160,24 @@ Use this only if you need additional tool calls (e.g., writing files):
 {"type": "continue"}
 ```
 
+## CRITICAL: Revision Handling
+
+If `revision_feedback` is present and non-null, this is a **revision request**.
+You MUST:
+1. Read the existing artifact from `prior_artifacts[0]`.
+2. Apply EVERY change described in `revision_feedback` — these are mandatory
+   directives from the user, not suggestions.
+3. Write the revised document back to the SAME path.
+4. In your `summary`, describe what you changed in response to the feedback.
+
+Do NOT add unrelated improvements. Do NOT ignore any part of the feedback.
+The user has already reviewed the draft and is telling you exactly what to fix.
+
 ## Guidelines
 
 - Create a markdown document that organises the brainstormed ideas into clear
   sections with headings, bullet points, and any relevant details.
 - Write the file to the working directory or a sensible location.
-- If `revision_feedback` is present, revise the existing artifact accordingly.
 - If `prior_artifacts` contains a path, that is a previous draft to revise.
 - Name the file descriptively based on the topic (e.g., `brainstorm-<topic-slug>.md`).
 - Respond ONLY with valid JSON — no prose, no markdown fences around the JSON.
@@ -265,12 +277,24 @@ Use this only if you need additional tool calls (e.g., writing files):
 {"type": "continue"}
 ```
 
+## CRITICAL: Revision Handling
+
+If `revision_feedback` is present and non-null, this is a **revision request**.
+You MUST:
+1. Read the existing artifact from `prior_artifacts[0]`.
+2. Apply EVERY change described in `revision_feedback` — these are mandatory
+   directives from the user, not suggestions.
+3. Write the revised document back to the SAME path.
+4. In your `summary`, describe what you changed in response to the feedback.
+
+Do NOT add unrelated improvements. Do NOT ignore any part of the feedback.
+The user has already reviewed the draft and is telling you exactly what to fix.
+
 ## Guidelines
 
 - Create a markdown document with clear sections: Overview, Requirements,
   Design, Implementation Notes, Open Questions.
 - Write the file to the working directory or a sensible location.
-- If `revision_feedback` is present, revise the existing artifact accordingly.
 - If `prior_artifacts` contains a path, that is a previous draft to revise.
 - Name the file descriptively based on the topic (e.g., `spec-<topic-slug>.md`).
 - Respond ONLY with valid JSON — no prose, no markdown fences around the JSON.
@@ -354,12 +378,24 @@ Write the epic document to disk (markdown format) and return:
 {"type": "continue"}
 ```
 
+## CRITICAL: Revision Handling
+
+If `revision_feedback` is present and non-null, this is a **revision request**.
+You MUST:
+1. Read the existing artifact from `prior_artifacts[0]`.
+2. Apply EVERY change described in `revision_feedback` — these are mandatory
+   directives from the user, not suggestions.
+3. Write the revised document back to the SAME path.
+4. In your `summary`, describe what you changed in response to the feedback.
+
+Do NOT add unrelated improvements. Do NOT ignore any part of the feedback.
+The user has already reviewed the draft and is telling you exactly what to fix.
+
 ## Guidelines
 
 - Create a markdown document with: Epic Overview, Child Work Items (with
   descriptions, acceptance criteria, dependencies), Timeline/Ordering.
 - Write the file to the working directory or a sensible location.
-- If `revision_feedback` is present, revise the existing artifact.
 - Name the file descriptively (e.g., `epic-<topic-slug>.md`).
 - Respond ONLY with valid JSON — no prose, no markdown fences around the JSON.
 "#;

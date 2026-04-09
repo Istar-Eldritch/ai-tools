@@ -163,6 +163,11 @@ impl HasGate for SpecState {
                     suggested_actions: actions,
                 })
             }
+            SpecState::AwaitingAnswer { question } => Some(GateContent {
+                summary: question.clone(),
+                artifact_path: None,
+                suggested_actions: vec!["approve".to_string(), "cancel".to_string()],
+            }),
             SpecState::ErrorGate { message, .. } => Some(GateContent {
                 summary: format!("Error: {message}"),
                 artifact_path: None,
@@ -255,6 +260,7 @@ impl WorkflowState {
             },
             Self::Spec(s) => match s {
                 SpecState::Research { .. } | SpecState::Drafting { .. } => SessionState::Running,
+                SpecState::AwaitingAnswer { .. } => SessionState::WaitingAtGate,
                 SpecState::AwaitingApproval { .. } => SessionState::WaitingAtGate,
                 SpecState::ErrorGate { .. } => SessionState::ErrorGate,
                 SpecState::Complete { .. } => SessionState::Complete,

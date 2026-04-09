@@ -16,6 +16,9 @@ pub enum EpicState {
     Drafting {
         draft_path: PathBuf,
         revision: u32,
+        /// Revision feedback from the user, if this is a revision cycle.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        feedback: Option<String>,
     },
     /// Draft is ready for user approval.
     #[serde(rename = "awaiting_approval")]
