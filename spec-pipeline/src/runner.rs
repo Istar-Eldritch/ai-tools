@@ -310,28 +310,71 @@ impl ClaudeRunner {
                                             == Some("StructuredOutput")
                                     {
                                         if let Some(input) = block.get("input") {
-                                            structured_output =
-                                                Some(serde_json::to_string(input)
-                                                    .unwrap_or_default());
+                                            let serialized = serde_json::to_string(input)
+                                                .unwrap_or_default();
+                                            debug!(
+                                                input_len = serialized.len(),
+                                                input_preview = %truncate(&serialized, 120),
+                                                "captured StructuredOutput tool call"
+                                            );
+                                            structured_output = Some(serialized);
+                                        } else {
+                                            warn!("StructuredOutput tool_use block has no input field");
                                         }
                                     }
                                 }
                             }
                         }
                         "result" => {
+                            // When --json-schema is used, the structured output
+                            // appears in three possible locations (in priority order):
+                            //   1. A top-level "structured_output" field in the result event (JSON object)
+                            //   2. The StructuredOutput tool_use input captured from assistant events
+                            //   3. The "result" text field (only for non-json-schema modes)
+                            let so_from_result_event = v
+                                .get("structured_output")
+                                .filter(|s| !s.is_null())
+                                .map(|s| serde_json::to_string(s).unwrap_or_default())
+                                .filter(|s| !s.is_empty());
+
+                            let so_from_tool_capture = structured_output.take();
+
                             let result_str = v
                                 .get("result")
                                 .and_then(|r| r.as_str())
                                 .unwrap_or("")
                                 .to_string();
+
+                            let stop_reason_str = v
+                                .get("stop_reason")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("");
+                            let num_turns_val = v
+                                .get("num_turns")
+                                .and_then(|n| n.as_u64())
+                                .unwrap_or(0);
+
+                            // Pick the best source for the phase output.
+                            let phase_result = if let Some(so) = so_from_result_event {
+                                debug!(source = "result_event.structured_output", "using structured output from result event");
+                                so
+                            } else if let Some(so) = so_from_tool_capture {
+                                debug!(source = "tool_use_capture", "using structured output from StructuredOutput tool call");
+                                so
+                            } else if !result_str.is_empty() {
+                                debug!(source = "result_text", "using result text field (non-schema mode)");
+                                result_str.clone()
+                            } else {
+                                warn!(
+                                    stop_reason = stop_reason_str,
+                                    num_turns = num_turns_val,
+                                    "no structured output found in any source"
+                                );
+                                String::new()
+                            };
+
                             result_event = Some(ClaudeEnvelope {
-                                // Prefer the StructuredOutput capture over the
-                                // (typically empty) result field.
-                                result: if result_str.is_empty() {
-                                    structured_output.take().unwrap_or_default()
-                                } else {
-                                    result_str
-                                },
+                                result: phase_result,
                                 total_cost_usd: v
                                     .get("total_cost_usd")
                                     .and_then(|c| c.as_f64())
@@ -420,6 +463,13 @@ impl ClaudeRunner {
 
         // Parse the actual phase output from the result string.
         let raw_output: RawPhaseOutput = serde_json::from_str(&envelope.result).map_err(|e| {
+            warn!(
+                raw_result_len = envelope.result.len(),
+                raw_result_preview = %truncate(&envelope.result, 200),
+                stop_reason = %envelope.stop_reason,
+                num_turns = envelope.num_turns,
+                "failed to parse phase output"
+            );
             RunnerError::InvalidPhaseOutput {
                 raw_result: envelope.result.clone(),
                 source: e,
