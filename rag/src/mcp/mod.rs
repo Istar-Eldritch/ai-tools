@@ -129,7 +129,7 @@ impl McpServer {
 
 #[tool_router]
 impl McpServer {
-    #[tool(description = "Ingest a document into the knowledge base. Uploads the original to S3, chunks the text, embeds the chunks, and persists everything to PostgreSQL. Returns a JSON object with the source record (id, filename, content_type, metadata, created_at).")]
+    #[tool(description = "Ingest a document into the knowledge base. Stores the original to S3 when configured, chunks the text, embeds the chunks, and persists everything to PostgreSQL. Returns a JSON object with the source record (id, filename, content_type, metadata, created_at).")]
     async fn ingest(
         &self,
         Parameters(params): Parameters<IngestParams>,
@@ -170,7 +170,7 @@ impl McpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Delete a source document and all its associated chunks from the knowledge base. Removes the original from S3 and all chunk/vector records from PostgreSQL. The source_id is the UUID returned by the ingest tool.")]
+    #[tool(description = "Delete a source document and all its associated chunks from the knowledge base. Removes the original from S3 (if configured) and all chunk/vector records from PostgreSQL. The source_id is the UUID returned by the ingest tool.")]
     async fn delete_source(
         &self,
         Parameters(params): Parameters<DeleteSourceParams>,
