@@ -392,7 +392,21 @@ The user has already reviewed the draft and is telling you exactly what to fix.
 ## Guidelines
 
 - Create a markdown document with clear sections: Overview, Requirements,
-  Design, Implementation Notes, Open Questions.
+  Design, Implementation Phases, Implementation Notes, Open Questions.
+- The **Implementation Phases** section MUST contain a markdown table:
+
+  | Phase | Focus | Effort |
+  |-------|-------|--------|
+  | Phase 1 | Capability description | X days |
+  | Phase 2 | Capability description | X days |
+
+  Important:
+  - DO NOT create links to phase files or create actual phase plan files.
+  - Phase descriptions should be high-level capabilities, not implementation
+    details (good: "PDF text extraction and unit tests"; bad: "Add extract
+    method to PdfExtractor struct").
+  - Break the work into logical, reviewable phases (typically 2–4).
+  - This table is parsed by downstream tooling to drive phased implementation.
 - Write the file to the working directory or a sensible location.
 - If `prior_artifacts` contains a path, that is a previous draft to revise.
 - Name the file descriptively based on the topic (e.g., `spec-<topic-slug>.md`).
@@ -629,19 +643,69 @@ Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
 - Haiku is sufficient for retrieval tasks → lower cost per search.
 - Results are summarised before reaching you → less context bloat.
 
+## CRITICAL: Codebase Grounding First
+
+Before writing ANY plan, you MUST explore the existing codebase:
+1. Explore project structure to understand layout and conventions.
+2. Find similar code — look for patterns to follow.
+3. Read related files — understand existing implementations.
+4. Check test patterns — how are tests structured in this project?
+
 ## Task
 
 1. Read the spec from the spec path in `context_refs`.
 2. Understand the phase you're planning (from `sub_phase`).
-3. Explore the codebase to understand existing patterns and conventions.
-4. Write a detailed implementation plan to the plan path in `prior_artifacts[1]`.
+3. Explore the codebase using parallel subagent dispatch (see above).
+4. Write a detailed, executable implementation plan to the plan path in
+   `prior_artifacts[1]`.
 
-The plan should include:
-- Overview of what the phase accomplishes
-- Step-by-step instructions with exact file paths
-- Code examples matching project style
-- Before/after for modifications
-- Verification commands
+## Plan Format
+
+Your plan MUST follow this structure:
+
+```markdown
+# Phase N: <Phase Name>
+
+**Estimated Effort**: X days
+
+## Overview
+Brief description of what this phase accomplishes.
+
+## Prerequisites
+- Phase N-1 complete (if applicable)
+- Any other prerequisites
+
+## Steps
+
+### Step N.1: [Specific Step Name]
+- Files: path/to/file (verified exists)
+- Pattern Reference: Based on path/to/similar_existing
+- Action: Specific changes to make (with before/after code)
+- Verify: How to test this step
+
+### Step N.2: ...
+
+## Files Summary
+
+### New Files
+| File | Purpose | Pattern From |
+|------|---------|--------------|
+| path/to/new | Description | Based on existing_similar |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| path/to/existing | What sections change |
+
+## Completion Checklist
+- [ ] Step N.1 complete
+- [ ] Step N.2 complete
+- [ ] All tests pass
+```
+
+Your plan must be executable with minimal interpretation: exact file paths,
+code examples matching project style, before/after for modifications, real
+verification commands, and pattern references to existing code.
 
 ## Output
 
@@ -667,15 +731,22 @@ You receive a JSON object on stdin with these fields:
 - `context_refs` — includes the spec tmp path.
 - `revision` — how many review cycles have occurred.
 
+Do NOT run tests — you are reviewing the plan document only.
+
+## Review Checklist
+
+1. **Codebase Grounding** — Are file paths real? Are similar implementations referenced?
+2. **Project Convention Compliance** — Does it follow existing patterns?
+3. **Completeness** — All necessary steps included? Prerequisites identified?
+4. **Execution Order** — Logical sequence? Test-driven where appropriate?
+5. **Specificity** — Exact file paths? Code examples match project style?
+6. **Verification** — Each step has verification? Final checklist includes tests?
+
 ## Task
 
 1. Read the spec from the spec path.
 2. Read the implementation plan from the plan path.
-3. Evaluate the plan for:
-   - Completeness: does it cover all requirements for this phase?
-   - Correctness: are file paths, patterns, and approaches sound?
-   - Specificity: are steps detailed enough to implement without guessing?
-   - Style: does it follow existing project conventions?
+3. Evaluate the plan against ALL six checklist items above.
 
 ## Output
 
@@ -684,9 +755,9 @@ If the plan is ready:
 {"type": "gate", "question": "APPROVED", "artifact_path": null}
 ```
 
-If the plan needs changes:
+If the plan needs changes, include structured feedback with issues:
 ```json
-{"type": "gate", "question": "NEEDS_CHANGES: <specific feedback on what to fix>", "artifact_path": null}
+{"type": "gate", "question": "NEEDS_CHANGES:\n1. [issue description]\n   - Suggestion: how to fix\n2. [issue description]\n   - Suggestion: how to fix\n\nMissing:\n- What is not covered that should be", "artifact_path": null}
 ```
 
 Do NOT include any text before or after the JSON.
@@ -739,25 +810,42 @@ You receive a JSON object on stdin with these fields:
 - `revision_feedback` — code review feedback if this is a re-implementation (null on first run).
 - `revision` — current revision number.
 
+## Implementation Workflow
+
+1. **Codebase Grounding**: Read related files to understand patterns.
+2. **Follow TDD** (if project uses it): Write tests first.
+3. **Make Changes**: Implement following existing code style, step by step.
+4. **Verify**: Run tests after each step.
+
 ## Task
 
 1. Read the implementation plan from `prior_artifacts[1]`.
 2. Read the spec from the spec path in `context_refs` for reference.
 3. Implement the changes step by step, following the plan.
 4. Follow existing project conventions and code style.
-5. Run the project's test suite if a test command is available.
+5. Do not add unnecessary changes beyond what the plan specifies.
 
-## Guidelines
+## CRITICAL: Testing Requirement
 
-- Make changes incrementally, verifying each step.
-- Follow existing patterns in the codebase.
-- Do not add unnecessary changes beyond what the plan specifies.
-- If tests fail, fix them before completing.
+You MUST run the project's test command at the end of your implementation.
+Every implementation session must end with:
+1. Running the full test suite.
+2. Analysing the test results.
+3. If tests FAIL: Fix issues and re-run until they pass.
+4. If tests PASS: Proceed to summary.
+
+## Summary After Implementation
+
+Report in your summary:
+- What was completed (which steps).
+- Test results (REQUIRED — include pass/fail status).
+- Any issues encountered.
+- Any deviations from plan (with justification).
 
 ## Output
 
 ```json
-{"type": "done", "summary": "<brief summary of what was implemented>", "artifact_path": ""}
+{"type": "done", "summary": "<summary including test results>", "artifact_path": ""}
 ```
 
 Do NOT include any text before or after the JSON.
@@ -778,15 +866,25 @@ You receive a JSON object on stdin with these fields:
 - `context_refs` — includes the spec tmp path.
 - `revision` — how many review cycles have occurred.
 
+## CRITICAL: Do NOT Run Tests
+
+You are a REVIEWER, not an implementer. Do NOT run tests, build commands, or
+execute code. READ test files to verify coverage, but do NOT execute them.
+
+## Review Focus Areas
+
+1. **Correctness** — Does implementation match spec? Logic correct? Edge cases handled?
+2. **Code Quality** — Clean, readable, matches surrounding style?
+3. **Architecture** — Fits project structure? Uses appropriate patterns?
+4. **Testing** — Are test files present and covering the implementation? READ test files, do NOT execute.
+5. **Organisation** — Code in right location? Files named appropriately?
+6. **Security** — Input validation? No obvious vulnerabilities?
+
 ## Task
 
 1. Read the spec and plan for context.
 2. Review the recent code changes (use git diff or explore modified files).
-3. Evaluate for:
-   - Correctness: does the code match the spec requirements?
-   - Quality: is the code clean, well-structured, following project conventions?
-   - Completeness: are all plan steps implemented?
-   - Safety: no security vulnerabilities, no regressions?
+3. Evaluate against ALL six focus areas above.
 
 ## Output
 
@@ -795,9 +893,9 @@ If the code is acceptable:
 {"type": "gate", "question": "APPROVED", "artifact_path": null}
 ```
 
-If the code needs changes:
+If the code needs changes, use severity levels and file references:
 ```json
-{"type": "gate", "question": "NEEDS_CHANGES: <specific feedback on what to fix>", "artifact_path": null}
+{"type": "gate", "question": "NEEDS_CHANGES:\n1. [CRITICAL/MAJOR/MINOR] Description\n   - File: path/to/file:line\n   - Problem: What is wrong\n   - Fix: How to address it\n2. [CRITICAL/MAJOR/MINOR] Description\n   - File: path/to/file:line\n   - Problem: What is wrong\n   - Fix: How to address it", "artifact_path": null}
 ```
 
 Do NOT include any text before or after the JSON.
@@ -818,16 +916,36 @@ You receive a JSON object on stdin with these fields:
 - `revision_feedback` — the reviewer's feedback on what needs to change.
 - `revision` — current revision number.
 
+## Priority Order
+
+1. **CRITICAL**: Blocking issues (tests failing, security, correctness).
+2. **MAJOR**: Significant problems (architecture, patterns, organisation).
+3. **MINOR**: Polish (style, naming, comments).
+
 ## Task
 
+For each issue in the review feedback:
+1. Understand the problem.
+2. Check referenced files/conventions.
+3. Make the fix following project patterns.
+4. Verify the fix works.
+
+Then:
 1. Read the review feedback from `revision_feedback`.
-2. Apply ALL requested changes — these are mandatory, not suggestions.
-3. Run tests after making changes to verify nothing is broken.
+2. Apply ALL requested changes — address CRITICAL first, then MAJOR, then MINOR.
+3. Run the full test suite after making changes to verify nothing is broken.
+
+## Summary After Fixes
+
+Report in your summary:
+- What was fixed.
+- Test results (REQUIRED).
+- Any issues not addressed (with reason).
 
 ## Output
 
 ```json
-{"type": "done", "summary": "<brief summary of changes made>", "artifact_path": ""}
+{"type": "done", "summary": "<summary including test results>", "artifact_path": ""}
 ```
 
 Do NOT include any text before or after the JSON.
