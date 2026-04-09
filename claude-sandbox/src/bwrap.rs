@@ -95,9 +95,16 @@ fn host_path_exists(path: &Path) -> bool {
 pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Path>) -> AppResult<Vec<String>> {
     let mut args: Vec<String> = Vec::new();
 
-    // Namespace flags
+    // Namespace flags – map the real UID/GID so tools that need user
+    // identity (e.g. ssh) can resolve the current user.
+    let uid = unsafe { libc::getuid() };
+    let gid = unsafe { libc::getgid() };
     args.extend_from_slice(&[
         "--unshare-user".to_string(),
+        "--uid".to_string(),
+        uid.to_string(),
+        "--gid".to_string(),
+        gid.to_string(),
         "--unshare-pid".to_string(),
         "--unshare-uts".to_string(),
         "--die-with-parent".to_string(),
@@ -112,6 +119,38 @@ pub fn assemble_args(config: &ResolvedConfig, claude_path: Option<&std::path::Pa
         "--tmpfs".to_string(),
         "/tmp".to_string(),
     ]);
+
+    // Create minimal /etc/passwd and /etc/group so UID/GID resolve to
+    // names (needed by tools like ssh). Only includes root and the
+    // current user — not the full host files.
+    {
+        let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+        let home = dirs::home_dir()
+            .ok_or_else(|| AppError::Config("Could not determine home directory".to_string()))?;
+
+        let passwd_content = format!(
+            "root:x:0:0:root:/root:/bin/bash\n{}:x:{}:{}:{}:{}:/bin/bash\n",
+            user, uid, gid, user, home.display()
+        );
+        let group_content = format!("root:x:0:\n{}:x:{}:{}\n", user, gid, user);
+
+        let run_dir = PathBuf::from("/tmp/claude-sandbox-etc");
+        std::fs::create_dir_all(&run_dir)
+            .map_err(|e| AppError::Io(e))?;
+        std::fs::write(run_dir.join("passwd"), &passwd_content)
+            .map_err(|e| AppError::Io(e))?;
+        std::fs::write(run_dir.join("group"), &group_content)
+            .map_err(|e| AppError::Io(e))?;
+
+        args.extend_from_slice(&[
+            "--ro-bind".to_string(),
+            run_dir.join("passwd").to_string_lossy().to_string(),
+            "/etc/passwd".to_string(),
+            "--ro-bind".to_string(),
+            run_dir.join("group").to_string_lossy().to_string(),
+            "/etc/group".to_string(),
+        ]);
+    }
 
     // Clear the environment so that only explicitly whitelisted variables are
     // available inside the sandbox.

@@ -277,7 +277,7 @@ fn test_java_dev_profile_contents() {
     let content = std::fs::read_to_string(sandboxes_dir.join("java-dev.toml")).unwrap();
     let profile: SandboxProfile = toml::from_str(&content).unwrap();
 
-    assert!(profile.ro_paths.iter().any(|p| p.contains(".m2/repository")));
+    assert!(profile.rw_paths.iter().any(|p| p.contains(".m2")));
     assert!(profile.env.contains(&"JAVA_HOME".to_string()));
     assert!(profile.env.contains(&"MAVEN_HOME".to_string()));
 }

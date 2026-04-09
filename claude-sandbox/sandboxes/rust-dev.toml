@@ -24,13 +24,16 @@ ro_paths = [
     "/run/user/1000/pulse/",
     "/run/user/1000/pipewire-0",
     "/run/user/1000/pipewire-0-manager",
+    "/run/user/1000/keyring/",
+    "/run/user/1000/bus",
     "~/.cargo/",
     "~/.rustup/",
     "~/code/ai_tools",
     "~/.local",
     "~/.config",
     "~/.gitconfig",
-    "~/.gitignore_global"
+    "~/.gitignore_global",
+    "~/.ssh"
 ]
 
 excluded_paths = []
@@ -39,4 +42,5 @@ env = [
     "CARGO_HOME",
     "RUSTUP_HOME",
     "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
 ]

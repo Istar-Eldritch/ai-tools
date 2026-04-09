@@ -20,6 +20,8 @@ ro_paths = [
     "/run/user/1000/pulse/",
     "/run/user/1000/pipewire-0",
     "/run/user/1000/pipewire-0-manager",
+    "/run/user/1000/keyring/",
+    "/run/user/1000/bus",
     "~/code/ai_tools",
     "~/.local",
     "~/.config",
@@ -32,4 +34,5 @@ excluded_paths = []
 
 env = [
     "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
 ]
