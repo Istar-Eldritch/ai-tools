@@ -9,7 +9,7 @@ use rmcp::model::{
 use rmcp::service::Peer;
 use rmcp::service::RoleServer;
 use serde::Serialize;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{RwLock, broadcast, watch};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -42,11 +42,15 @@ pub struct ErrorContent {
 /// Per-session watch channels so MCP tool handlers can block until state changes.
 type StateWatchMap = DashMap<Uuid, watch::Sender<SessionState>>;
 
+/// Per-session broadcast channels for live activity messages (child events + state changes).
+type ActivityBroadcastMap = DashMap<Uuid, broadcast::Sender<String>>;
+
 /// Cloneable notifier that emits MCP notifications for session state changes.
 #[derive(Clone)]
 pub struct SessionNotifier {
     peer: PeerHandle,
     watches: Arc<StateWatchMap>,
+    activity: Arc<ActivityBroadcastMap>,
 }
 
 /// Describes a session state change event.
@@ -75,6 +79,7 @@ impl SessionNotifier {
         Self {
             peer: Arc::new(RwLock::new(None)),
             watches: Arc::new(DashMap::new()),
+            activity: Arc::new(DashMap::new()),
         }
     }
 
@@ -83,10 +88,12 @@ impl SessionNotifier {
         Arc::clone(&self.peer)
     }
 
-    /// Create a watch channel for a new session. Returns the receiver.
+    /// Create watch and activity broadcast channels for a new session.
     pub fn create_watch(&self, session_id: Uuid) -> watch::Receiver<SessionState> {
         let (tx, rx) = watch::channel(SessionState::Running);
         self.watches.insert(session_id, tx);
+        let (atx, _) = broadcast::channel(64);
+        self.activity.insert(session_id, atx);
         rx
     }
 
@@ -95,9 +102,15 @@ impl SessionNotifier {
         self.watches.get(&session_id).map(|tx| tx.subscribe())
     }
 
-    /// Remove the watch channel for a session (cleanup after completion).
+    /// Subscribe to live activity messages for a session (child events + state changes).
+    pub fn subscribe_activity(&self, session_id: Uuid) -> Option<broadcast::Receiver<String>> {
+        self.activity.get(&session_id).map(|tx| tx.subscribe())
+    }
+
+    /// Remove watch and activity channels for a session (cleanup after completion).
     pub fn remove_watch(&self, session_id: Uuid) {
         self.watches.remove(&session_id);
+        self.activity.remove(&session_id);
     }
 
     /// Emit a structured `spec/sessionEvent` custom MCP notification,
@@ -109,6 +122,11 @@ impl SessionNotifier {
         if let Some(tx) = self.watches.get(&event.session_id) {
             let state = parse_session_state(&event.session_state);
             let _ = tx.send(state);
+        }
+
+        // Broadcast activity message for blocking tool calls
+        if let Some(atx) = self.activity.get(&event.session_id) {
+            let _ = atx.send(event.message.clone());
         }
 
         let guard = self.peer.read().await;
@@ -153,6 +171,11 @@ impl SessionNotifier {
 
     /// Forward a child agent event as an MCP log notification.
     pub async fn notify_child_event(&self, session_id: Uuid, phase: &str, message: &str) {
+        // Broadcast activity message for blocking tool calls
+        if let Some(atx) = self.activity.get(&session_id) {
+            let _ = atx.send(format!("{phase}: {message}"));
+        }
+
         let guard = self.peer.read().await;
         let peer = match guard.as_ref() {
             Some(p) => p,

@@ -5,10 +5,10 @@ use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
         CallToolResult, Content, Implementation, InitializeRequestParams, InitializeResult,
-        ServerCapabilities, ServerInfo,
+        Meta, ProgressNotificationParam, ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
-    service::{RoleServer, RequestContext},
+    service::{Peer, RoleServer, RequestContext},
 };
 use serde::Deserialize;
 use tracing::info;
@@ -163,10 +163,12 @@ impl McpServer {
 #[tool_router]
 impl McpServer {
     #[tool(
-        description = "Start a new spec-pipeline workflow session. Creates a session for the given workflow type (brainstorm, spec, epic, or implement) and topic. For implement workflows, topic must be the path to an existing spec file. Returns immediately with the session ID in Running state. Subscribe to spec/sessionEvent notifications for real-time progress updates. The server emits structured notifications on every phase transition, gate arrival, completion, and error — no polling required. Use spec_status only for a one-time snapshot (e.g. on reconnect)."
+        description = "Start a new spec-pipeline workflow session and block until it reaches a gate or completes. Shows real-time progress from the running agent. For implement workflows, topic must be the path to an existing spec file. Returns the session state including any gate content for user response."
     )]
     async fn spec_start(
         &self,
+        meta: Meta,
+        client: Peer<RoleServer>,
         Parameters(params): Parameters<SpecStartParams>,
     ) -> Result<CallToolResult, McpError> {
         let workflow_type = parse_workflow_type(&params.workflow_type)?;
@@ -238,7 +240,9 @@ impl McpServer {
                 .await;
         }
 
-        // Return immediately — client receives progress via spec/sessionEvent notifications.
+        // Block until gate/completion, emitting progress notifications.
+        await_with_progress(session_id, &self.notifier, &meta, &client).await?;
+
         build_session_snapshot(session_id, &self.registry).await
     }
 
@@ -254,10 +258,12 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Respond to a spec-pipeline session gate. Sends a user response (approve, revise, cancel, retry) to a session that is waiting at a gate. Returns immediately after delivering the response. A gate_response_received notification is emitted, followed by phase_transition notifications as the workflow resumes. Subscribe to spec/sessionEvent notifications for real-time progress — no polling required."
+        description = "Respond to a spec-pipeline session gate and block until the workflow reaches the next gate or completes. Shows real-time progress from the running agent. Sends a user response (approve, revise, cancel, retry, configure) to a session waiting at a gate."
     )]
     async fn spec_respond(
         &self,
+        meta: Meta,
+        client: Peer<RoleServer>,
         Parameters(params): Parameters<SpecRespondParams>,
     ) -> Result<CallToolResult, McpError> {
         let id = parse_uuid(&params.session_id)?;
@@ -391,6 +397,9 @@ impl McpServer {
                 .await;
         }
 
+        // Block until next gate/completion, emitting progress notifications.
+        await_with_progress(id, &self.notifier, &meta, &client).await?;
+
         build_session_snapshot(id, &self.registry).await
     }
 
@@ -510,6 +519,58 @@ impl ServerHandler for McpServer {
 }
 
 // -- Helpers --
+
+/// Block until a session reaches a gate, completes, errors, or is cancelled.
+/// While waiting, forward live activity messages as indeterminate progress notifications.
+async fn await_with_progress(
+    session_id: Uuid,
+    notifier: &SessionNotifier,
+    meta: &Meta,
+    client: &Peer<RoleServer>,
+) -> Result<(), McpError> {
+    let mut state_rx = notifier
+        .subscribe(session_id)
+        .ok_or_else(|| McpError::internal_error("No watch channel for session", None))?;
+    let mut activity_rx = notifier
+        .subscribe_activity(session_id)
+        .ok_or_else(|| McpError::internal_error("No activity channel for session", None))?;
+
+    let progress_token = meta.get_progress_token();
+    let mut tick: f64 = 0.0;
+
+    loop {
+        tokio::select! {
+            Ok(message) = activity_rx.recv() => {
+                if let Some(ref token) = progress_token {
+                    tick += 1.0;
+                    let _ = client
+                        .notify_progress(ProgressNotificationParam {
+                            progress_token: token.clone(),
+                            progress: tick,
+                            total: None,
+                            message: Some(message),
+                        })
+                        .await;
+                }
+            }
+            result = state_rx.changed() => {
+                if result.is_err() {
+                    // Sender dropped — session ended
+                    break;
+                }
+                let state = *state_rx.borrow();
+                match state {
+                    SessionState::WaitingAtGate
+                    | SessionState::ErrorGate
+                    | SessionState::Complete
+                    | SessionState::Cancelled => break,
+                    SessionState::Running => continue,
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Parse a string into a WorkflowType, returning an MCP error on invalid input.
 fn parse_workflow_type(s: &str) -> Result<WorkflowType, McpError> {
