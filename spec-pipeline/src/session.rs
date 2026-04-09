@@ -290,6 +290,9 @@ impl SessionRegistry {
             }
             WorkflowType::Spec => WorkflowState::Spec(crate::workflow::SpecState::Cancelled),
             WorkflowType::Epic => WorkflowState::Epic(crate::workflow::EpicState::Cancelled),
+            WorkflowType::Implement => {
+                WorkflowState::Implement(crate::workflow::ImplementState::Cancelled)
+            }
         };
         session.updated_at = Utc::now();
         self.store.save(&session)?;

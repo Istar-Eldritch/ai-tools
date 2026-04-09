@@ -14,6 +14,9 @@ use crate::runner::{ChildEvent, ClaudeRunner, PhaseContext, RawPhaseOutput, Runn
 use crate::session::SessionRegistry;
 use crate::workflow::brainstorm::{BrainstormState, DiscoveryPhase};
 use crate::workflow::epic::EpicState;
+use crate::workflow::implement::{
+    ExtractedPhase, ImplementConfig, ImplementState, PhaseMetrics,
+};
 use crate::workflow::spec::SpecState;
 use crate::workflow::types::{GateResponse, ModelConfig};
 use crate::workflow::WorkflowState;
@@ -592,6 +595,9 @@ async fn process_phase_output(
         "epic" => {
             process_epic_output(session_id, registry, current_phase, output, cost_usd).await
         }
+        "implement" => {
+            process_implement_output(session_id, registry, current_phase, output, cost_usd).await
+        }
         _ => {
             error!(%session_id, %workflow_type, "unknown workflow type in process_phase_output");
             InternalAction::Break
@@ -1019,6 +1025,9 @@ pub async fn apply_gate_response(
         }
         GateResponse::Cancel => apply_cancel(session_id, registry, workflow_type).await,
         GateResponse::Retry => apply_retry(session_id, registry, &ws, workflow_type).await,
+        GateResponse::Configure { config_json } => {
+            apply_configure(session_id, registry, &ws, &config_json).await
+        }
     };
 
     // Notify after applying the gate response (complete, cancelled, or next phase)
@@ -1059,16 +1068,56 @@ async fn apply_approve(
                 artifact_path: artifact_path.clone(),
             })
         }
+        WorkflowState::Implement(ImplementState::Configuring { phases, config }) => {
+            // Approve at the configuration gate: begin the autonomous run.
+            let num_phases = phases.len();
+            let initial_metrics = Vec::with_capacity(num_phases);
+            if config.skip_plan_generation {
+                WorkflowState::Implement(ImplementState::Implementation {
+                    phases: phases.clone(),
+                    current_phase_idx: 0,
+                    config: config.clone(),
+                    metrics: initial_metrics,
+                })
+            } else {
+                WorkflowState::Implement(ImplementState::PlanGeneration {
+                    phases: phases.clone(),
+                    current_phase_idx: 0,
+                    config: config.clone(),
+                    metrics: initial_metrics,
+                })
+            }
+        }
+        WorkflowState::Implement(ImplementState::AwaitingApproval {
+            metrics,
+            ..
+        }) => {
+            // Build the complete state with the spec path from the topic.
+            // The topic for implement sessions is the spec file path.
+            let spec_path = {
+                let handle = match registry.get(session_id) {
+                    Some(h) => h,
+                    None => return false,
+                };
+                let session = handle.lock().await;
+                session.topic.clone()
+            };
+            WorkflowState::Implement(ImplementState::Complete {
+                spec_path,
+                metrics: metrics.clone(),
+            })
+        }
         _ => {
             warn!(%session_id, state = ?ws, "approve in unexpected state");
             return false;
         }
     };
 
-    // Check if this is a mid-workflow gate (e.g. research question) before persisting.
+    // Check if this is a mid-workflow gate that should continue the loop.
     let should_continue = matches!(
         ws,
         WorkflowState::Spec(SpecState::AwaitingAnswer { .. })
+            | WorkflowState::Implement(ImplementState::Configuring { .. })
     );
 
     if let Err(e) = registry
@@ -1097,6 +1146,42 @@ async fn apply_revise(
     workflow_type: &str,
     feedback: &str,
 ) -> bool {
+    // Handle implement revise specially (no artifact_path, uses approval_revision).
+    if let WorkflowState::Implement(ImplementState::AwaitingApproval {
+        phases,
+        config,
+        metrics,
+        approval_revision,
+    }) = ws
+    {
+        if *approval_revision >= FEEDBACK_DEPTH_LIMIT {
+            warn!(
+                %session_id,
+                revision = %approval_revision,
+                limit = FEEDBACK_DEPTH_LIMIT,
+                "feedback depth limit reached for implement workflow"
+            );
+            return false;
+        }
+        let new_ws = WorkflowState::Implement(ImplementState::IterationReview {
+            phases: phases.clone(),
+            config: config.clone(),
+            metrics: metrics.clone(),
+            iteration: approval_revision + 1,
+        });
+        if let Err(e) = registry
+            .update(session_id, move |s| {
+                s.workflow_state = new_ws;
+            })
+            .await
+        {
+            error!(%session_id, error = %e, "failed to persist Revise (implement)");
+            return false;
+        }
+        info!(%session_id, %workflow_type, %feedback, "implement revision requested, entering IterationReview");
+        return true;
+    }
+
     // Extract current revision count and artifact path from AwaitingApproval
     let (revision, artifact_path) = match ws {
         WorkflowState::Brainstorm(BrainstormState::AwaitingApproval {
@@ -1175,6 +1260,7 @@ async fn apply_cancel(
         "brainstorm" => WorkflowState::Brainstorm(BrainstormState::Cancelled),
         "spec" => WorkflowState::Spec(SpecState::Cancelled),
         "epic" => WorkflowState::Epic(EpicState::Cancelled),
+        "implement" => WorkflowState::Implement(ImplementState::Cancelled),
         _ => {
             error!(%session_id, %workflow_type, "unknown workflow type in apply_cancel");
             return false;
@@ -1243,6 +1329,28 @@ async fn apply_retry(
                 _ => {
                     warn!(%session_id, %failed_phase, "cannot retry unknown epic phase");
                     return false;
+                }
+            }
+        }
+        WorkflowState::Implement(ImplementState::ErrorGate { failed_phase, .. }) => {
+            // For implement, retry just re-enters PhaseExtraction (the session loop
+            // will rebuild from the current state). The implement session loop handles
+            // re-entry from any phase that was persisted before the error occurred.
+            // Since ErrorGate only stores the failed_phase name, we restart from
+            // PhaseExtraction. The user can also cancel and start a new session.
+            match failed_phase.as_str() {
+                "phase_extraction" => {
+                    WorkflowState::Implement(ImplementState::PhaseExtraction)
+                }
+                _ => {
+                    // For any other implement phase error, we restart from
+                    // PhaseExtraction since we cannot reconstruct the full state.
+                    warn!(
+                        %session_id,
+                        %failed_phase,
+                        "retrying implement from phase_extraction"
+                    );
+                    WorkflowState::Implement(ImplementState::PhaseExtraction)
                 }
             }
         }
@@ -1378,10 +1486,827 @@ fn make_error_gate(
             failed_phase,
             exit_code,
         }),
+        "implement" => WorkflowState::Implement(ImplementState::ErrorGate {
+            message,
+            failed_phase,
+            exit_code,
+        }),
         _ => WorkflowState::Brainstorm(BrainstormState::ErrorGate {
             message,
             failed_phase,
             exit_code,
         }),
+    }
+}
+
+// ===========================================================================
+// Configure gate response (implement workflow only)
+// ===========================================================================
+
+/// Apply a `configure` gate response: merge partial config into the current
+/// `ImplementConfig` and keep the session at `Configuring` so the updated
+/// gate is re-presented.
+async fn apply_configure(
+    session_id: Uuid,
+    registry: &Arc<SessionRegistry>,
+    ws: &WorkflowState,
+    config_json: &str,
+) -> bool {
+    let (phases, mut config) = match ws {
+        WorkflowState::Implement(ImplementState::Configuring { phases, config }) => {
+            (phases.clone(), config.clone())
+        }
+        _ => {
+            warn!(%session_id, state = ?ws, "configure in unexpected state");
+            return false;
+        }
+    };
+
+    // Parse partial config and merge fields that are present.
+    if let Ok(overrides) = serde_json::from_str::<serde_json::Value>(config_json) {
+        if let Some(v) = overrides.get("planner").and_then(|v| v.as_str()) {
+            config.planner = v.to_string();
+        }
+        if let Some(v) = overrides.get("reviewer").and_then(|v| v.as_str()) {
+            config.reviewer = v.to_string();
+        }
+        if let Some(v) = overrides.get("reviser").and_then(|v| v.as_str()) {
+            config.reviser = v.to_string();
+        }
+        if let Some(v) = overrides.get("implementer").and_then(|v| v.as_str()) {
+            config.implementer = v.to_string();
+        }
+        if let Some(v) = overrides.get("plan_revision_limit").and_then(|v| v.as_u64()) {
+            config.plan_revision_limit = v as u32;
+        }
+        if let Some(v) = overrides.get("code_revision_limit").and_then(|v| v.as_u64()) {
+            config.code_revision_limit = v as u32;
+        }
+        if let Some(v) = overrides.get("skip_plan_generation").and_then(|v| v.as_bool()) {
+            config.skip_plan_generation = v;
+        }
+    } else {
+        warn!(%session_id, %config_json, "failed to parse configure JSON, keeping existing config");
+    }
+
+    let new_ws = WorkflowState::Implement(ImplementState::Configuring { phases, config });
+
+    if let Err(e) = registry
+        .update(session_id, move |s| {
+            s.workflow_state = new_ws;
+        })
+        .await
+    {
+        error!(%session_id, error = %e, "failed to persist Configure");
+        return false;
+    }
+
+    info!(%session_id, "implement config updated, re-presenting gate");
+    // Return false to NOT continue the loop — the session stays at the gate.
+    // The gate will be re-presented via the notification.
+    false
+}
+
+// ===========================================================================
+// Implement session
+// ===========================================================================
+
+/// Resolve which model to use for a given implement sub-phase.
+fn resolve_implement_model(sub_phase: &str, config: &ImplementConfig) -> String {
+    match sub_phase {
+        "plan_generation" => config.planner.clone(),
+        "plan_review" | "code_review" | "iteration_review" => config.reviewer.clone(),
+        "plan_revision" | "code_revision" | "iteration_revision" => config.reviser.clone(),
+        "implementation" => config.implementer.clone(),
+        _ => "sonnet".to_string(),
+    }
+}
+
+/// Run an implement session to completion.
+///
+/// This function is meant to be `tokio::spawn`-ed. It manages the full
+/// implement workflow lifecycle: phase extraction, configuration gate,
+/// per-phase plan+implement+review cycles, and final approval gate.
+pub async fn run_implement_session(
+    session_id: Uuid,
+    registry: Arc<SessionRegistry>,
+    runner: Arc<ClaudeRunner>,
+    gate_channels: Arc<GateChannelMap>,
+    model_config: ModelConfig,
+    prompts: Arc<PromptStore>,
+    notifier: SessionNotifier,
+) {
+    info!(%session_id, "implement session loop starting");
+
+    // Create a temp directory for spec copy and plan files.
+    let tmp_dir = match tempfile::TempDir::new() {
+        Ok(d) => d,
+        Err(e) => {
+            error!(%session_id, error = %e, "failed to create temp dir");
+            transition_to_error(
+                &registry,
+                session_id,
+                &format!("Failed to create temp dir: {e}"),
+                "phase_extraction",
+                "implement",
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Copy the spec file content to the temp dir.
+    let spec_tmp_path = tmp_dir.path().join("spec.md");
+    {
+        let handle = match registry.get(session_id) {
+            Some(h) => h,
+            None => {
+                error!(%session_id, "session vanished from registry");
+                return;
+            }
+        };
+        let session = handle.lock().await;
+        let spec_path = session.topic.clone();
+        drop(session);
+        match std::fs::read_to_string(&spec_path) {
+            Ok(content) => {
+                if let Err(e) = std::fs::write(&spec_tmp_path, &content) {
+                    error!(%session_id, error = %e, "failed to write spec to tmp");
+                    transition_to_error(
+                        &registry,
+                        session_id,
+                        &format!("Failed to write spec to temp dir: {e}"),
+                        "phase_extraction",
+                        "implement",
+                    )
+                    .await;
+                    return;
+                }
+            }
+            Err(e) => {
+                error!(%session_id, error = %e, spec_path = %spec_path, "failed to read spec file");
+                transition_to_error(
+                    &registry,
+                    session_id,
+                    &format!("Failed to read spec file '{}': {e}", spec_path),
+                    "phase_extraction",
+                    "implement",
+                )
+                .await;
+                return;
+            }
+        }
+    }
+
+    loop {
+        // Read current state and build the phase setup.
+        let setup = {
+            let handle = match registry.get(session_id) {
+                Some(h) => h,
+                None => {
+                    error!(%session_id, "session vanished from registry");
+                    return;
+                }
+            };
+            let session = handle.lock().await;
+
+            let is = match &session.workflow_state {
+                WorkflowState::Implement(is) => is.clone(),
+                other => {
+                    warn!(%session_id, state = ?other, "session is not an implement workflow");
+                    return;
+                }
+            };
+
+            // Determine phase and prompt key
+            let (phase, prompt_key, model) = match &is {
+                ImplementState::PhaseExtraction => {
+                    let role = is.phase_role();
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| model_config.for_role(role).to_string());
+                    ("phase_extraction", "implement/phase_extraction", m)
+                }
+                ImplementState::PlanGeneration { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("plan_generation", config));
+                    ("plan_generation", "implement/plan_generation", m)
+                }
+                ImplementState::PlanReview { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("plan_review", config));
+                    ("plan_review", "implement/plan_review", m)
+                }
+                ImplementState::PlanRevision { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("plan_revision", config));
+                    ("plan_revision", "implement/plan_revision", m)
+                }
+                ImplementState::Implementation { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("implementation", config));
+                    ("implementation", "implement/implementation", m)
+                }
+                ImplementState::CodeReview { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("code_review", config));
+                    ("code_review", "implement/code_review", m)
+                }
+                ImplementState::CodeRevision { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("code_revision", config));
+                    ("code_revision", "implement/code_revision", m)
+                }
+                ImplementState::IterationReview { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("iteration_review", config));
+                    ("iteration_review", "implement/iteration_review", m)
+                }
+                ImplementState::IterationRevision { config, .. } => {
+                    let m = session
+                        .model_override
+                        .clone()
+                        .unwrap_or_else(|| resolve_implement_model("iteration_revision", config));
+                    ("iteration_revision", "implement/iteration_revision", m)
+                }
+                // Terminal / gate states
+                ImplementState::Complete { .. }
+                | ImplementState::Cancelled
+                | ImplementState::Configuring { .. }
+                | ImplementState::AwaitingApproval { .. }
+                | ImplementState::ErrorGate { .. } => {
+                    info!(%session_id, phase = is.phase_name(), "implement session in terminal/gate state, exiting loop");
+                    return;
+                }
+            };
+
+            let revision = match &is {
+                ImplementState::PlanReview { plan_revision, .. } => *plan_revision,
+                ImplementState::PlanRevision { plan_revision, .. } => *plan_revision,
+                ImplementState::CodeReview { code_revision, .. } => *code_revision,
+                ImplementState::CodeRevision { code_revision, .. } => *code_revision,
+                ImplementState::IterationReview { iteration, .. } => *iteration,
+                ImplementState::IterationRevision { iteration, .. } => *iteration,
+                _ => 0,
+            };
+
+            let revision_feedback = match &is {
+                ImplementState::PlanRevision {
+                    review_feedback, ..
+                } => Some(review_feedback.clone()),
+                ImplementState::CodeRevision {
+                    review_feedback, ..
+                } => Some(review_feedback.clone()),
+                ImplementState::IterationRevision {
+                    review_feedback, ..
+                } => Some(review_feedback.clone()),
+                _ => None,
+            };
+
+            // Build prior_artifacts: always include the spec tmp path.
+            let mut prior_artifacts = vec![spec_tmp_path.display().to_string()];
+
+            // For phases that work with a plan, include the plan path.
+            match &is {
+                ImplementState::PlanReview {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::PlanRevision {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::Implementation {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::CodeReview {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::CodeRevision {
+                    phases,
+                    current_phase_idx,
+                    ..
+                } => {
+                    if let Some(ep) = phases.get(*current_phase_idx) {
+                        let plan_filename =
+                            format!("phase{}_{}.md", ep.number, ep.slug);
+                        let plan_path = tmp_dir.path().join(&plan_filename);
+                        prior_artifacts.push(plan_path.display().to_string());
+                    }
+                }
+                _ => {}
+            }
+
+            // Build context_refs from session, plus the spec tmp path.
+            let mut context_refs = session.context_refs.clone();
+            context_refs.push(spec_tmp_path.display().to_string());
+
+            // For phase extraction, add the output path as a context_ref.
+            if matches!(&is, ImplementState::PhaseExtraction) {
+                let extraction_output = tmp_dir.path().join("extracted_phases.json");
+                context_refs.push(extraction_output.display().to_string());
+            }
+
+            // Add current phase description as sub_phase for agent context.
+            let sub_phase = match &is {
+                ImplementState::PlanGeneration {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::PlanReview {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::PlanRevision {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::Implementation {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::CodeReview {
+                    phases,
+                    current_phase_idx,
+                    ..
+                }
+                | ImplementState::CodeRevision {
+                    phases,
+                    current_phase_idx,
+                    ..
+                } => phases
+                    .get(*current_phase_idx)
+                    .map(|p| format!("phase{}_{}", p.number, p.slug)),
+                _ => None,
+            };
+
+            PhaseSetup {
+                context: PhaseContext {
+                    topic: session.topic.clone(),
+                    workflow_type: "implement".to_string(),
+                    phase: phase.to_string(),
+                    sub_phase,
+                    prior_artifacts,
+                    context_refs,
+                    gate_history: vec![],
+                    revision_feedback,
+                    revision,
+                },
+                model,
+                prompt_key: prompt_key.to_string(),
+                workflow_type: "implement".to_string(),
+            }
+            // lock dropped here
+        };
+
+        match run_phase_and_process(
+            session_id,
+            &registry,
+            &runner,
+            &gate_channels,
+            &prompts,
+            setup,
+            &notifier,
+        )
+        .await
+        {
+            LoopAction::Continue => continue,
+            LoopAction::Break => break,
+        }
+    }
+
+    info!(%session_id, "implement session loop finished");
+}
+
+// ---------------------------------------------------------------------------
+// Implement output processing
+// ---------------------------------------------------------------------------
+
+async fn process_implement_output(
+    session_id: Uuid,
+    registry: &Arc<SessionRegistry>,
+    current_phase: &str,
+    output: RawPhaseOutput,
+    cost_usd: f64,
+) -> InternalAction {
+    let is_snapshot = {
+        let handle = match registry.get(session_id) {
+            Some(h) => h,
+            None => return InternalAction::Break,
+        };
+        let session = handle.lock().await;
+        match &session.workflow_state {
+            WorkflowState::Implement(is) => is.clone(),
+            _ => return InternalAction::Break,
+        }
+    };
+
+    match output {
+        RawPhaseOutput::Continue => {
+            // Continue just bumps cost; no state change needed for implement phases
+            // (they don't have multi-turn loops like discovery).
+            if let Err(e) = registry
+                .update(session_id, move |s| {
+                    s.total_cost_usd += cost_usd;
+                })
+                .await
+            {
+                error!(%session_id, error = %e, "failed to persist implement Continue");
+                return InternalAction::Break;
+            }
+            InternalAction::Continue
+        }
+
+        RawPhaseOutput::Gate { question, .. } => {
+            // Review phases use Gate output to carry the verdict.
+            // The runner reads the question field to decide the transition;
+            // no actual user gate is presented.
+            let approved = question
+                .trim()
+                .to_uppercase()
+                .starts_with("APPROVED");
+
+            let new_state = match is_snapshot {
+                ImplementState::PlanReview {
+                    phases,
+                    current_phase_idx,
+                    plan_revision,
+                    config,
+                    mut metrics,
+                } => {
+                    if approved || plan_revision >= config.plan_revision_limit {
+                        if !approved && plan_revision >= config.plan_revision_limit {
+                            warn!(
+                                %session_id,
+                                %plan_revision,
+                                limit = config.plan_revision_limit,
+                                "plan revision limit reached, advancing anyway"
+                            );
+                        }
+                        // Record plan cycles in metrics for this phase.
+                        let phase_num = phases
+                            .get(current_phase_idx)
+                            .map(|p| p.number)
+                            .unwrap_or(0);
+                        // Check if we already have metrics for this phase.
+                        if let Some(m) = metrics.iter_mut().find(|m| m.phase_number == phase_num) {
+                            m.plan_cycles = plan_revision + 1;
+                        } else {
+                            metrics.push(PhaseMetrics {
+                                phase_number: phase_num,
+                                plan_cycles: plan_revision + 1,
+                                code_cycles: 0,
+                                code_approved_first_pass: false,
+                            });
+                        }
+                        ImplementState::Implementation {
+                            phases,
+                            current_phase_idx,
+                            config,
+                            metrics,
+                        }
+                    } else {
+                        // Needs changes: go to PlanRevision.
+                        ImplementState::PlanRevision {
+                            phases,
+                            current_phase_idx,
+                            plan_revision,
+                            review_feedback: question,
+                            config,
+                            metrics,
+                        }
+                    }
+                }
+                ImplementState::CodeReview {
+                    phases,
+                    current_phase_idx,
+                    code_revision,
+                    config,
+                    mut metrics,
+                } => {
+                    let phase_num = phases
+                        .get(current_phase_idx)
+                        .map(|p| p.number)
+                        .unwrap_or(0);
+
+                    if approved || code_revision >= config.code_revision_limit {
+                        if !approved && code_revision >= config.code_revision_limit {
+                            warn!(
+                                %session_id,
+                                %code_revision,
+                                limit = config.code_revision_limit,
+                                "code revision limit reached, advancing anyway"
+                            );
+                        }
+                        // Record code cycles.
+                        if let Some(m) = metrics.iter_mut().find(|m| m.phase_number == phase_num) {
+                            m.code_cycles = code_revision + 1;
+                            m.code_approved_first_pass = approved && code_revision == 0;
+                        } else {
+                            metrics.push(PhaseMetrics {
+                                phase_number: phase_num,
+                                plan_cycles: 0,
+                                code_cycles: code_revision + 1,
+                                code_approved_first_pass: approved && code_revision == 0,
+                            });
+                        }
+
+                        // Move to next phase or AwaitingApproval.
+                        let next_idx = current_phase_idx + 1;
+                        if next_idx >= phases.len() {
+                            ImplementState::AwaitingApproval {
+                                phases,
+                                config,
+                                metrics,
+                                approval_revision: 0,
+                            }
+                        } else if config.skip_plan_generation {
+                            ImplementState::Implementation {
+                                phases,
+                                current_phase_idx: next_idx,
+                                config,
+                                metrics,
+                            }
+                        } else {
+                            ImplementState::PlanGeneration {
+                                phases,
+                                current_phase_idx: next_idx,
+                                config,
+                                metrics,
+                            }
+                        }
+                    } else {
+                        // Needs changes: go to CodeRevision.
+                        ImplementState::CodeRevision {
+                            phases,
+                            current_phase_idx,
+                            code_revision,
+                            review_feedback: question,
+                            config,
+                            metrics,
+                        }
+                    }
+                }
+                ImplementState::IterationReview {
+                    phases,
+                    config,
+                    metrics,
+                    iteration,
+                } => {
+                    if approved || iteration >= FEEDBACK_DEPTH_LIMIT {
+                        if !approved && iteration >= FEEDBACK_DEPTH_LIMIT {
+                            warn!(
+                                %session_id,
+                                %iteration,
+                                limit = FEEDBACK_DEPTH_LIMIT,
+                                "iteration review limit reached, returning to approval gate"
+                            );
+                        }
+                        ImplementState::AwaitingApproval {
+                            phases,
+                            config,
+                            metrics,
+                            approval_revision: iteration,
+                        }
+                    } else {
+                        ImplementState::IterationRevision {
+                            phases,
+                            config,
+                            metrics,
+                            iteration,
+                            review_feedback: question,
+                        }
+                    }
+                }
+                other => {
+                    warn!(%session_id, state = ?other, "unexpected Gate in implement state");
+                    return InternalAction::Break;
+                }
+            };
+
+            let is_at_gate = matches!(
+                &new_state,
+                ImplementState::AwaitingApproval { .. }
+                    | ImplementState::Configuring { .. }
+            );
+
+            let new_ws = WorkflowState::Implement(new_state);
+            if let Err(e) = registry
+                .update(session_id, move |s| {
+                    s.total_cost_usd += cost_usd;
+                    s.workflow_state = new_ws;
+                })
+                .await
+            {
+                error!(%session_id, error = %e, "failed to persist implement Gate transition");
+                return InternalAction::Break;
+            }
+
+            if is_at_gate {
+                InternalAction::AwaitGate
+            } else {
+                InternalAction::Continue
+            }
+        }
+
+        RawPhaseOutput::Done {
+            artifact_path,
+            summary,
+        } => {
+            info!(%session_id, %summary, artifact = %artifact_path, "implement phase done");
+
+            let new_state = match is_snapshot {
+                ImplementState::PhaseExtraction => {
+                    // Parse the extracted phases from the artifact JSON.
+                    let phases = if artifact_path.is_empty() {
+                        vec![ExtractedPhase {
+                            number: 1,
+                            slug: "implementation".to_string(),
+                            description: "Full implementation".to_string(),
+                        }]
+                    } else {
+                        match std::fs::read_to_string(&artifact_path) {
+                            Ok(json) => {
+                                match serde_json::from_str::<Vec<ExtractedPhase>>(&json) {
+                                    Ok(p) if p.is_empty() => {
+                                        vec![ExtractedPhase {
+                                            number: 1,
+                                            slug: "implementation".to_string(),
+                                            description: "Full implementation".to_string(),
+                                        }]
+                                    }
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        warn!(%session_id, error = %e, "failed to parse extracted phases JSON");
+                                        vec![ExtractedPhase {
+                                            number: 1,
+                                            slug: "implementation".to_string(),
+                                            description: "Full implementation".to_string(),
+                                        }]
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(%session_id, error = %e, artifact = %artifact_path, "failed to read extracted phases file");
+                                vec![ExtractedPhase {
+                                    number: 1,
+                                    slug: "implementation".to_string(),
+                                    description: "Full implementation".to_string(),
+                                }]
+                            }
+                        }
+                    };
+                    ImplementState::Configuring {
+                        phases,
+                        config: ImplementConfig::default(),
+                    }
+                }
+                ImplementState::PlanGeneration {
+                    phases,
+                    current_phase_idx,
+                    config,
+                    metrics,
+                } => {
+                    // Plan generated; move to PlanReview.
+                    ImplementState::PlanReview {
+                        phases,
+                        current_phase_idx,
+                        plan_revision: 0,
+                        config,
+                        metrics,
+                    }
+                }
+                ImplementState::PlanRevision {
+                    phases,
+                    current_phase_idx,
+                    plan_revision,
+                    config,
+                    metrics,
+                    ..
+                } => {
+                    // Plan revised; loop back to PlanReview.
+                    ImplementState::PlanReview {
+                        phases,
+                        current_phase_idx,
+                        plan_revision: plan_revision + 1,
+                        config,
+                        metrics,
+                    }
+                }
+                ImplementState::Implementation {
+                    phases,
+                    current_phase_idx,
+                    config,
+                    mut metrics,
+                } => {
+                    // Implementation done; move to CodeReview.
+                    // If we skipped planning, ensure metrics entry exists.
+                    let phase_num = phases
+                        .get(current_phase_idx)
+                        .map(|p| p.number)
+                        .unwrap_or(0);
+                    if !metrics.iter().any(|m| m.phase_number == phase_num) {
+                        metrics.push(PhaseMetrics {
+                            phase_number: phase_num,
+                            plan_cycles: 0,
+                            code_cycles: 0,
+                            code_approved_first_pass: false,
+                        });
+                    }
+                    ImplementState::CodeReview {
+                        phases,
+                        current_phase_idx,
+                        code_revision: 0,
+                        config,
+                        metrics,
+                    }
+                }
+                ImplementState::CodeRevision {
+                    phases,
+                    current_phase_idx,
+                    code_revision,
+                    config,
+                    metrics,
+                    ..
+                } => {
+                    // Code revised; loop back to CodeReview.
+                    ImplementState::CodeReview {
+                        phases,
+                        current_phase_idx,
+                        code_revision: code_revision + 1,
+                        config,
+                        metrics,
+                    }
+                }
+                ImplementState::IterationRevision {
+                    phases,
+                    config,
+                    metrics,
+                    iteration,
+                    ..
+                } => {
+                    // Iteration revision done; loop back to IterationReview.
+                    ImplementState::IterationReview {
+                        phases,
+                        config,
+                        metrics,
+                        iteration,
+                    }
+                }
+                other => {
+                    warn!(%session_id, state = ?other, phase = current_phase, "unexpected Done in implement state");
+                    return InternalAction::Break;
+                }
+            };
+
+            let is_at_gate = matches!(
+                &new_state,
+                ImplementState::Configuring { .. }
+                    | ImplementState::AwaitingApproval { .. }
+            );
+
+            let new_ws = WorkflowState::Implement(new_state);
+            if let Err(e) = registry
+                .update(session_id, move |s| {
+                    s.total_cost_usd += cost_usd;
+                    s.workflow_state = new_ws;
+                })
+                .await
+            {
+                error!(%session_id, error = %e, "failed to persist implement Done transition");
+                return InternalAction::Break;
+            }
+
+            if is_at_gate {
+                InternalAction::AwaitGate
+            } else {
+                InternalAction::Continue
+            }
+        }
     }
 }

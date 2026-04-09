@@ -11,7 +11,7 @@ use rmcp::{
     service::{RoleServer, RequestContext},
 };
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use spec_pipeline_mcp::notifier::{PeerHandle, SessionNotifier};
@@ -20,8 +20,8 @@ use spec_pipeline_mcp::prompts::PromptStore;
 use spec_pipeline_mcp::runner::ClaudeRunner;
 use spec_pipeline_mcp::session::SessionRegistry;
 use spec_pipeline_mcp::workflow::{
-    BrainstormState, EpicState, GateResponse, ModelConfig, SessionState, SpecState, WorkflowState,
-    WorkflowType,
+    BrainstormState, EpicState, GateResponse, ImplementState, ModelConfig, SessionState, SpecState,
+    WorkflowState, WorkflowType,
 };
 use spec_pipeline_mcp::workflow::brainstorm::DiscoveryPhase;
 
@@ -29,7 +29,7 @@ use spec_pipeline_mcp::workflow::brainstorm::DiscoveryPhase;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SpecStartParams {
-    /// The type of workflow to start: "brainstorm", "spec", or "epic".
+    /// The type of workflow to start: "brainstorm", "spec", "epic", or "implement".
     pub workflow_type: String,
     /// The topic or subject for this workflow session.
     pub topic: String,
@@ -49,7 +49,7 @@ pub struct SpecStatusParams {
 pub struct SpecRespondParams {
     /// The UUID of the session to respond to.
     pub session_id: String,
-    /// The type of response: "approve", "revise", "cancel", or "retry".
+    /// The type of response: "approve", "revise", "cancel", "retry", or "configure".
     pub response_type: String,
     /// Optional content for the response (e.g. revision feedback).
     pub content: Option<String>,
@@ -65,7 +65,7 @@ pub struct SpecCancelParams {
 pub struct SpecListParams {
     /// Whether to include completed and cancelled sessions. Defaults to false.
     pub include_completed: Option<bool>,
-    /// Filter by workflow type: "brainstorm", "spec", or "epic".
+    /// Filter by workflow type: "brainstorm", "spec", "epic", or "implement".
     pub workflow_type: Option<String>,
     /// Maximum number of sessions to return. Defaults to 20.
     pub limit: Option<usize>,
@@ -143,6 +143,14 @@ impl McpServer {
                     ).await;
                 });
             }
+            WorkflowType::Implement => {
+                tokio::spawn(async move {
+                    phase_runner::run_implement_session(
+                        session_id, registry, runner, gate_channels,
+                        model_config, prompts, notifier,
+                    ).await;
+                });
+            }
         }
     }
 }
@@ -168,6 +176,17 @@ impl McpServer {
             }
             WorkflowType::Spec => WorkflowState::Spec(SpecState::Research { turn: 0, gate_answer: None }),
             WorkflowType::Epic => WorkflowState::Epic(EpicState::ChildExtraction { turn: 0 }),
+            WorkflowType::Implement => {
+                // For implement, validate the spec file exists.
+                let spec_path = std::path::Path::new(&params.topic);
+                if !spec_path.exists() {
+                    return Err(McpError::invalid_params(
+                        format!("Spec file not found: '{}'", params.topic),
+                        None,
+                    ));
+                }
+                WorkflowState::Implement(ImplementState::PhaseExtraction)
+            }
         };
 
         let context_refs = params.context_refs.unwrap_or_default();
@@ -220,10 +239,13 @@ impl McpServer {
             },
             "cancel" => GateResponse::Cancel,
             "retry" => GateResponse::Retry,
+            "configure" => GateResponse::Configure {
+                config_json: params.content.unwrap_or_default(),
+            },
             other => {
                 return Err(McpError::invalid_params(
                     format!(
-                        "Invalid response_type '{}'. Must be one of: approve, revise, cancel, retry",
+                        "Invalid response_type '{}'. Must be one of: approve, revise, cancel, retry, configure",
                         other
                     ),
                     None,
@@ -404,9 +426,10 @@ fn parse_workflow_type(s: &str) -> Result<WorkflowType, McpError> {
         "brainstorm" => Ok(WorkflowType::Brainstorm),
         "spec" => Ok(WorkflowType::Spec),
         "epic" => Ok(WorkflowType::Epic),
+        "implement" => Ok(WorkflowType::Implement),
         _ => Err(McpError::invalid_params(
             format!(
-                "Invalid workflow_type '{}'. Must be one of: brainstorm, spec, epic",
+                "Invalid workflow_type '{}'. Must be one of: brainstorm, spec, epic, implement",
                 s
             ),
             None,

@@ -9,6 +9,7 @@ pub enum WorkflowType {
     Brainstorm,
     Spec,
     Epic,
+    Implement,
 }
 
 impl std::fmt::Display for WorkflowType {
@@ -17,6 +18,7 @@ impl std::fmt::Display for WorkflowType {
             Self::Brainstorm => write!(f, "brainstorm"),
             Self::Spec => write!(f, "spec"),
             Self::Epic => write!(f, "epic"),
+            Self::Implement => write!(f, "implement"),
         }
     }
 }
@@ -48,6 +50,9 @@ pub enum GateResponse {
     /// User chose to retry after an error gate.
     #[serde(rename = "retry")]
     Retry,
+    /// User supplied configuration overrides (implement workflow only).
+    #[serde(rename = "configure")]
+    Configure { config_json: String },
 }
 
 /// Output returned by a phase execution step.

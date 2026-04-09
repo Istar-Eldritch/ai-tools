@@ -1,10 +1,12 @@
 pub mod brainstorm;
 pub mod epic;
+pub mod implement;
 pub mod spec;
 pub mod types;
 
 pub use brainstorm::BrainstormState;
 pub use epic::EpicState;
+pub use implement::ImplementState;
 pub use spec::SpecState;
 pub use types::{
     ErrorContext, GateContent, GateResponse, ModelConfig, PhaseOutput, PhaseRole, SessionState,
@@ -78,6 +80,24 @@ impl WorkflowPhase for SpecState {
 }
 
 impl WorkflowPhase for EpicState {
+    fn phase_name(&self) -> &str {
+        self.phase_name()
+    }
+
+    fn sub_phase_name(&self) -> Option<&str> {
+        self.sub_phase_name()
+    }
+
+    fn phase_role(&self) -> PhaseRole {
+        self.phase_role()
+    }
+
+    fn artifact_paths(&self) -> Vec<&PathBuf> {
+        self.artifact_paths()
+    }
+}
+
+impl WorkflowPhase for ImplementState {
     fn phase_name(&self) -> &str {
         self.phase_name()
     }
@@ -222,6 +242,95 @@ impl HasGate for EpicState {
     }
 }
 
+impl HasGate for ImplementState {
+    fn gate_content(&self) -> Option<GateContent> {
+        match self {
+            ImplementState::Configuring { phases, config } => {
+                let phase_list: Vec<String> = phases
+                    .iter()
+                    .map(|p| format!("  Phase {}: {} ({})", p.number, p.description, p.slug))
+                    .collect();
+                let summary = format!(
+                    "Implement workflow ready. Review extracted phases and model configuration.\n\n\
+                     Phases:\n{}\n\n\
+                     Model config:\n\
+                     - planner: {}\n\
+                     - reviewer: {}\n\
+                     - reviser: {}\n\
+                     - implementer: {}\n\
+                     - plan_revision_limit: {}\n\
+                     - code_revision_limit: {}\n\
+                     - skip_plan_generation: {}\n\n\
+                     Respond with 'approve' to begin, 'configure' with JSON to adjust, or 'cancel'.",
+                    phase_list.join("\n"),
+                    config.planner,
+                    config.reviewer,
+                    config.reviser,
+                    config.implementer,
+                    config.plan_revision_limit,
+                    config.code_revision_limit,
+                    config.skip_plan_generation,
+                );
+                Some(GateContent {
+                    summary,
+                    artifact_path: None,
+                    suggested_actions: vec![
+                        "approve".to_string(),
+                        "configure".to_string(),
+                        "cancel".to_string(),
+                    ],
+                })
+            }
+            ImplementState::AwaitingApproval { metrics, approval_revision, .. } => {
+                let total_plan_cycles: u32 = metrics.iter().map(|m| m.plan_cycles).sum();
+                let total_code_cycles: u32 = metrics.iter().map(|m| m.code_cycles).sum();
+                let first_pass_count = metrics.iter().filter(|m| m.code_approved_first_pass).count();
+                let total_phases = metrics.len();
+
+                let mut actions = vec!["approve".to_string()];
+                if *approval_revision < crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    actions.push("revise".to_string());
+                }
+                actions.push("cancel".to_string());
+
+                let summary = if *approval_revision >= crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
+                    format!(
+                        "Implementation complete. {} phases implemented. Plan cycles: {} total. \
+                         Code cycles: {} total. Code approved on first pass: {}/{} phases. \
+                         Revision limit ({}) reached -- please approve or cancel.",
+                        total_phases, total_plan_cycles, total_code_cycles,
+                        first_pass_count, total_phases,
+                        crate::phase_runner::FEEDBACK_DEPTH_LIMIT,
+                    )
+                } else {
+                    format!(
+                        "Implementation complete. {} phases implemented. Plan cycles: {} total. \
+                         Code cycles: {} total. Code approved on first pass: {}/{} phases.",
+                        total_phases, total_plan_cycles, total_code_cycles,
+                        first_pass_count, total_phases,
+                    )
+                };
+
+                Some(GateContent {
+                    summary,
+                    artifact_path: None,
+                    suggested_actions: actions,
+                })
+            }
+            ImplementState::ErrorGate { message, .. } => Some(GateContent {
+                summary: format!("Error: {message}"),
+                artifact_path: None,
+                suggested_actions: vec!["retry".to_string(), "cancel".to_string()],
+            }),
+            _ => None,
+        }
+    }
+
+    fn is_error_gate(&self) -> bool {
+        matches!(self, ImplementState::ErrorGate { .. })
+    }
+}
+
 // --- Unified WorkflowState ---
 
 /// Unified state enum that wraps all workflow-specific state machines.
@@ -234,6 +343,8 @@ pub enum WorkflowState {
     Spec(SpecState),
     #[serde(rename = "epic")]
     Epic(EpicState),
+    #[serde(rename = "implement")]
+    Implement(ImplementState),
 }
 
 impl WorkflowState {
@@ -243,6 +354,7 @@ impl WorkflowState {
             Self::Brainstorm(_) => WorkflowType::Brainstorm,
             Self::Spec(_) => WorkflowType::Spec,
             Self::Epic(_) => WorkflowType::Epic,
+            Self::Implement(_) => WorkflowType::Implement,
         }
     }
 
@@ -275,6 +387,22 @@ impl WorkflowState {
                 EpicState::Complete { .. } => SessionState::Complete,
                 EpicState::Cancelled => SessionState::Cancelled,
             },
+            Self::Implement(s) => match s {
+                ImplementState::PhaseExtraction
+                | ImplementState::PlanGeneration { .. }
+                | ImplementState::PlanReview { .. }
+                | ImplementState::PlanRevision { .. }
+                | ImplementState::Implementation { .. }
+                | ImplementState::CodeReview { .. }
+                | ImplementState::CodeRevision { .. }
+                | ImplementState::IterationReview { .. }
+                | ImplementState::IterationRevision { .. } => SessionState::Running,
+                ImplementState::Configuring { .. }
+                | ImplementState::AwaitingApproval { .. } => SessionState::WaitingAtGate,
+                ImplementState::ErrorGate { .. } => SessionState::ErrorGate,
+                ImplementState::Complete { .. } => SessionState::Complete,
+                ImplementState::Cancelled => SessionState::Cancelled,
+            },
         }
     }
 
@@ -284,6 +412,7 @@ impl WorkflowState {
             Self::Brainstorm(s) => s.phase_name(),
             Self::Spec(s) => s.phase_name(),
             Self::Epic(s) => s.phase_name(),
+            Self::Implement(s) => s.phase_name(),
         }
     }
 
@@ -293,6 +422,7 @@ impl WorkflowState {
             Self::Brainstorm(s) => s.sub_phase_name(),
             Self::Spec(s) => s.sub_phase_name(),
             Self::Epic(s) => s.sub_phase_name(),
+            Self::Implement(s) => s.sub_phase_name(),
         }
     }
 
@@ -302,6 +432,7 @@ impl WorkflowState {
             Self::Brainstorm(s) => s.phase_role(),
             Self::Spec(s) => s.phase_role(),
             Self::Epic(s) => s.phase_role(),
+            Self::Implement(s) => s.phase_role(),
         }
     }
 
@@ -311,6 +442,7 @@ impl WorkflowState {
             Self::Brainstorm(s) => s.artifact_paths(),
             Self::Spec(s) => s.artifact_paths(),
             Self::Epic(s) => s.artifact_paths(),
+            Self::Implement(s) => s.artifact_paths(),
         }
     }
 
@@ -320,6 +452,7 @@ impl WorkflowState {
             Self::Brainstorm(s) => s.gate_content(),
             Self::Spec(s) => s.gate_content(),
             Self::Epic(s) => s.gate_content(),
+            Self::Implement(s) => s.gate_content(),
         }
     }
 
@@ -329,6 +462,7 @@ impl WorkflowState {
             Self::Brainstorm(s) => s.is_error_gate(),
             Self::Spec(s) => s.is_error_gate(),
             Self::Epic(s) => s.is_error_gate(),
+            Self::Implement(s) => s.is_error_gate(),
         }
     }
 
@@ -357,6 +491,14 @@ impl WorkflowState {
             Self::Epic(s) => {
                 let phase = s.phase_name().to_string();
                 Self::Epic(EpicState::ErrorGate {
+                    message: "Session interrupted; recovered after restart.".to_string(),
+                    failed_phase: phase,
+                    exit_code: None,
+                })
+            }
+            Self::Implement(s) => {
+                let phase = s.phase_name().to_string();
+                Self::Implement(ImplementState::ErrorGate {
                     message: "Session interrupted; recovered after restart.".to_string(),
                     failed_phase: phase,
                     exit_code: None,

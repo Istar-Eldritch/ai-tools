@@ -170,7 +170,7 @@ fn parse_session_state(s: &str) -> SessionState {
 
 /// Map workflow type + phase to a (progress, total) pair.
 pub fn progress_for(workflow_type: &str, phase: &str, at_gate: bool) -> (f64, f64) {
-    let total = 4.0;
+    let total = if workflow_type == "implement" { 8.0 } else { 4.0 };
     let progress = match (workflow_type, phase) {
         ("brainstorm", "discovery") => {
             if at_gate {
@@ -192,6 +192,19 @@ pub fn progress_for(workflow_type: &str, phase: &str, at_gate: bool) -> (f64, f6
         ("epic", "drafting") => 2.0,
         ("epic", "awaiting_approval") => 3.0,
         ("epic", "complete") => 4.0,
+
+        ("implement", "phase_extraction") => 1.0,
+        ("implement", "configuring") => 2.0,
+        ("implement", "plan_generation") => 3.0,
+        ("implement", "plan_review") => 4.0,
+        ("implement", "plan_revision") => 4.0,
+        ("implement", "implementation") => 5.0,
+        ("implement", "code_review") => 6.0,
+        ("implement", "code_revision") => 6.0,
+        ("implement", "awaiting_approval") => 7.0,
+        ("implement", "iteration_review") => 7.5,
+        ("implement", "iteration_revision") => 7.5,
+        ("implement", "complete") => 8.0,
 
         _ => 1.0,
     };
