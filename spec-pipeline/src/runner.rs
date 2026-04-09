@@ -165,14 +165,28 @@ impl ClaudeRunner {
         // Hand-written flat schema for RawPhaseOutput.  schemars produces a
         // `oneOf` which the Claude API rejects at the top level, so we flatten
         // the tagged enum into a single object with optional variant fields.
+        // Field descriptions tell Claude which fields are required per variant.
         let schema_json = serde_json::json!({
             "type": "object",
             "required": ["type"],
             "properties": {
-                "type": { "type": "string", "enum": ["continue", "gate", "done"] },
-                "question": { "type": "string" },
-                "artifact_path": { "type": "string" },
-                "summary": { "type": "string" }
+                "type": {
+                    "type": "string",
+                    "enum": ["continue", "gate", "done"],
+                    "description": "The output type. 'continue' needs no other fields. 'gate' requires 'question'. 'done' requires 'artifact_path' and 'summary'."
+                },
+                "question": {
+                    "type": "string",
+                    "description": "Required when type is 'gate'. The question to present to the user."
+                },
+                "artifact_path": {
+                    "type": "string",
+                    "description": "Required when type is 'done'. Path to the produced artifact (empty string if none). Optional when type is 'gate'."
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Required when type is 'done'. Brief summary of what was accomplished."
+                }
             }
         })
         .to_string();
