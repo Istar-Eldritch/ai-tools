@@ -148,7 +148,7 @@ impl McpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Search the knowledge base with a natural language query. Returns a JSON array of the top-k most semantically relevant chunks, each with content, source_filename, chunk_index, similarity score, and source_metadata. k defaults to 5 (range: 1-100). Optional: filename_glob filters by source filename (glob pattern, case-sensitive); source_metadata filters by JSONB containment (must be a JSON object).")]
+    #[tool(description = "Search the knowledge base with a natural language query. Returns a JSON array of the top-k most semantically relevant chunks, each with content, source_filename, chunk_index, similarity score, and source_metadata. k defaults to 5 (range: 1-100). Optional: filename_glob filters by source filename (glob pattern, case-sensitive); source_metadata filters by JSONB containment (must be a JSON object). When a source was ingested via ingest_directory, its filename is the relative path within that directory. To reconstruct the full file path, join the directory value from source_metadata with the filename.")]
     async fn search(
         &self,
         Parameters(params): Parameters<SearchParams>,
@@ -243,7 +243,7 @@ impl McpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "List sources in the knowledge base with optional project and filename filtering. Returns a JSON array of source records, each with id, filename, content_type, project, metadata, created_at, and chunk_count. Supports pagination via limit/offset.")]
+    #[tool(description = "List sources in the knowledge base with optional project and filename filtering. Returns a JSON array of source records, each with id, filename, content_type, project, metadata, created_at, and chunk_count. Supports pagination via limit/offset. When a source was ingested via ingest_directory, its filename is the relative path within that directory. To reconstruct the full file path, join the directory value from metadata with the filename.")]
     async fn list_sources(
         &self,
         Parameters(params): Parameters<ListSourcesParams>,

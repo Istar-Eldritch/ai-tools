@@ -1,7 +1,7 @@
 mod common;
 
 use bytes::Bytes;
-use rag_mcp::config::Config;
+use rag_mcp::config::S3Params;
 use rag_mcp::storage::S3Storage;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
@@ -23,24 +23,14 @@ async fn setup_minio() -> (S3Storage, ContainerAsync<GenericImage>) {
         .await
         .expect("failed to get minio port");
 
-    let config = Config {
-        database_url: String::new(),
-        s3_endpoint: format!("http://127.0.0.1:{}", host_port),
-        s3_bucket: "test-bucket".into(),
-        s3_access_key: "minioadmin".into(),
-        s3_secret_key: "minioadmin".into(),
-        db_max_connections: 1,
-        embedding_model: String::new(),
-        chunk_size: 2048,
-        chunk_overlap: 200,
-        min_chunk_size: 0,
-        dedup_threshold: 0.97,
-        dedup_candidate_factor: 3,
+    let params = S3Params {
+        endpoint: format!("http://127.0.0.1:{}", host_port),
+        bucket: "test-bucket".into(),
+        access_key: "minioadmin".into(),
+        secret_key: "minioadmin".into(),
     };
 
-    let storage = S3Storage::new(&config)
-        .await
-        .expect("failed to create S3Storage");
+    let storage = S3Storage::from_params(&params);
 
     storage
         .create_bucket()

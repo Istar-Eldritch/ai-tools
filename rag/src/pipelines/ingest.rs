@@ -16,7 +16,7 @@ use crate::storage::S3Storage;
 #[derive(Clone)]
 pub struct IngestPipeline {
     pool: PgPool,
-    storage: S3Storage,
+    storage: Option<S3Storage>,
     chunk_config: ChunkConfig,
     embedding: EmbeddingService,
 }
@@ -24,7 +24,7 @@ pub struct IngestPipeline {
 impl IngestPipeline {
     pub fn new(
         pool: PgPool,
-        storage: S3Storage,
+        storage: Option<S3Storage>,
         chunk_config: ChunkConfig,
         embedding: EmbeddingService,
     ) -> Self {
@@ -40,8 +40,8 @@ impl IngestPipeline {
         &self.chunk_config
     }
 
-    pub fn storage(&self) -> &S3Storage {
-        &self.storage
+    pub fn storage(&self) -> Option<&S3Storage> {
+        self.storage.as_ref()
     }
 
     pub async fn ingest(
@@ -71,10 +71,12 @@ impl IngestPipeline {
         };
         let source = queries::insert_source(&self.pool, &new_source).await?;
 
-        let data = Bytes::from(content.to_owned().into_bytes());
-        if let Err(e) = self.storage.put_object(&s3_key, data, content_type).await {
-            self.cleanup(source_id).await;
-            return Err(e);
+        if let Some(ref storage) = self.storage {
+            let data = Bytes::from(content.to_owned().into_bytes());
+            if let Err(e) = storage.put_object(&s3_key, data, content_type).await {
+                self.cleanup(source_id).await;
+                return Err(e);
+            }
         }
 
         // Collect (index, content, metadata) triples from either code or text chunking.
@@ -274,10 +276,12 @@ impl IngestPipeline {
             .collect();
 
         // 7. S3: overwrite content under existing key
-        let data = Bytes::from(content.to_owned().into_bytes());
-        self.storage
-            .put_object(&old_source.s3_key, data, content_type)
-            .await?;
+        if let Some(ref storage) = self.storage {
+            let data = Bytes::from(content.to_owned().into_bytes());
+            storage
+                .put_object(&old_source.s3_key, data, content_type)
+                .await?;
+        }
 
         // 8. DB: update source metadata + replace chunks
         let updated_source =
@@ -297,12 +301,14 @@ impl IngestPipeline {
                 "cleanup: failed to delete source row"
             );
         }
-        if let Err(e) = self.storage.delete_object(&source_id.to_string()).await {
-            tracing::warn!(
-                source_id = %source_id,
-                error = %e,
-                "cleanup: failed to delete S3 object"
-            );
+        if let Some(ref storage) = self.storage {
+            if let Err(e) = storage.delete_object(&source_id.to_string()).await {
+                tracing::warn!(
+                    source_id = %source_id,
+                    error = %e,
+                    "cleanup: failed to delete S3 object"
+                );
+            }
         }
     }
 }

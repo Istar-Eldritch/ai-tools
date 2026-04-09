@@ -8,11 +8,11 @@ use crate::storage::S3Storage;
 #[derive(Clone)]
 pub struct DeletePipeline {
     pool: PgPool,
-    storage: S3Storage,
+    storage: Option<S3Storage>,
 }
 
 impl DeletePipeline {
-    pub fn new(pool: PgPool, storage: S3Storage) -> Self {
+    pub fn new(pool: PgPool, storage: Option<S3Storage>) -> Self {
         Self { pool, storage }
     }
 
@@ -25,13 +25,15 @@ impl DeletePipeline {
 
         queries::delete_source(&self.pool, source_id).await?;
 
-        if let Err(e) = self.storage.delete_object(&s3_key).await {
-            tracing::warn!(
-                source_id = %source_id,
-                s3_key = %s3_key,
-                error = %e,
-                "delete: S3 object removal failed after successful DB delete; object may be orphaned"
-            );
+        if let Some(ref storage) = self.storage {
+            if let Err(e) = storage.delete_object(&s3_key).await {
+                tracing::warn!(
+                    source_id = %source_id,
+                    s3_key = %s3_key,
+                    error = %e,
+                    "delete: S3 object removal failed after successful DB delete; object may be orphaned"
+                );
+            }
         }
 
         Ok(())

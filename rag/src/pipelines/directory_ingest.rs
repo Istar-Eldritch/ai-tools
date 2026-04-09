@@ -404,7 +404,7 @@ impl DirectoryIngestPipeline {
         let mut completed = 0u64;
         let project_clone = project.clone();
         let pool = self.pool.clone();
-        let storage = self.ingest.storage().clone();
+        let storage = self.ingest.storage().cloned();
         let mut result_stream = stream::iter(actions)
             .map(move |action| {
                 let ingest = self.ingest.clone();
@@ -458,11 +458,13 @@ impl DirectoryIngestPipeline {
                                 return Err((file.relative_path, e.to_string()));
                             }
                             // PUT new content to S3 under orphan's existing key
-                            let data = Bytes::from(file.content.into_bytes());
-                            if let Err(e) =
-                                storage.put_object(&orphan_source.s3_key, data, &file.content_type).await
-                            {
-                                return Err((file.relative_path, e.to_string()));
+                            if let Some(ref storage) = storage {
+                                let data = Bytes::from(file.content.into_bytes());
+                                if let Err(e) =
+                                    storage.put_object(&orphan_source.s3_key, data, &file.content_type).await
+                                {
+                                    return Err((file.relative_path, e.to_string()));
+                                }
                             }
                             Ok(ActionResult::Renamed)
                         }

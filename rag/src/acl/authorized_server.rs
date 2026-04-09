@@ -109,7 +109,7 @@ impl AuthorizedMcpServer {
             },
             ToolDef {
                 name: "search".into(),
-                description: "Search the knowledge base with a natural language query.".into(),
+                description: "Search the knowledge base with a natural language query. When a source was ingested via ingest_directory, its filename is the relative path within that directory. To reconstruct the full file path, join the directory value from source_metadata with the filename.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -135,7 +135,7 @@ impl AuthorizedMcpServer {
             },
             ToolDef {
                 name: "list_sources".into(),
-                description: "List sources in the knowledge base.".into(),
+                description: "List sources in the knowledge base. When a source was ingested via ingest_directory, its filename is the relative path within that directory. To reconstruct the full file path, join the directory value from metadata with the filename.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {

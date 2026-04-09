@@ -124,8 +124,12 @@ async fn main() -> anyhow::Result<()> {
             let pool = db::connect(&config.database_url, config.db_max_connections).await?;
             tracing::info!("database connected and migrations applied");
 
-            let storage = S3Storage::new(&config).await?;
-            tracing::info!("S3 storage initialised");
+            let storage = S3Storage::from_config(&config)?;
+            if storage.is_none() {
+                tracing::warn!("S3 storage not configured; document uploads will be skipped");
+            } else {
+                tracing::info!("S3 storage initialised");
+            }
 
             let embedding = EmbeddingService::new(&config.embedding_model)?;
             tracing::info!(model = %config.embedding_model, "embedding service loaded");
@@ -186,7 +190,8 @@ async fn main() -> anyhow::Result<()> {
             let pool = db::connect(&config.database_url, config.db_max_connections).await?;
             tracing::info!("database connected and migrations applied");
 
-            let storage = S3Storage::new(config).await?;
+            let s3_params = config.require_s3()?;
+            let storage = S3Storage::from_params(&s3_params);
             tracing::info!("S3 storage initialised");
 
             let embedding = EmbeddingService::new(&config.embedding_model)?;
@@ -200,7 +205,7 @@ async fn main() -> anyhow::Result<()> {
 
             let ingest_pipeline = IngestPipeline::new(
                 pool.clone(),
-                storage.clone(),
+                Some(storage.clone()),
                 chunk_config,
                 embedding.clone(),
             );
@@ -210,7 +215,7 @@ async fn main() -> anyhow::Result<()> {
                 config.dedup_threshold,
                 config.dedup_candidate_factor,
             );
-            let delete_pipeline = DeletePipeline::new(pool.clone(), storage.clone());
+            let delete_pipeline = DeletePipeline::new(pool.clone(), Some(storage.clone()));
 
             let google_oauth = GoogleOAuthClient::new(
                 &http_config.google_client_id,
