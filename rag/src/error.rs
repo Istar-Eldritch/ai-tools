@@ -30,4 +30,7 @@ pub enum AppError {
 
     #[error("not found: {0}")]
     NotFound(String),
+
+    #[error("PDF extraction error: {0}")]
+    PdfExtraction(String),
 }

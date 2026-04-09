@@ -104,6 +104,14 @@ pub struct Config {
     /// k * this factor candidates before applying the dedup filter.
     #[arg(long, env = "DEDUP_CANDIDATE_FACTOR", default_value = "3")]
     pub dedup_candidate_factor: i64,
+
+    /// Path to the pdfium shared library. When not set, PDF ingestion is disabled.
+    #[arg(long, env = "PDFIUM_LIB_PATH")]
+    pub pdfium_lib_path: Option<String>,
+
+    /// Maximum PDF file size in bytes. Default: 100 MB.
+    #[arg(long, env = "MAX_PDF_BYTES", default_value = "104857600")]
+    pub max_pdf_bytes: u64,
 }
 
 impl Config {
@@ -186,6 +194,8 @@ mod tests {
             min_chunk_size: 50,
             dedup_threshold: 0.97,
             dedup_candidate_factor: 3,
+            pdfium_lib_path: None,
+            max_pdf_bytes: 104_857_600,
         }
     }
 

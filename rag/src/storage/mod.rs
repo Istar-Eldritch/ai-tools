@@ -118,6 +118,8 @@ mod tests {
             min_chunk_size: 50,
             dedup_threshold: 0.97,
             dedup_candidate_factor: 3,
+            pdfium_lib_path: None,
+            max_pdf_bytes: 104_857_600,
         }
     }
 
