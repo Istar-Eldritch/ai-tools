@@ -2,6 +2,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::acl::authorized_server::{ERR_PERMISSION_DENIED, ERR_UNSUPPORTED};
 use crate::acl::context::UserContext;
 
 use super::middleware::extract_user_from_api_key;
@@ -68,12 +69,7 @@ pub async fn handle_mcp(
 ) -> HttpResponse {
     let rpc = body.into_inner();
 
-    // For initialize, we don't require auth (MCP spec: client sends initialize first)
-    if rpc.method == "initialize" {
-        return handle_initialize(rpc.id);
-    }
-
-    // notifications/ping doesn't require auth either
+    // notifications/ping doesn't require auth
     if rpc.method == "notifications/ping" {
         return HttpResponse::Ok().json(JsonRpcResponse::success(
             rpc.id,
@@ -81,7 +77,7 @@ pub async fn handle_mcp(
         ));
     }
 
-    // All other methods require authentication
+    // All methods (including initialize) require authentication
     let user_ctx = match extract_user_from_api_key(&req, &state.pool, &state.api_key_cache).await {
         Ok(ctx) => ctx,
         Err(msg) => {
@@ -89,12 +85,25 @@ pub async fn handle_mcp(
         }
     };
 
-    // Check/create session from Mcp-Session-Id header
+    // On initialize, create a new session and return Mcp-Session-Id
+    if rpc.method == "initialize" {
+        let session_id = state.sessions.create(user_ctx);
+        return HttpResponse::Ok()
+            .insert_header(("Mcp-Session-Id", session_id.to_string()))
+            .json(handle_initialize_payload(rpc.id));
+    }
+
+    // Parse Mcp-Session-Id from header for subsequent requests
     let session_id = req
         .headers()
         .get("Mcp-Session-Id")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+    // Touch session to keep it alive
+    if let Some(ref sid) = session_id {
+        state.sessions.get(sid);
+    }
 
     match rpc.method.as_str() {
         "tools/list" => handle_tools_list(rpc.id, &state, &user_ctx).await,
@@ -114,6 +123,11 @@ pub async fn handle_mcp(
 }
 
 /// GET /mcp — SSE endpoint (placeholder for streaming)
+///
+/// TODO: Implement full SSE streaming for long-running MCP operations.
+/// Currently returns a minimal "connected" event to satisfy MCP clients
+/// that probe the SSE endpoint; real server-sent event streaming is not yet
+/// implemented.
 pub async fn handle_mcp_get(
     req: HttpRequest,
     state: web::Data<AppState>,
@@ -126,8 +140,8 @@ pub async fn handle_mcp_get(
         }
     };
 
-    // SSE streaming is used for long-running operations.
-    // For now, return 200 with keep-alive as a basic SSE endpoint.
+    // TODO: Implement real SSE streaming. This stub returns a single event so
+    // clients can detect the endpoint is alive.
     HttpResponse::Ok()
         .content_type("text/event-stream")
         .insert_header(("Cache-Control", "no-cache"))
@@ -161,8 +175,8 @@ pub async fn handle_mcp_delete(
     }
 }
 
-fn handle_initialize(id: Option<serde_json::Value>) -> HttpResponse {
-    HttpResponse::Ok().json(JsonRpcResponse::success(
+fn handle_initialize_payload(id: Option<serde_json::Value>) -> JsonRpcResponse {
+    JsonRpcResponse::success(
         id,
         json!({
             "protocolVersion": "2025-03-26",
@@ -174,7 +188,7 @@ fn handle_initialize(id: Option<serde_json::Value>) -> HttpResponse {
                 "version": env!("CARGO_PKG_VERSION")
             }
         }),
-    ))
+    )
 }
 
 async fn handle_tools_list(
@@ -224,7 +238,7 @@ async fn handle_tools_call(
     if tool_name == "ingest_directory" {
         return HttpResponse::Ok().json(JsonRpcResponse::error(
             id,
-            -32000,
+            ERR_UNSUPPORTED,
             "ingest_directory is not supported over HTTP".into(),
         ));
     }
@@ -246,20 +260,14 @@ async fn handle_tools_call(
             .map(|c| c.text.clone())
             .unwrap_or_default();
 
-        // Map PERMISSION_DENIED to a JSON-RPC error
-        if msg.contains("PERMISSION_DENIED") {
-            return HttpResponse::Ok().json(JsonRpcResponse::error(
-                id,
-                -32000,
-                msg,
-            ));
-        }
-
-        return HttpResponse::Ok().json(JsonRpcResponse::error(
-            id,
-            -32000,
-            msg,
-        ));
+        let code = if msg.contains("PERMISSION_DENIED") {
+            ERR_PERMISSION_DENIED
+        } else if msg.contains("ERR_UNSUPPORTED") {
+            ERR_UNSUPPORTED
+        } else {
+            -32603 // internal error
+        };
+        return HttpResponse::Ok().json(JsonRpcResponse::error(id, code, msg));
     }
 
     HttpResponse::Ok().json(JsonRpcResponse::success(

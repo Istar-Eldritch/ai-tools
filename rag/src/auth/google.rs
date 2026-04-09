@@ -1,7 +1,7 @@
 use oauth2::basic::BasicClient;
 use oauth2::{
-    AuthUrl, ClientId, ClientSecret, RedirectUrl, Scope, TokenUrl,
-    CsrfToken, PkceCodeChallenge, AuthorizationCode, TokenResponse,
+    AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl,
+    AuthorizationCode, TokenResponse,
     reqwest::async_http_client,
 };
 
@@ -53,21 +53,6 @@ impl GoogleOAuthClient {
             client,
             http_client,
         })
-    }
-
-    /// Generate an authorization URL for the Google consent screen.
-    /// Returns `(url, csrf_token)`.
-    pub fn authorize_url(&self) -> (String, String) {
-        let (pkce_challenge, _pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-        let (url, csrf_token) = self
-            .client
-            .authorize_url(CsrfToken::new_random)
-            .add_scope(Scope::new("openid".to_owned()))
-            .add_scope(Scope::new("email".to_owned()))
-            .add_scope(Scope::new("profile".to_owned()))
-            .set_pkce_challenge(pkce_challenge)
-            .url();
-        (url.to_string(), csrf_token.secret().clone())
     }
 
     /// Exchange an authorization code for tokens and fetch user info.

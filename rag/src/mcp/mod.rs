@@ -139,7 +139,7 @@ impl McpServer {
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
         let result: Result<_, McpError> = self
             .ingest
-            .ingest(&params.content, &params.filename, &params.content_type, metadata, params.project)
+            .ingest(&params.content, &params.filename, &params.content_type, metadata, params.project, None)
             .await
             .map_err(app_error_to_mcp_error);
         let source = result?;

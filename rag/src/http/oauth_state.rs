@@ -57,7 +57,7 @@ impl PendingAuthStore {
     }
 }
 
-/// Pending authorization codes: maps code -> (user_id, code_challenge, created_at).
+/// Pending authorization codes: maps code -> (user_id, redirect_uri, code_challenge, created_at).
 pub struct PendingCodeStore {
     entries: DashMap<String, PendingCode>,
     ttl: Duration,
@@ -65,6 +65,7 @@ pub struct PendingCodeStore {
 
 pub struct PendingCode {
     pub user_id: uuid::Uuid,
+    pub redirect_uri: String,
     pub code_challenge: String,
     pub code_challenge_method: String,
     pub created_at: Instant,
@@ -82,6 +83,7 @@ impl PendingCodeStore {
         &self,
         code: String,
         user_id: uuid::Uuid,
+        redirect_uri: String,
         code_challenge: String,
         code_challenge_method: String,
     ) {
@@ -89,6 +91,7 @@ impl PendingCodeStore {
             code,
             PendingCode {
                 user_id,
+                redirect_uri,
                 code_challenge,
                 code_challenge_method,
                 created_at: Instant::now(),
@@ -143,9 +146,17 @@ mod tests {
     fn pending_code_insert_and_take() {
         let store = PendingCodeStore::new(300);
         let uid = uuid::Uuid::new_v4();
-        store.insert("code123".into(), uid, "challenge".into(), "S256".into());
+        store.insert(
+            "code123".into(),
+            uid,
+            "http://client/callback".into(),
+            "challenge".into(),
+            "S256".into(),
+        );
         let entry = store.take("code123");
         assert!(entry.is_some());
-        assert_eq!(entry.unwrap().user_id, uid);
+        let entry = entry.unwrap();
+        assert_eq!(entry.user_id, uid);
+        assert_eq!(entry.redirect_uri, "http://client/callback");
     }
 }

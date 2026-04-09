@@ -222,11 +222,37 @@ async fn main() -> anyhow::Result<()> {
             let sessions = Arc::new(SessionStore::new(http_config.mcp_session_idle_secs));
             sessions.start_sweeper();
 
+            let pending_auth = Arc::new(PendingAuthStore::new(300));
+            let pending_codes = Arc::new(PendingCodeStore::new(300));
+
+            // Sweep expired pending OAuth state and code entries every 60 seconds.
+            {
+                let pa = Arc::clone(&pending_auth);
+                tokio::spawn(async move {
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                    loop {
+                        ticker.tick().await;
+                        pa.evict_expired();
+                    }
+                });
+            }
+            {
+                let pc = Arc::clone(&pending_codes);
+                tokio::spawn(async move {
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                    loop {
+                        ticker.tick().await;
+                        pc.evict_expired();
+                    }
+                });
+            }
+
             let authorized_server = AuthorizedMcpServer::new(
                 pool.clone(),
                 ingest_pipeline,
                 search_pipeline,
                 delete_pipeline,
+                Arc::clone(&api_key_cache),
             );
 
             // Derive external URL from the OAuth redirect URI
@@ -243,10 +269,11 @@ async fn main() -> anyhow::Result<()> {
                 external_url,
                 api_key_cache,
                 sessions,
-                pending_auth: PendingAuthStore::new(300),
-                pending_codes: PendingCodeStore::new(300),
+                pending_auth,
+                pending_codes,
                 authorized_server,
                 first_admin_email: http_config.first_admin_email.clone(),
+                allowed_redirect_uris: http_config.allowed_redirect_uris.clone(),
             });
 
             let bind_addr = http_config.http_bind.clone();

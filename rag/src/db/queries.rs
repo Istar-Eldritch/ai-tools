@@ -344,6 +344,19 @@ pub async fn touch_api_key(pool: &PgPool, key_id: Uuid) -> AppResult<()> {
     Ok(())
 }
 
+pub async fn get_active_api_key_hashes_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT key_hash FROM api_keys WHERE user_id = $1 AND revoked_at IS NULL"
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 pub async fn revoke_api_keys_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<u64> {
     let result = sqlx::query(
         "UPDATE api_keys SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL"
@@ -525,6 +538,29 @@ pub async fn list_sources_with_acl(
     Ok(rows)
 }
 
+/// Check whether a user has writer or admin role on the named project.
+/// Returns false if the project doesn't exist or the user has no qualifying role.
+pub async fn check_project_write_access(
+    pool: &PgPool,
+    user_id: Uuid,
+    project_name: &str,
+) -> AppResult<bool> {
+    let row = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM projects p
+            JOIN user_project_access upa ON upa.project_id = p.id
+            WHERE p.name = $1
+              AND upa.user_id = $2
+              AND upa.role IN ('writer', 'admin')
+        )"
+    )
+    .bind(project_name)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
 pub async fn check_source_access(
     pool: &PgPool,
     source_id: Uuid,
@@ -541,6 +577,7 @@ pub async fn check_source_access(
                       SELECT p.name FROM projects p
                       JOIN user_project_access upa ON upa.project_id = p.id
                       WHERE upa.user_id = $2
+                        AND upa.role IN ('writer', 'admin')
                   )
               )
         )"

@@ -7,6 +7,13 @@ use crate::db::queries;
 
 use super::AppState;
 
+/// Percent-encode a string for use as a URL query parameter value,
+/// using the `url` crate's `form_urlencoded` serialiser which handles
+/// multi-byte characters correctly.
+fn urlencoded(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
 /// GET /.well-known/oauth-authorization-server
 pub async fn discovery(state: web::Data<AppState>) -> HttpResponse {
     let base = state.external_url.trim_end_matches('/');
@@ -42,6 +49,19 @@ pub async fn authorize(
     if method != "S256" {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "error": "unsupported code_challenge_method"
+        }));
+    }
+
+    // Validate redirect_uri against the configured allowlist.
+    // If the allowlist is non-empty, the provided redirect_uri must be an exact match.
+    if !state.allowed_redirect_uris.is_empty()
+        && !state
+            .allowed_redirect_uris
+            .iter()
+            .any(|allowed| allowed == &query.redirect_uri)
+    {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "redirect_uri not allowed"
         }));
     }
 
@@ -139,6 +159,7 @@ pub async fn callback(
     state.pending_codes.insert(
         auth_code.clone(),
         user.id,
+        pending.redirect_uri.clone(),
         pending.code_challenge.clone(),
         pending.code_challenge_method.clone(),
     );
@@ -161,6 +182,7 @@ pub struct TokenRequest {
     pub grant_type: String,
     pub code: String,
     pub code_verifier: String,
+    pub redirect_uri: Option<String>,
 }
 
 /// POST /oauth/token — exchange auth code + PKCE verifier for API key
@@ -183,6 +205,25 @@ pub async fn token(
             }));
         }
     };
+
+    // Verify redirect_uri matches what was used in the authorization request.
+    // Per RFC 6749 §4.1.3, if redirect_uri was included in the authorization
+    // request it MUST be present and identical in the token request.
+    match &form.redirect_uri {
+        Some(provided) if provided != &pending.redirect_uri => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "redirect_uri mismatch"
+            }));
+        }
+        None if !pending.redirect_uri.is_empty() => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "redirect_uri required"
+            }));
+        }
+        _ => {}
+    }
 
     // Verify PKCE
     if !verify_pkce_s256(&form.code_verifier, &pending.code_challenge) {
@@ -216,14 +257,4 @@ fn verify_pkce_s256(verifier: &str, challenge: &str) -> bool {
     let hash = Sha256::digest(verifier.as_bytes());
     let computed = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
     computed == challenge
-}
-
-/// Minimal percent-encoding for URL query values.
-fn urlencoded(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
 }

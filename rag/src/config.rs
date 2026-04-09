@@ -30,6 +30,12 @@ pub struct HttpConfig {
     #[arg(long, env = "FIRST_ADMIN_EMAIL")]
     pub first_admin_email: Option<String>,
 
+    /// Comma-separated list of allowed OAuth redirect_uri values.
+    /// When set, /auth/google rejects redirect_uri values not in this list.
+    /// Supports exact matches only. Example: "http://localhost:3000/callback,https://app.example.com/callback"
+    #[arg(long, env = "ALLOWED_REDIRECT_URIS", value_delimiter = ',')]
+    pub allowed_redirect_uris: Vec<String>,
+
     /// All base Config fields are flattened in
     #[command(flatten)]
     pub base: Config,

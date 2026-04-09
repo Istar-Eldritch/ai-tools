@@ -24,10 +24,12 @@ pub struct AppState {
     pub external_url: String,
     pub api_key_cache: Arc<ApiKeyCache>,
     pub sessions: Arc<SessionStore>,
-    pub pending_auth: PendingAuthStore,
-    pub pending_codes: PendingCodeStore,
+    pub pending_auth: Arc<PendingAuthStore>,
+    pub pending_codes: Arc<PendingCodeStore>,
     pub authorized_server: AuthorizedMcpServer,
     pub first_admin_email: Option<String>,
+    /// Allowlist of permitted client redirect_uri values. Empty means no restriction.
+    pub allowed_redirect_uris: Vec<String>,
 }
 
 /// Configure Actix Web routes.

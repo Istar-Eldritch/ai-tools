@@ -51,6 +51,7 @@ impl IngestPipeline {
         content_type: &str,
         metadata: serde_json::Value,
         project: Option<String>,
+        owner_user_id: Option<Uuid>,
     ) -> AppResult<Source> {
         if content.trim().is_empty() {
             return Err(AppError::Validation("content must not be empty".into()));
@@ -66,7 +67,7 @@ impl IngestPipeline {
             content_type: content_type.to_owned(),
             metadata,
             project,
-            owner_user_id: None,
+            owner_user_id,
         };
         let source = queries::insert_source(&self.pool, &new_source).await?;
 

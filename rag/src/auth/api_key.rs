@@ -76,6 +76,13 @@ impl ApiKeyCache {
             },
         );
     }
+
+    /// Remove an entry from the cache by key hash. Used during key rotation to
+    /// immediately invalidate a cached key without waiting for TTL expiry.
+    pub fn remove(&self, key_hash: &str) {
+        let mut cache = self.inner.lock().unwrap();
+        cache.pop(key_hash);
+    }
 }
 
 #[cfg(test)]

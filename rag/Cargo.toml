@@ -44,6 +44,7 @@ rand = "0.8"
 lru = "0.12"
 dashmap = "6"
 base64 = "0.22"
+url = "2"
 
 [dev-dependencies]
 testcontainers = { version = "0.25", features = ["watchdog"] }

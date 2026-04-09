@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::acl::context::UserContext;
-use crate::auth::api_key;
+use crate::auth::api_key::{self, ApiKeyCache};
 use crate::db::queries::{self, glob_to_like};
 use crate::pipelines::delete::DeletePipeline;
 use crate::pipelines::ingest::IngestPipeline;
@@ -13,7 +15,7 @@ use crate::pipelines::search::{SearchFilter, SearchPipeline};
 /// JSON-RPC error code for permission denied.
 pub const ERR_PERMISSION_DENIED: i32 = -32000;
 /// JSON-RPC error code for unsupported operations.
-pub const ERR_UNSUPPORTED: i32 = -32000;
+pub const ERR_UNSUPPORTED: i32 = -32001;
 
 /// Wraps the core pipelines with ACL enforcement and admin tools.
 #[derive(Clone)]
@@ -22,6 +24,7 @@ pub struct AuthorizedMcpServer {
     ingest: IngestPipeline,
     search: SearchPipeline,
     delete: DeletePipeline,
+    api_key_cache: Arc<ApiKeyCache>,
 }
 
 /// Tool metadata for listing available tools.
@@ -75,12 +78,14 @@ impl AuthorizedMcpServer {
         ingest: IngestPipeline,
         search: SearchPipeline,
         delete: DeletePipeline,
+        api_key_cache: Arc<ApiKeyCache>,
     ) -> Self {
         Self {
             pool,
             ingest,
             search,
             delete,
+            api_key_cache,
         }
     }
 
@@ -210,9 +215,9 @@ impl AuthorizedMcpServer {
             "search" => self.tool_search(ctx, arguments).await,
             "delete_source" => self.tool_delete_source(ctx, arguments).await,
             "list_sources" => self.tool_list_sources(ctx, arguments).await,
-            "ingest_directory" => ToolCallResult::error(
-                "ingest_directory is not supported over HTTP".into(),
-            ),
+            "ingest_directory" => ToolCallResult::error(format!(
+                "ERR_UNSUPPORTED: ingest_directory is not supported over HTTP (code {ERR_UNSUPPORTED})"
+            )),
             "project_list" => self.tool_project_list(ctx).await,
             "api_key_rotate" => self.tool_api_key_rotate(ctx).await,
             "project_create" => self.tool_project_create(ctx, arguments).await,
@@ -239,12 +244,32 @@ impl AuthorizedMcpServer {
             Err(e) => return ToolCallResult::error(format!("invalid params: {e}")),
         };
 
+        // ACL check: non-admin users must have writer or admin role on the target project.
+        if !ctx.is_admin {
+            if let Some(ref project_name) = params.project {
+                match queries::check_project_write_access(&self.pool, ctx.user_id, project_name)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return ToolCallResult::error(
+                            "PERMISSION_DENIED: writer or admin role required on this project"
+                                .into(),
+                        )
+                    }
+                    Err(e) => {
+                        return ToolCallResult::error(format!("ACL check failed: {e}"))
+                    }
+                }
+            }
+            // If no project specified, ingesting into the global namespace is allowed for
+            // any authenticated user (the source will be owned by them via owner_user_id).
+        }
+
         let metadata = params
             .metadata
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
 
-        // Use the ingest pipeline and then set owner_user_id afterward,
-        // since the pipeline creates NewSource with owner_user_id: None.
         match self
             .ingest
             .ingest(
@@ -253,24 +278,14 @@ impl AuthorizedMcpServer {
                 &params.content_type,
                 metadata,
                 params.project,
+                Some(ctx.user_id),
             )
             .await
         {
-            Ok(source) => {
-                // Update the owner after ingest. The ingest pipeline creates with None,
-                // but we need to set it. This is a pragmatic approach to avoid changing
-                // the IngestPipeline signature.
-                let _ = sqlx::query("UPDATE sources SET owner_user_id = $1 WHERE id = $2")
-                    .bind(ctx.user_id)
-                    .bind(source.id)
-                    .execute(&self.pool)
-                    .await;
-
-                match serde_json::to_string(&source) {
-                    Ok(json) => ToolCallResult::success(json),
-                    Err(e) => ToolCallResult::error(format!("serialization error: {e}")),
-                }
-            }
+            Ok(source) => match serde_json::to_string(&source) {
+                Ok(json) => ToolCallResult::success(json),
+                Err(e) => ToolCallResult::error(format!("serialization error: {e}")),
+            },
             Err(e) => ToolCallResult::error(format!("ingest failed: {e}")),
         }
     }
@@ -437,9 +452,21 @@ impl AuthorizedMcpServer {
     }
 
     async fn tool_api_key_rotate(&self, ctx: &UserContext) -> ToolCallResult {
-        // Revoke all existing keys
+        // Fetch active key hashes for this user so we can evict them from the cache.
+        let old_hashes =
+            match queries::get_active_api_key_hashes_for_user(&self.pool, ctx.user_id).await {
+                Ok(h) => h,
+                Err(e) => return ToolCallResult::error(format!("failed to fetch keys: {e}")),
+            };
+
+        // Revoke all existing keys in the database.
         if let Err(e) = queries::revoke_api_keys_for_user(&self.pool, ctx.user_id).await {
             return ToolCallResult::error(format!("failed to revoke keys: {e}"));
+        }
+
+        // Evict revoked keys from the LRU cache so they stop working immediately.
+        for hash in &old_hashes {
+            self.api_key_cache.remove(hash);
         }
 
         // Generate a new key

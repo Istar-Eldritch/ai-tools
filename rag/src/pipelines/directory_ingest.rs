@@ -420,6 +420,7 @@ impl DirectoryIngestPipeline {
                                 &file.content_type,
                                 meta,
                                 project,
+                                None,
                             )
                             .await
                             .map(|_| ActionResult::Ingested)
