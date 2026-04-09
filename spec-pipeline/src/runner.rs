@@ -225,6 +225,43 @@ impl ClaudeRunner {
         event_tx: Option<mpsc::UnboundedSender<ChildEvent>>,
         claude_session_id: Option<&str>,
     ) -> Result<PhaseRunResult, RunnerError> {
+        let result = self
+            .run_phase_inner(context, model, system_prompt, &event_tx, claude_session_id)
+            .await;
+
+        // If we were resuming a session and it failed, retry without resumption.
+        // Claude CLI can fail silently with exit code 1 when the session cache
+        // is expired, corrupted, or otherwise invalid — producing zero turns and
+        // no diagnostic output. Falling back to a fresh session recovers
+        // automatically instead of surfacing a cryptic error to the user.
+        if claude_session_id.is_some() {
+            if let Err(RunnerError::SubprocessFailed { .. }) | Err(RunnerError::MissingResult) =
+                &result
+            {
+                warn!(
+                    phase = %context.phase,
+                    error = %result.as_ref().unwrap_err(),
+                    "resumed session failed — retrying without resumption"
+                );
+                return self
+                    .run_phase_inner(context, model, system_prompt, &event_tx, None)
+                    .await;
+            }
+        }
+
+        result
+    }
+
+    /// Inner implementation of `run_phase`. Separated so `run_phase` can retry
+    /// without session resumption on failure.
+    async fn run_phase_inner(
+        &self,
+        context: &PhaseContext,
+        model: &str,
+        system_prompt: &Path,
+        event_tx: &Option<mpsc::UnboundedSender<ChildEvent>>,
+        claude_session_id: Option<&str>,
+    ) -> Result<PhaseRunResult, RunnerError> {
         let context_json =
             serde_json::to_string_pretty(context).map_err(RunnerError::SerializeFailed)?;
 
