@@ -12,9 +12,9 @@ pub struct Config {
     #[arg(long, env = "SPEC_PIPELINE_LOG_DIR")]
     pub log_dir: Option<PathBuf>,
 
-    /// Path to the RAG MCP server configuration file
-    #[arg(long, env = "SPEC_PIPELINE_RAG_MCP_CONFIG")]
-    pub rag_mcp_config: Option<PathBuf>,
+    /// Path to the MCP server configuration file for child agents
+    #[arg(long, env = "SPEC_PIPELINE_MCP_CONFIG")]
+    pub mcp_config: Option<PathBuf>,
 }
 
 impl Config {

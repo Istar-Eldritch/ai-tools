@@ -153,7 +153,7 @@ pub struct ClaudeRunner {
 
 impl ClaudeRunner {
     /// Create a new runner. Generates the JSON schema file for phase output.
-    pub fn new(rag_mcp_config: Option<PathBuf>) -> Result<Self, RunnerError> {
+    pub fn new(mcp_config: Option<PathBuf>) -> Result<Self, RunnerError> {
         let schema_dir =
             tempfile::TempDir::new().map_err(|e| RunnerError::SpawnFailed(e))?;
 
@@ -174,10 +174,10 @@ impl ClaudeRunner {
 
         debug!("generated phase output JSON schema");
 
-        // Resolve the MCP config path. If a RAG config was provided, use it.
+        // Resolve the MCP config path. If one was provided, use it.
         // Otherwise write an empty config so `claude -p` won't load the user's
         // default MCP servers (which include *this* server → infinite recursion).
-        let mcp_config = match rag_mcp_config {
+        let mcp_config = match mcp_config {
             Some(path) => path,
             None => {
                 let empty_path = schema_dir.path().join("empty_mcp_config.json");

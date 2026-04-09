@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
             let registry = Arc::new(SessionRegistry::new(store)?);
 
             let runner = Arc::new(
-                ClaudeRunner::new(config.rag_mcp_config.clone())
+                ClaudeRunner::new(config.mcp_config.clone())
                     .map_err(|e| anyhow::anyhow!("Failed to create ClaudeRunner: {e}"))?,
             );
             let prompts = Arc::new(
