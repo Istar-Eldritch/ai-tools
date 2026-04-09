@@ -474,6 +474,7 @@ async fn run_phase_and_process(
                 "Internal error: prompt key not found",
                 &setup.prompt_key,
                 &setup.workflow_type,
+                notifier,
             )
             .await;
             return PhaseResult { action: LoopAction::Break, claude_session_id: None };
@@ -577,10 +578,15 @@ async fn run_phase_and_process(
                     claude_session_id: None,
                 },
                 InternalAction::AwaitGate => {
-                    // Notify: session waiting at gate
+                    // Register gate channel BEFORE notifying, so that
+                    // spec_respond always finds the channel even if the
+                    // client responds immediately after spec_start returns.
+                    let gate_rx = register_gate_channel(session_id, gate_channels);
+
+                    // Notify: session waiting at gate (wakes await_with_progress)
                     notify_current_state(session_id, registry, notifier).await;
 
-                    match await_gate_response(session_id, gate_channels).await {
+                    match gate_rx.await.ok() {
                         Some(response) => {
                             if apply_gate_response(
                                 session_id,
@@ -622,6 +628,13 @@ async fn run_phase_and_process(
                 _ => None,
             };
             error!(%session_id, error = %err, "phase runner error");
+
+            // Register gate channel BEFORE transitioning to error, because
+            // transition_to_error_with_code now calls notify_current_state
+            // which wakes await_with_progress — the channel must already
+            // be in the map when spec_respond arrives.
+            let gate_rx = register_gate_channel(session_id, gate_channels);
+
             transition_to_error_with_code(
                 registry,
                 session_id,
@@ -629,14 +642,12 @@ async fn run_phase_and_process(
                 &setup.context.phase,
                 exit_code,
                 &setup.workflow_type,
+                notifier,
             )
             .await;
 
-            // Notify: error gate
-            notify_current_state(session_id, registry, notifier).await;
-
             // Wait for user to decide (retry or cancel)
-            match await_gate_response(session_id, gate_channels).await {
+            match gate_rx.await.ok() {
                 Some(response) => {
                     if apply_gate_response(
                         session_id,
@@ -1094,13 +1105,18 @@ async fn process_epic_output(
 // ---------------------------------------------------------------------------
 
 /// Insert a oneshot channel, wait for the response.
-async fn await_gate_response(
+/// Register a gate channel for the session and return the receiver.
+/// The sender is stored in the gate channel map so that `spec_respond`
+/// can deliver the user's response.  This must be called BEFORE
+/// `notify_current_state` to avoid a race where the client calls
+/// `spec_respond` before the channel is registered.
+fn register_gate_channel(
     session_id: Uuid,
     gate_channels: &Arc<GateChannelMap>,
-) -> Option<GateResponse> {
+) -> oneshot::Receiver<GateResponse> {
     let (tx, rx) = oneshot::channel();
     gate_channels.insert(session_id, tx);
-    rx.await.ok()
+    rx
 }
 
 /// Apply a gate response to the session, returning `true` if the loop should
@@ -1578,19 +1594,21 @@ async fn notify_current_state(
 // Error transition helpers
 // ---------------------------------------------------------------------------
 
-/// Transition to ErrorGate state.
+/// Transition to ErrorGate state and notify the watch channel.
 async fn transition_to_error(
     registry: &Arc<SessionRegistry>,
     session_id: Uuid,
     message: &str,
     failed_phase: &str,
     workflow_type: &str,
+    notifier: &SessionNotifier,
 ) {
-    transition_to_error_with_code(registry, session_id, message, failed_phase, None, workflow_type)
+    transition_to_error_with_code(registry, session_id, message, failed_phase, None, workflow_type, notifier)
         .await;
 }
 
-/// Transition to ErrorGate state with an optional exit code.
+/// Transition to ErrorGate state with an optional exit code and notify
+/// the watch channel so `await_with_progress` can wake up.
 async fn transition_to_error_with_code(
     registry: &Arc<SessionRegistry>,
     session_id: Uuid,
@@ -1598,6 +1616,7 @@ async fn transition_to_error_with_code(
     failed_phase: &str,
     exit_code: Option<i32>,
     workflow_type: &str,
+    notifier: &SessionNotifier,
 ) {
     let msg = message.to_string();
     let phase = failed_phase.to_string();
@@ -1610,6 +1629,8 @@ async fn transition_to_error_with_code(
     {
         error!(%session_id, error = %e, "failed to transition to error gate");
     }
+    // Signal the watch channel so await_with_progress unblocks.
+    notify_current_state(session_id, registry, notifier).await;
 }
 
 /// Build an ErrorGate WorkflowState for the given workflow type.
@@ -1753,6 +1774,7 @@ pub async fn run_implement_session(
                 &format!("Failed to create temp dir: {e}"),
                 "phase_extraction",
                 "implement",
+                &notifier,
             )
             .await;
             return;
@@ -1782,6 +1804,7 @@ pub async fn run_implement_session(
                         &format!("Failed to write spec to temp dir: {e}"),
                         "phase_extraction",
                         "implement",
+                        &notifier,
                     )
                     .await;
                     return;
@@ -1795,6 +1818,7 @@ pub async fn run_implement_session(
                     &format!("Failed to read spec file '{}': {e}", spec_path),
                     "phase_extraction",
                     "implement",
+                    &notifier,
                 )
                 .await;
                 return;

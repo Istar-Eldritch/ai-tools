@@ -375,6 +375,7 @@ impl McpServer {
             let wt = session.workflow_state.workflow_type().to_string();
             let phase = session.workflow_state.phase_name().to_string();
             let sub_phase = session.workflow_state.sub_phase_name().map(|s| s.to_string());
+            let state_str = format!("{:?}", session.session_state());
             let cost = session.total_cost_usd;
             drop(session);
 
@@ -384,7 +385,7 @@ impl McpServer {
                     session_id: id,
                     workflow_type: wt,
                     event_type: SessionEventType::GateResponseReceived,
-                    session_state: "Running".into(),
+                    session_state: state_str,
                     phase,
                     sub_phase,
                     message: format!("Gate response accepted: {}", params.response_type),
