@@ -1,7 +1,10 @@
+pub mod acl;
+pub mod auth;
 pub mod chunking;
 pub mod config;
 pub mod db;
 pub mod embedding;
 pub mod error;
+pub mod http;
 pub mod pipelines;
 pub mod storage;

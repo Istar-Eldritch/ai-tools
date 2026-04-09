@@ -1,6 +1,41 @@
 use clap::Args;
 
 #[derive(Debug, Clone, Args)]
+pub struct HttpConfig {
+    /// Google OAuth2 Client ID
+    #[arg(long, env = "GOOGLE_CLIENT_ID")]
+    pub google_client_id: String,
+
+    /// Google OAuth2 Client Secret
+    #[arg(long, env = "GOOGLE_CLIENT_SECRET")]
+    pub google_client_secret: String,
+
+    /// OAuth redirect URI (e.g. http://localhost:8080/auth/callback)
+    #[arg(long, env = "OAUTH_REDIRECT_URI")]
+    pub oauth_redirect_uri: String,
+
+    /// HTTP bind address
+    #[arg(long, env = "HTTP_BIND", default_value = "0.0.0.0:8080")]
+    pub http_bind: String,
+
+    /// API key cache TTL in seconds
+    #[arg(long, env = "API_KEY_CACHE_TTL_SECS", default_value = "60")]
+    pub api_key_cache_ttl_secs: u64,
+
+    /// MCP session idle timeout in seconds
+    #[arg(long, env = "MCP_SESSION_IDLE_SECS", default_value = "1800")]
+    pub mcp_session_idle_secs: u64,
+
+    /// Email of the first admin user (auto-promoted on first login)
+    #[arg(long, env = "FIRST_ADMIN_EMAIL")]
+    pub first_admin_email: Option<String>,
+
+    /// All base Config fields are flattened in
+    #[command(flatten)]
+    pub base: Config,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct Config {
     /// PostgreSQL connection URL
     #[arg(long, env = "DATABASE_URL")]
@@ -27,7 +62,7 @@ pub struct Config {
     pub db_max_connections: u32,
 
     /// Embedding model name for FastEmbed
-    #[arg(long, env = "EMBEDDING_MODEL", default_value = "nomic-embed-text-v2-moe")]
+    #[arg(long, env = "EMBEDDING_MODEL", default_value = "nomic-embed-text-v1.5q")]
     pub embedding_model: String,
 
     /// Maximum chunk size in characters

@@ -66,6 +66,7 @@ impl IngestPipeline {
             content_type: content_type.to_owned(),
             metadata,
             project,
+            owner_user_id: None,
         };
         let source = queries::insert_source(&self.pool, &new_source).await?;
 

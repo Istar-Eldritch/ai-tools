@@ -44,6 +44,54 @@ impl SearchPipeline {
         }
     }
 
+    /// ACL-aware search: only returns results accessible to the given user.
+    pub async fn search_with_acl(
+        &self,
+        query: &str,
+        k: i64,
+        filters: SearchFilter,
+        user_id: uuid::Uuid,
+    ) -> AppResult<Vec<SearchResult>> {
+        if query.trim().is_empty() {
+            return Err(AppError::Validation("query must not be empty".into()));
+        }
+        if !(1..=100).contains(&k) {
+            return Err(AppError::Validation("k must be between 1 and 100".into()));
+        }
+        if let Some(ref v) = filters.source_metadata {
+            if !v.is_object() {
+                return Err(AppError::Validation(
+                    "source_metadata filter must be a JSON object".into(),
+                ));
+            }
+        }
+
+        let filename_like: Option<String> =
+            filters.filename_glob.as_deref().map(glob_to_like);
+
+        let svc = self.embedding.clone();
+        let query_owned = query.to_owned();
+        let query_vector = tokio::task::spawn_blocking(move || svc.embed_one(&query_owned))
+            .await
+            .map_err(|e| AppError::Internal(format!("embedding task panicked: {e}")))?
+            ?;
+
+        let fetch_k = k.saturating_mul(self.dedup_candidate_factor).min(300);
+        let candidates = queries::search_chunks_with_acl(
+            &self.pool,
+            &query_vector,
+            fetch_k,
+            filename_like.as_deref(),
+            filters.source_metadata.as_ref(),
+            filters.project.as_deref(),
+            user_id,
+        )
+        .await?;
+
+        let results = dedup_results(candidates, k as usize, self.dedup_threshold);
+        Ok(results)
+    }
+
     pub async fn search(
         &self,
         query: &str,

@@ -21,6 +21,7 @@ async fn source_chunk_lifecycle() {
         content_type: "application/pdf".into(),
         metadata: json!({"pages": 3}),
         project: None,
+        owner_user_id: None,
     };
     let source = queries::insert_source(&pool, &new_source).await.unwrap();
     assert_eq!(source.id, source_id);

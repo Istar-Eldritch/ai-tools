@@ -61,6 +61,7 @@ fn map_model_name(name: &str) -> AppResult<EmbeddingModel> {
         "all-minilm-l12-v2" | "AllMiniLML12V2" => Ok(EmbeddingModel::AllMiniLML12V2),
         "nomic-embed-text-v1" | "NomicEmbedTextV1" => Ok(EmbeddingModel::NomicEmbedTextV1),
         "nomic-embed-text-v1.5" | "NomicEmbedTextV15" => Ok(EmbeddingModel::NomicEmbedTextV15),
+        "nomic-embed-text-v1.5q" | "NomicEmbedTextV15Q" => Ok(EmbeddingModel::NomicEmbedTextV15Q),
         "bge-small-en-v1.5" | "BGESmallENV15" => Ok(EmbeddingModel::BGESmallENV15),
         "bge-base-en-v1.5" | "BGEBaseENV15" => Ok(EmbeddingModel::BGEBaseENV15),
         "bge-large-en-v1.5" | "BGELargeENV15" => Ok(EmbeddingModel::BGELargeENV15),

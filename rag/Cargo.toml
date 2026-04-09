@@ -37,6 +37,13 @@ walkdir = "2"
 globset = "0.4"
 sha2 = "0.10"
 futures = "0.3"
+actix-web = "4"
+oauth2 = "4"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+rand = "0.8"
+lru = "0.12"
+dashmap = "6"
+base64 = "0.22"
 
 [dev-dependencies]
 testcontainers = { version = "0.25", features = ["watchdog"] }

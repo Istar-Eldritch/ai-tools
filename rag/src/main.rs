@@ -1,10 +1,20 @@
 mod mcp;
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use actix_web::{web, App, HttpServer};
 use clap::{Parser, Subcommand};
+use rag_mcp::acl::authorized_server::AuthorizedMcpServer;
+use rag_mcp::auth::api_key::ApiKeyCache;
+use rag_mcp::auth::google::GoogleOAuthClient;
 use rag_mcp::chunking::ChunkConfig;
-use rag_mcp::config::Config;
+use rag_mcp::config::{Config, HttpConfig};
 use rag_mcp::db;
 use rag_mcp::embedding::EmbeddingService;
+use rag_mcp::http::oauth_state::{PendingAuthStore, PendingCodeStore};
+use rag_mcp::http::session::SessionStore;
+use rag_mcp::http::{self as http_mod, AppState};
 use rag_mcp::pipelines::delete::DeletePipeline;
 use rag_mcp::pipelines::directory_ingest::DirectoryIngestPipeline;
 use rag_mcp::pipelines::ingest::IngestPipeline;
@@ -12,7 +22,6 @@ use rag_mcp::pipelines::search::SearchPipeline;
 use rag_mcp::storage::S3Storage;
 use rmcp::transport::stdio;
 use rmcp::ServiceExt;
-use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -34,6 +43,28 @@ struct Cli {
 enum Commands {
     /// Start the MCP server (stdio transport)
     Serve(Config),
+    /// Start the HTTP/MCP server (Actix Web, Streamable HTTP)
+    ServeHttp(HttpConfig),
+    /// Admin commands
+    Admin {
+        #[command(subcommand)]
+        action: AdminAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminAction {
+    /// Promote a user to admin by email
+    Promote(AdminPromoteArgs),
+}
+
+#[derive(clap::Args)]
+struct AdminPromoteArgs {
+    /// Database URL
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: String,
+    /// Email of the user to promote
+    email: String,
 }
 
 #[tokio::main]
@@ -145,5 +176,127 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("MCP server shut down cleanly");
             Ok(())
         }
+        Commands::ServeHttp(http_config) => {
+            let config = &http_config.base;
+
+            init_tracing();
+
+            tracing::info!("RAG MCP HTTP server starting");
+
+            let pool = db::connect(&config.database_url, config.db_max_connections).await?;
+            tracing::info!("database connected and migrations applied");
+
+            let storage = S3Storage::new(config).await?;
+            tracing::info!("S3 storage initialised");
+
+            let embedding = EmbeddingService::new(&config.embedding_model)?;
+            tracing::info!(model = %config.embedding_model, "embedding service loaded");
+
+            let chunk_config = ChunkConfig {
+                chunk_size: config.chunk_size,
+                overlap: config.chunk_overlap,
+                min_chunk_size: config.min_chunk_size,
+            };
+
+            let ingest_pipeline = IngestPipeline::new(
+                pool.clone(),
+                storage.clone(),
+                chunk_config,
+                embedding.clone(),
+            );
+            let search_pipeline = SearchPipeline::new(
+                pool.clone(),
+                embedding.clone(),
+                config.dedup_threshold,
+                config.dedup_candidate_factor,
+            );
+            let delete_pipeline = DeletePipeline::new(pool.clone(), storage.clone());
+
+            let google_oauth = GoogleOAuthClient::new(
+                &http_config.google_client_id,
+                &http_config.google_client_secret,
+                &http_config.oauth_redirect_uri,
+            )?;
+
+            let api_key_cache = Arc::new(ApiKeyCache::new(1000, http_config.api_key_cache_ttl_secs));
+            let sessions = Arc::new(SessionStore::new(http_config.mcp_session_idle_secs));
+            sessions.start_sweeper();
+
+            let authorized_server = AuthorizedMcpServer::new(
+                pool.clone(),
+                ingest_pipeline,
+                search_pipeline,
+                delete_pipeline,
+            );
+
+            // Derive external URL from the OAuth redirect URI
+            let external_url = http_config
+                .oauth_redirect_uri
+                .trim_end_matches("/auth/callback")
+                .to_string();
+
+            let app_state = web::Data::new(AppState {
+                pool,
+                google_oauth,
+                google_client_id: http_config.google_client_id.clone(),
+                oauth_redirect_uri: http_config.oauth_redirect_uri.clone(),
+                external_url,
+                api_key_cache,
+                sessions,
+                pending_auth: PendingAuthStore::new(300),
+                pending_codes: PendingCodeStore::new(300),
+                authorized_server,
+                first_admin_email: http_config.first_admin_email.clone(),
+            });
+
+            let bind_addr = http_config.http_bind.clone();
+            tracing::info!(bind = %bind_addr, "HTTP server starting");
+
+            HttpServer::new(move || {
+                App::new()
+                    .app_data(app_state.clone())
+                    .configure(http_mod::configure_routes)
+            })
+            .bind(&bind_addr)?
+            .run()
+            .await?;
+
+            tracing::info!("HTTP server shut down cleanly");
+            Ok(())
+        }
+        Commands::Admin { action } => {
+            init_tracing();
+
+            match action {
+                AdminAction::Promote(args) => {
+                    let pool = db::connect(&args.database_url, 1).await?;
+                    match rag_mcp::db::queries::set_user_admin(&pool, &args.email, true).await? {
+                        Some(user) => {
+                            println!("Promoted {} ({}) to admin", user.email, user.id);
+                        }
+                        None => {
+                            eprintln!("User with email '{}' not found", args.email);
+                            std::process::exit(1);
+                        }
+                    }
+                    Ok(())
+                }
+            }
+        }
     }
+}
+
+/// Shared tracing initialisation for non-stdio subcommands.
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(true),
+        )
+        .init();
 }

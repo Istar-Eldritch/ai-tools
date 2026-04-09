@@ -13,6 +13,7 @@ pub struct Source {
     pub metadata: serde_json::Value,
     pub project: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub owner_user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -61,6 +62,7 @@ pub struct NewSource {
     pub content_type: String,
     pub metadata: serde_json::Value,
     pub project: Option<String>,
+    pub owner_user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,4 +73,43 @@ pub struct NewChunk {
     pub content: String,
     pub embedding: Vector,
     pub metadata: serde_json::Value,
+}
+
+// -- Auth / ACL models --
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct User {
+    pub id: Uuid,
+    pub google_sub: String,
+    pub email: String,
+    pub display_name: String,
+    pub is_admin: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ApiKey {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub key_hash: String,
+    pub label: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct Project {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct UserProjectAccess {
+    pub user_id: Uuid,
+    pub project_id: Uuid,
+    pub role: String,
+    pub granted_at: DateTime<Utc>,
 }

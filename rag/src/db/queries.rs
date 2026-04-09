@@ -3,12 +3,15 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::AppResult;
-use super::models::{Chunk, NewChunk, NewSource, SearchResult, Source, SourceSummary};
+use super::models::{
+    ApiKey, Chunk, NewChunk, NewSource, Project, SearchResult, Source, SourceSummary,
+    User, UserProjectAccess,
+};
 
 pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Source> {
     let row = sqlx::query_as::<_, Source>(
-        "INSERT INTO sources (id, s3_key, filename, content_type, metadata, project)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        "INSERT INTO sources (id, s3_key, filename, content_type, metadata, project, owner_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *"
     )
     .bind(source.id)
@@ -17,6 +20,7 @@ pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Sourc
     .bind(&source.content_type)
     .bind(&source.metadata)
     .bind(&source.project)
+    .bind(source.owner_user_id)
     .fetch_one(pool)
     .await?;
     Ok(row)
@@ -250,6 +254,302 @@ pub async fn delete_chunks_by_source(pool: &PgPool, source_id: Uuid) -> AppResul
         .execute(pool)
         .await?;
     Ok(result.rows_affected())
+}
+
+// -- User queries --
+
+pub async fn upsert_user(
+    pool: &PgPool,
+    google_sub: &str,
+    email: &str,
+    display_name: &str,
+) -> AppResult<User> {
+    let row = sqlx::query_as::<_, User>(
+        "INSERT INTO users (google_sub, email, display_name)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (google_sub) DO UPDATE SET email = $2, display_name = $3
+         RETURNING *"
+    )
+    .bind(google_sub)
+    .bind(email)
+    .bind(display_name)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn get_user_by_id(pool: &PgPool, id: Uuid) -> AppResult<Option<User>> {
+    let row = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+pub async fn get_user_by_email(pool: &PgPool, email: &str) -> AppResult<Option<User>> {
+    let row = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
+        .bind(email)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+pub async fn set_user_admin(pool: &PgPool, email: &str, is_admin: bool) -> AppResult<Option<User>> {
+    let row = sqlx::query_as::<_, User>(
+        "UPDATE users SET is_admin = $2 WHERE email = $1 RETURNING *"
+    )
+    .bind(email)
+    .bind(is_admin)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+// -- API key queries --
+
+pub async fn insert_api_key(
+    pool: &PgPool,
+    user_id: Uuid,
+    key_hash: &str,
+    label: &str,
+) -> AppResult<ApiKey> {
+    let row = sqlx::query_as::<_, ApiKey>(
+        "INSERT INTO api_keys (user_id, key_hash, label)
+         VALUES ($1, $2, $3)
+         RETURNING *"
+    )
+    .bind(user_id)
+    .bind(key_hash)
+    .bind(label)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn get_active_api_key_by_hash(pool: &PgPool, key_hash: &str) -> AppResult<Option<ApiKey>> {
+    let row = sqlx::query_as::<_, ApiKey>(
+        "SELECT * FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL"
+    )
+    .bind(key_hash)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn touch_api_key(pool: &PgPool, key_id: Uuid) -> AppResult<()> {
+    sqlx::query("UPDATE api_keys SET last_used_at = now() WHERE id = $1")
+        .bind(key_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn revoke_api_keys_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<u64> {
+    let result = sqlx::query(
+        "UPDATE api_keys SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL"
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+// -- Project queries --
+
+pub async fn create_project(
+    pool: &PgPool,
+    name: &str,
+    description: Option<&str>,
+) -> AppResult<Project> {
+    let row = sqlx::query_as::<_, Project>(
+        "INSERT INTO projects (name, description) VALUES ($1, $2) RETURNING *"
+    )
+    .bind(name)
+    .bind(description)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn list_projects(pool: &PgPool) -> AppResult<Vec<Project>> {
+    let rows = sqlx::query_as::<_, Project>(
+        "SELECT * FROM projects ORDER BY created_at DESC"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn list_projects_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Project>> {
+    let rows = sqlx::query_as::<_, Project>(
+        "SELECT p.* FROM projects p
+         JOIN user_project_access upa ON upa.project_id = p.id
+         WHERE upa.user_id = $1
+         ORDER BY p.created_at DESC"
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn get_project_by_name(pool: &PgPool, name: &str) -> AppResult<Option<Project>> {
+    let row = sqlx::query_as::<_, Project>(
+        "SELECT * FROM projects WHERE name = $1"
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+// -- Access control queries --
+
+pub async fn grant_access(
+    pool: &PgPool,
+    user_id: Uuid,
+    project_id: Uuid,
+    role: &str,
+) -> AppResult<UserProjectAccess> {
+    let row = sqlx::query_as::<_, UserProjectAccess>(
+        "INSERT INTO user_project_access (user_id, project_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, project_id) DO UPDATE SET role = $3, granted_at = now()
+         RETURNING *"
+    )
+    .bind(user_id)
+    .bind(project_id)
+    .bind(role)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn revoke_access(pool: &PgPool, user_id: Uuid, project_id: Uuid) -> AppResult<bool> {
+    let result = sqlx::query(
+        "DELETE FROM user_project_access WHERE user_id = $1 AND project_id = $2"
+    )
+    .bind(user_id)
+    .bind(project_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+// -- ACL-aware search query --
+
+pub async fn search_chunks_with_acl(
+    pool: &PgPool,
+    embedding: &Vector,
+    k: i64,
+    filename_like: Option<&str>,
+    source_metadata: Option<&serde_json::Value>,
+    project: Option<&str>,
+    user_id: Uuid,
+) -> AppResult<Vec<SearchResult>> {
+    let rows = sqlx::query_as::<_, SearchResult>(
+        "SELECT
+             c.id          AS chunk_id,
+             c.source_id,
+             c.chunk_index,
+             c.content,
+             c.embedding,
+             s.filename    AS source_filename,
+             s.metadata    AS source_metadata,
+             c.metadata    AS chunk_metadata,
+             1.0 - (c.embedding <=> $1) AS similarity,
+             s.project     AS source_project
+         FROM chunks c
+         JOIN sources s ON s.id = c.source_id
+         WHERE ($3::text IS NULL OR s.filename LIKE $3 ESCAPE '\\')
+           AND ($4::jsonb IS NULL OR s.metadata @> $4)
+           AND ($5::text IS NULL OR s.project = $5)
+           AND (
+               s.owner_user_id = $6
+               OR s.owner_user_id IS NULL
+               OR s.project IN (
+                   SELECT p.name FROM projects p
+                   JOIN user_project_access upa ON upa.project_id = p.id
+                   WHERE upa.user_id = $6
+               )
+           )
+         ORDER BY c.embedding <=> $1
+         LIMIT $2"
+    )
+    .bind(embedding)
+    .bind(k)
+    .bind(filename_like)
+    .bind(source_metadata)
+    .bind(project)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn list_sources_with_acl(
+    pool: &PgPool,
+    project: Option<&str>,
+    filename_like: Option<&str>,
+    limit: i64,
+    offset: i64,
+    user_id: Uuid,
+) -> AppResult<Vec<SourceSummary>> {
+    let rows = sqlx::query_as::<_, SourceSummary>(
+        "SELECT s.id, s.filename, s.content_type, s.project, s.metadata,
+                s.created_at, COUNT(c.id) AS chunk_count
+         FROM sources s
+         LEFT JOIN chunks c ON c.source_id = s.id
+         WHERE ($1::text IS NULL OR s.project = $1)
+           AND ($2::text IS NULL OR s.filename LIKE $2 ESCAPE '\\')
+           AND (
+               s.owner_user_id = $5
+               OR s.owner_user_id IS NULL
+               OR s.project IN (
+                   SELECT p.name FROM projects p
+                   JOIN user_project_access upa ON upa.project_id = p.id
+                   WHERE upa.user_id = $5
+               )
+           )
+         GROUP BY s.id
+         ORDER BY s.created_at DESC
+         LIMIT $3 OFFSET $4"
+    )
+    .bind(project)
+    .bind(filename_like)
+    .bind(limit)
+    .bind(offset)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn check_source_access(
+    pool: &PgPool,
+    source_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<bool> {
+    let row = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM sources s
+            WHERE s.id = $1
+              AND (
+                  s.owner_user_id = $2
+                  OR s.owner_user_id IS NULL
+                  OR s.project IN (
+                      SELECT p.name FROM projects p
+                      JOIN user_project_access upa ON upa.project_id = p.id
+                      WHERE upa.user_id = $2
+                  )
+              )
+        )"
+    )
+    .bind(source_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
 }
 
 /// Translates a glob pattern to a SQL LIKE pattern.

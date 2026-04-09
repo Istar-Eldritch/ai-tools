@@ -30,6 +30,7 @@ async fn insert_source_with_chunk(
         content_type: "text/plain".to_string(),
         metadata,
         project: None,
+        owner_user_id: None,
     };
     queries::insert_source(pool, &source).await.unwrap();
     let chunk = NewChunk {
