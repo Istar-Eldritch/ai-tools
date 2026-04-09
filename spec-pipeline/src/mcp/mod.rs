@@ -538,6 +538,20 @@ async fn await_with_progress(
     let progress_token = meta.get_progress_token();
     let mut tick: f64 = 0.0;
 
+    // Guard against subscribe-after-send race: if the session already reached
+    // a terminal state before we subscribed, the watch considers that value
+    // "already seen" and changed() will never fire. Check immediately.
+    {
+        let current = *state_rx.borrow();
+        match current {
+            SessionState::WaitingAtGate
+            | SessionState::ErrorGate
+            | SessionState::Complete
+            | SessionState::Cancelled => return Ok(()),
+            SessionState::Running => {}
+        }
+    }
+
     loop {
         tokio::select! {
             Ok(message) = activity_rx.recv() => {
