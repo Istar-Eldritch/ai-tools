@@ -67,6 +67,7 @@ pub async fn run_brainstorm_session(
 
     let mut claude_session_id: Option<String> = None;
     let mut last_prompt_key: Option<String> = None;
+    let mut last_model: Option<String> = None;
 
     loop {
         // -----------------------------------------------------------------
@@ -97,10 +98,10 @@ pub async fn run_brainstorm_session(
                         DiscoveryPhase::Exploring { .. } => "exploring",
                         DiscoveryPhase::AwaitingAnswer { .. } => "awaiting_answer",
                     };
-                    ("discovery", Some(sub.to_string()), "brainstorm/discovery")
+                    ("discovery", Some(sub.to_string()), "brainstorm")
                 }
                 BrainstormState::Synthesis { .. } => {
-                    ("synthesis", None, "brainstorm/synthesis")
+                    ("synthesis", None, "brainstorm")
                 }
                 // Terminal / gate states -- nothing to run
                 BrainstormState::Complete { .. }
@@ -137,8 +138,12 @@ pub async fn run_brainstorm_session(
 
             let context_refs = session.context_refs.clone();
 
-            // Resume the Claude session if the prompt key hasn't changed.
-            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+            // Resume the Claude session if prompt key AND model haven't changed.
+            // A model change means the API cache prefix diverges, so resuming
+            // would cause cache creation instead of cache read.
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key)
+                && last_model.as_deref() == Some(&model)
+            {
                 claude_session_id.take()
             } else {
                 None
@@ -165,6 +170,7 @@ pub async fn run_brainstorm_session(
         };
 
         let current_prompt_key = setup.prompt_key.clone();
+        let current_model = setup.model.clone();
 
         // Run phase and process result via the generic loop body
         match run_phase_and_process(
@@ -181,6 +187,7 @@ pub async fn run_brainstorm_session(
             PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
                 claude_session_id = sid;
                 last_prompt_key = Some(current_prompt_key);
+                last_model = Some(current_model);
                 continue;
             }
             PhaseResult { action: LoopAction::Break, .. } => break,
@@ -208,6 +215,7 @@ pub async fn run_spec_session(
 
     let mut claude_session_id: Option<String> = None;
     let mut last_prompt_key: Option<String> = None;
+    let mut last_model: Option<String> = None;
 
     loop {
         let setup = {
@@ -229,8 +237,8 @@ pub async fn run_spec_session(
             };
 
             let (phase, prompt_key) = match &ss {
-                SpecState::Research { .. } => ("research", "spec/research"),
-                SpecState::Drafting { .. } => ("drafting", "spec/drafting"),
+                SpecState::Research { .. } => ("research", "spec"),
+                SpecState::Drafting { .. } => ("drafting", "spec"),
                 // Terminal / gate states
                 SpecState::Complete { .. }
                 | SpecState::Cancelled
@@ -267,7 +275,9 @@ pub async fn run_spec_session(
 
             let context_refs = session.context_refs.clone();
 
-            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key)
+                && last_model.as_deref() == Some(&model)
+            {
                 claude_session_id.take()
             } else {
                 None
@@ -293,6 +303,7 @@ pub async fn run_spec_session(
         };
 
         let current_prompt_key = setup.prompt_key.clone();
+        let current_model = setup.model.clone();
 
         match run_phase_and_process(
             session_id,
@@ -308,6 +319,7 @@ pub async fn run_spec_session(
             PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
                 claude_session_id = sid;
                 last_prompt_key = Some(current_prompt_key);
+                last_model = Some(current_model);
                 continue;
             }
             PhaseResult { action: LoopAction::Break, .. } => break,
@@ -335,6 +347,7 @@ pub async fn run_epic_session(
 
     let mut claude_session_id: Option<String> = None;
     let mut last_prompt_key: Option<String> = None;
+    let mut last_model: Option<String> = None;
 
     loop {
         let setup = {
@@ -356,8 +369,8 @@ pub async fn run_epic_session(
             };
 
             let (phase, prompt_key) = match &es {
-                EpicState::ChildExtraction { .. } => ("child_extraction", "epic/child_extraction"),
-                EpicState::Drafting { .. } => ("drafting", "epic/drafting"),
+                EpicState::ChildExtraction { .. } => ("child_extraction", "epic"),
+                EpicState::Drafting { .. } => ("drafting", "epic"),
                 // Terminal / gate states
                 EpicState::Complete { .. }
                 | EpicState::Cancelled
@@ -392,7 +405,9 @@ pub async fn run_epic_session(
 
             let context_refs = session.context_refs.clone();
 
-            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key)
+                && last_model.as_deref() == Some(&model)
+            {
                 claude_session_id.take()
             } else {
                 None
@@ -418,6 +433,7 @@ pub async fn run_epic_session(
         };
 
         let current_prompt_key = setup.prompt_key.clone();
+        let current_model = setup.model.clone();
 
         match run_phase_and_process(
             session_id,
@@ -433,6 +449,7 @@ pub async fn run_epic_session(
             PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
                 claude_session_id = sid;
                 last_prompt_key = Some(current_prompt_key);
+                last_model = Some(current_model);
                 continue;
             }
             PhaseResult { action: LoopAction::Break, .. } => break,
@@ -517,10 +534,13 @@ async fn run_phase_and_process(
     }
 
     // Run the phase (no lock held), forwarding child events as notifications.
+    let session_resumed = setup.claude_session_id.is_some();
     info!(
         %session_id,
         phase = %setup.context.phase,
         model = %setup.model,
+        prompt_key = %setup.prompt_key,
+        session_resumed,
         "running phase"
     );
 
@@ -557,6 +577,17 @@ async fn run_phase_and_process(
     // Process result
     match result {
         Ok(run_result) => {
+            info!(
+                %session_id,
+                phase = %setup.context.phase,
+                model = %setup.model,
+                prompt_key = %setup.prompt_key,
+                session_resumed,
+                cost_usd = run_result.cost_usd,
+                num_turns = run_result.num_turns,
+                stop_reason = %run_result.stop_reason,
+                "phase completed"
+            );
             let returned_session_id = run_result.claude_session_id.clone();
             let action = process_phase_output(
                 session_id,
@@ -1701,9 +1732,6 @@ async fn apply_configure(
         if let Some(v) = overrides.get("implementer").and_then(|v| v.as_str()) {
             config.implementer = v.to_string();
         }
-        if let Some(v) = overrides.get("plan_revision_limit").and_then(|v| v.as_u64()) {
-            config.plan_revision_limit = v as u32;
-        }
         if let Some(v) = overrides.get("code_revision_limit").and_then(|v| v.as_u64()) {
             config.code_revision_limit = v as u32;
         }
@@ -1740,8 +1768,8 @@ async fn apply_configure(
 fn resolve_implement_model(sub_phase: &str, config: &ImplementConfig) -> String {
     match sub_phase {
         "plan_generation" => config.planner.clone(),
-        "plan_review" | "code_review" | "iteration_review" => config.reviewer.clone(),
-        "plan_revision" | "code_revision" | "iteration_revision" => config.reviser.clone(),
+        "code_review" | "iteration_review" => config.reviewer.clone(),
+        "code_revision" | "iteration_revision" => config.reviser.clone(),
         "implementation" => config.implementer.clone(),
         _ => "sonnet".to_string(),
     }
@@ -1828,6 +1856,7 @@ pub async fn run_implement_session(
 
     let mut claude_session_id: Option<String> = None;
     let mut last_prompt_key: Option<String> = None;
+    let mut last_model: Option<String> = None;
 
     loop {
         // Read current state and build the phase setup.
@@ -1857,63 +1886,49 @@ pub async fn run_implement_session(
                         .model_override
                         .clone()
                         .unwrap_or_else(|| model_config.for_role(role).to_string());
-                    ("phase_extraction", "implement/phase_extraction", m)
+                    ("phase_extraction", "implement", m)
                 }
                 ImplementState::PlanGeneration { config, .. } => {
                     let m = session
                         .model_override
                         .clone()
                         .unwrap_or_else(|| resolve_implement_model("plan_generation", config));
-                    ("plan_generation", "implement/plan_generation", m)
-                }
-                ImplementState::PlanReview { config, .. } => {
-                    let m = session
-                        .model_override
-                        .clone()
-                        .unwrap_or_else(|| resolve_implement_model("plan_review", config));
-                    ("plan_review", "implement/plan_review", m)
-                }
-                ImplementState::PlanRevision { config, .. } => {
-                    let m = session
-                        .model_override
-                        .clone()
-                        .unwrap_or_else(|| resolve_implement_model("plan_revision", config));
-                    ("plan_revision", "implement/plan_revision", m)
+                    ("plan_generation", "implement", m)
                 }
                 ImplementState::Implementation { config, .. } => {
                     let m = session
                         .model_override
                         .clone()
                         .unwrap_or_else(|| resolve_implement_model("implementation", config));
-                    ("implementation", "implement/implementation", m)
+                    ("implementation", "implement", m)
                 }
                 ImplementState::CodeReview { config, .. } => {
                     let m = session
                         .model_override
                         .clone()
                         .unwrap_or_else(|| resolve_implement_model("code_review", config));
-                    ("code_review", "implement/code_review", m)
+                    ("code_review", "implement", m)
                 }
                 ImplementState::CodeRevision { config, .. } => {
                     let m = session
                         .model_override
                         .clone()
                         .unwrap_or_else(|| resolve_implement_model("code_revision", config));
-                    ("code_revision", "implement/code_revision", m)
+                    ("code_revision", "implement", m)
                 }
                 ImplementState::IterationReview { config, .. } => {
                     let m = session
                         .model_override
                         .clone()
                         .unwrap_or_else(|| resolve_implement_model("iteration_review", config));
-                    ("iteration_review", "implement/iteration_review", m)
+                    ("iteration_review", "implement", m)
                 }
                 ImplementState::IterationRevision { config, .. } => {
                     let m = session
                         .model_override
                         .clone()
                         .unwrap_or_else(|| resolve_implement_model("iteration_revision", config));
-                    ("iteration_revision", "implement/iteration_revision", m)
+                    ("iteration_revision", "implement", m)
                 }
                 // Terminal / gate states
                 ImplementState::Complete { .. }
@@ -1927,8 +1942,6 @@ pub async fn run_implement_session(
             };
 
             let revision = match &is {
-                ImplementState::PlanReview { plan_revision, .. } => *plan_revision,
-                ImplementState::PlanRevision { plan_revision, .. } => *plan_revision,
                 ImplementState::CodeReview { code_revision, .. } => *code_revision,
                 ImplementState::CodeRevision { code_revision, .. } => *code_revision,
                 ImplementState::IterationReview { iteration, .. } => *iteration,
@@ -1937,9 +1950,6 @@ pub async fn run_implement_session(
             };
 
             let revision_feedback = match &is {
-                ImplementState::PlanRevision {
-                    review_feedback, ..
-                } => Some(review_feedback.clone()),
                 ImplementState::CodeRevision {
                     review_feedback, ..
                 } => Some(review_feedback.clone()),
@@ -1955,16 +1965,6 @@ pub async fn run_implement_session(
             // For phases that work with a plan, include the plan path.
             match &is {
                 ImplementState::PlanGeneration {
-                    phases,
-                    current_phase_idx,
-                    ..
-                }
-                | ImplementState::PlanReview {
-                    phases,
-                    current_phase_idx,
-                    ..
-                }
-                | ImplementState::PlanRevision {
                     phases,
                     current_phase_idx,
                     ..
@@ -2011,16 +2011,6 @@ pub async fn run_implement_session(
                     current_phase_idx,
                     ..
                 }
-                | ImplementState::PlanReview {
-                    phases,
-                    current_phase_idx,
-                    ..
-                }
-                | ImplementState::PlanRevision {
-                    phases,
-                    current_phase_idx,
-                    ..
-                }
                 | ImplementState::Implementation {
                     phases,
                     current_phase_idx,
@@ -2041,7 +2031,9 @@ pub async fn run_implement_session(
                 _ => None,
             };
 
-            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key) {
+            let resume_id = if last_prompt_key.as_deref() == Some(prompt_key)
+                && last_model.as_deref() == Some(&model)
+            {
                 claude_session_id.take()
             } else {
                 None
@@ -2068,6 +2060,7 @@ pub async fn run_implement_session(
         };
 
         let current_prompt_key = setup.prompt_key.clone();
+        let current_model = setup.model.clone();
 
         match run_phase_and_process(
             session_id,
@@ -2083,6 +2076,7 @@ pub async fn run_implement_session(
             PhaseResult { action: LoopAction::Continue, claude_session_id: sid } => {
                 claude_session_id = sid;
                 last_prompt_key = Some(current_prompt_key);
+                last_model = Some(current_model);
                 continue;
             }
             PhaseResult { action: LoopAction::Break, .. } => break,
@@ -2141,56 +2135,6 @@ async fn process_implement_output(
                 .starts_with("APPROVED");
 
             let new_state = match is_snapshot {
-                ImplementState::PlanReview {
-                    phases,
-                    current_phase_idx,
-                    plan_revision,
-                    config,
-                    mut metrics,
-                } => {
-                    if approved || plan_revision >= config.plan_revision_limit {
-                        if !approved && plan_revision >= config.plan_revision_limit {
-                            warn!(
-                                %session_id,
-                                %plan_revision,
-                                limit = config.plan_revision_limit,
-                                "plan revision limit reached, advancing anyway"
-                            );
-                        }
-                        // Record plan cycles in metrics for this phase.
-                        let phase_num = phases
-                            .get(current_phase_idx)
-                            .map(|p| p.number)
-                            .unwrap_or(0);
-                        // Check if we already have metrics for this phase.
-                        if let Some(m) = metrics.iter_mut().find(|m| m.phase_number == phase_num) {
-                            m.plan_cycles = plan_revision + 1;
-                        } else {
-                            metrics.push(PhaseMetrics {
-                                phase_number: phase_num,
-                                plan_cycles: plan_revision + 1,
-                                code_cycles: 0,
-                                code_approved_first_pass: false,
-                            });
-                        }
-                        ImplementState::Implementation {
-                            phases,
-                            current_phase_idx,
-                            config,
-                            metrics,
-                        }
-                    } else {
-                        // Needs changes: go to PlanRevision.
-                        ImplementState::PlanRevision {
-                            phases,
-                            current_phase_idx,
-                            plan_revision,
-                            review_feedback: question,
-                            config,
-                            metrics,
-                        }
-                    }
-                }
                 ImplementState::CodeReview {
                     phases,
                     current_phase_idx,
@@ -2381,28 +2325,10 @@ async fn process_implement_output(
                     config,
                     metrics,
                 } => {
-                    // Plan generated; move to PlanReview.
-                    ImplementState::PlanReview {
+                    // Plan generated; move directly to Implementation.
+                    ImplementState::Implementation {
                         phases,
                         current_phase_idx,
-                        plan_revision: 0,
-                        config,
-                        metrics,
-                    }
-                }
-                ImplementState::PlanRevision {
-                    phases,
-                    current_phase_idx,
-                    plan_revision,
-                    config,
-                    metrics,
-                    ..
-                } => {
-                    // Plan revised; loop back to PlanReview.
-                    ImplementState::PlanReview {
-                        phases,
-                        current_phase_idx,
-                        plan_revision: plan_revision + 1,
                         config,
                         metrics,
                     }

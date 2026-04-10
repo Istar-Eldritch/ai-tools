@@ -18,17 +18,15 @@ pub struct ExtractedPhase {
 pub struct ImplementConfig {
     /// Model used to generate phase implementation plans.
     pub planner: String,
-    /// Model used to review plans and code.
+    /// Model used to review code.
     pub reviewer: String,
-    /// Model used to revise plans and code after review.
+    /// Model used to revise code after review.
     pub reviser: String,
     /// Model used to implement code changes.
     pub implementer: String,
-    /// Max plan review+revision cycles per phase before forcing advancement.
-    pub plan_revision_limit: u32,
     /// Max code review+revision cycles per phase before forcing advancement.
     pub code_revision_limit: u32,
-    /// When true, skip PlanGeneration / PlanReview / PlanRevision for all phases.
+    /// When true, skip PlanGeneration for all phases.
     pub skip_plan_generation: bool,
 }
 
@@ -39,7 +37,6 @@ impl Default for ImplementConfig {
             reviewer: "sonnet".to_string(),
             reviser: "sonnet".to_string(),
             implementer: "opus".to_string(),
-            plan_revision_limit: 3,
             code_revision_limit: 3,
             skip_plan_generation: false,
         }
@@ -75,27 +72,6 @@ pub enum ImplementState {
     PlanGeneration {
         phases: Vec<ExtractedPhase>,
         current_phase_idx: usize,
-        config: ImplementConfig,
-        metrics: Vec<PhaseMetrics>,
-    },
-
-    /// Reviewing the current phase plan.
-    #[serde(rename = "plan_review")]
-    PlanReview {
-        phases: Vec<ExtractedPhase>,
-        current_phase_idx: usize,
-        plan_revision: u32,
-        config: ImplementConfig,
-        metrics: Vec<PhaseMetrics>,
-    },
-
-    /// Revising the current phase plan based on review feedback.
-    #[serde(rename = "plan_revision")]
-    PlanRevision {
-        phases: Vec<ExtractedPhase>,
-        current_phase_idx: usize,
-        plan_revision: u32,
-        review_feedback: String,
         config: ImplementConfig,
         metrics: Vec<PhaseMetrics>,
     },
@@ -185,8 +161,6 @@ impl ImplementState {
             Self::PhaseExtraction => "phase_extraction",
             Self::Configuring { .. } => "configuring",
             Self::PlanGeneration { .. } => "plan_generation",
-            Self::PlanReview { .. } => "plan_review",
-            Self::PlanRevision { .. } => "plan_revision",
             Self::Implementation { .. } => "implementation",
             Self::CodeReview { .. } => "code_review",
             Self::CodeRevision { .. } => "code_revision",
@@ -210,8 +184,6 @@ impl ImplementState {
         match self {
             Self::PhaseExtraction => PhaseRole::Discovery,
             Self::PlanGeneration { .. } => PhaseRole::Synthesis,
-            Self::PlanReview { .. } => PhaseRole::Review,
-            Self::PlanRevision { .. } => PhaseRole::Synthesis,
             Self::Implementation { .. } => PhaseRole::Synthesis,
             Self::CodeReview { .. } => PhaseRole::Review,
             Self::CodeRevision { .. } => PhaseRole::Synthesis,

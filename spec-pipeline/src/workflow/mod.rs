@@ -258,7 +258,6 @@ impl HasGate for ImplementState {
                      - reviewer: {}\n\
                      - reviser: {}\n\
                      - implementer: {}\n\
-                     - plan_revision_limit: {}\n\
                      - code_revision_limit: {}\n\
                      - skip_plan_generation: {}\n\n\
                      Respond with 'approve' to begin, 'configure' with JSON to adjust, or 'cancel'.",
@@ -267,7 +266,6 @@ impl HasGate for ImplementState {
                     config.reviewer,
                     config.reviser,
                     config.implementer,
-                    config.plan_revision_limit,
                     config.code_revision_limit,
                     config.skip_plan_generation,
                 );
@@ -390,8 +388,6 @@ impl WorkflowState {
             Self::Implement(s) => match s {
                 ImplementState::PhaseExtraction
                 | ImplementState::PlanGeneration { .. }
-                | ImplementState::PlanReview { .. }
-                | ImplementState::PlanRevision { .. }
                 | ImplementState::Implementation { .. }
                 | ImplementState::CodeReview { .. }
                 | ImplementState::CodeRevision { .. }

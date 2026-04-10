@@ -523,7 +523,6 @@ fn implement_config_defaults() {
     assert_eq!(config.reviewer, "sonnet");
     assert_eq!(config.reviser, "sonnet");
     assert_eq!(config.implementer, "opus");
-    assert_eq!(config.plan_revision_limit, 3);
     assert_eq!(config.code_revision_limit, 3);
     assert!(!config.skip_plan_generation);
 }
@@ -584,15 +583,6 @@ fn implement_phase_roles() {
         metrics: vec![],
     });
     assert_eq!(plan_gen.phase_role(), PhaseRole::Synthesis);
-
-    let plan_review = WorkflowState::Implement(ImplementState::PlanReview {
-        phases: vec![],
-        current_phase_idx: 0,
-        plan_revision: 0,
-        config: ImplementConfig::default(),
-        metrics: vec![],
-    });
-    assert_eq!(plan_review.phase_role(), PhaseRole::Review);
 
     let implementation = WorkflowState::Implement(ImplementState::Implementation {
         phases: vec![],

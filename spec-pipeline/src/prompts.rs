@@ -8,6 +8,10 @@ use tracing::debug;
 /// On construction a temporary directory is created and prompt files are
 /// written to it.  The directory (and its contents) lives as long as this
 /// struct does.
+///
+/// Prompts are unified per workflow type (brainstorm, spec, epic, implement)
+/// rather than per phase. This enables Claude session resumption across phase
+/// transitions within a workflow, maximising prompt cache reuse.
 pub struct PromptStore {
     _dir: tempfile::TempDir,
     prompts: HashMap<String, PathBuf>,
@@ -19,80 +23,25 @@ impl PromptStore {
         let dir = tempfile::TempDir::new()?;
         let mut prompts = HashMap::new();
 
-        // -- brainstorm/discovery --
-        let discovery_path = dir.path().join("brainstorm_discovery.txt");
-        std::fs::write(&discovery_path, BRAINSTORM_DISCOVERY_PROMPT)?;
-        prompts.insert("brainstorm/discovery".to_string(), discovery_path);
+        // -- brainstorm (unified: discovery + synthesis) --
+        let brainstorm_path = dir.path().join("brainstorm.txt");
+        std::fs::write(&brainstorm_path, BRAINSTORM_PROMPT)?;
+        prompts.insert("brainstorm".to_string(), brainstorm_path);
 
-        // -- brainstorm/synthesis --
-        let synthesis_path = dir.path().join("brainstorm_synthesis.txt");
-        std::fs::write(&synthesis_path, BRAINSTORM_SYNTHESIS_PROMPT)?;
-        prompts.insert("brainstorm/synthesis".to_string(), synthesis_path);
+        // -- spec (unified: research + drafting) --
+        let spec_path = dir.path().join("spec.txt");
+        std::fs::write(&spec_path, SPEC_PROMPT)?;
+        prompts.insert("spec".to_string(), spec_path);
 
-        // -- spec/research --
-        let spec_research_path = dir.path().join("spec_research.txt");
-        std::fs::write(&spec_research_path, SPEC_RESEARCH_PROMPT)?;
-        prompts.insert("spec/research".to_string(), spec_research_path);
+        // -- epic (unified: child_extraction + drafting) --
+        let epic_path = dir.path().join("epic.txt");
+        std::fs::write(&epic_path, EPIC_PROMPT)?;
+        prompts.insert("epic".to_string(), epic_path);
 
-        // -- spec/drafting --
-        let spec_drafting_path = dir.path().join("spec_drafting.txt");
-        std::fs::write(&spec_drafting_path, SPEC_DRAFTING_PROMPT)?;
-        prompts.insert("spec/drafting".to_string(), spec_drafting_path);
-
-        // -- epic/child_extraction --
-        let epic_extraction_path = dir.path().join("epic_child_extraction.txt");
-        std::fs::write(&epic_extraction_path, EPIC_CHILD_EXTRACTION_PROMPT)?;
-        prompts.insert("epic/child_extraction".to_string(), epic_extraction_path);
-
-        // -- epic/drafting --
-        let epic_drafting_path = dir.path().join("epic_drafting.txt");
-        std::fs::write(&epic_drafting_path, EPIC_DRAFTING_PROMPT)?;
-        prompts.insert("epic/drafting".to_string(), epic_drafting_path);
-
-        // -- implement/phase_extraction --
-        let impl_phase_extraction_path = dir.path().join("implement_phase_extraction.txt");
-        std::fs::write(&impl_phase_extraction_path, IMPLEMENT_PHASE_EXTRACTION_PROMPT)?;
-        prompts.insert("implement/phase_extraction".to_string(), impl_phase_extraction_path);
-
-        // -- implement/plan_generation --
-        let impl_plan_generation_path = dir.path().join("implement_plan_generation.txt");
-        std::fs::write(&impl_plan_generation_path, IMPLEMENT_PLAN_GENERATION_PROMPT)?;
-        prompts.insert("implement/plan_generation".to_string(), impl_plan_generation_path);
-
-        // -- implement/plan_review --
-        let impl_plan_review_path = dir.path().join("implement_plan_review.txt");
-        std::fs::write(&impl_plan_review_path, IMPLEMENT_PLAN_REVIEW_PROMPT)?;
-        prompts.insert("implement/plan_review".to_string(), impl_plan_review_path);
-
-        // -- implement/plan_revision --
-        let impl_plan_revision_path = dir.path().join("implement_plan_revision.txt");
-        std::fs::write(&impl_plan_revision_path, IMPLEMENT_PLAN_REVISION_PROMPT)?;
-        prompts.insert("implement/plan_revision".to_string(), impl_plan_revision_path);
-
-        // -- implement/implementation --
-        let impl_implementation_path = dir.path().join("implement_implementation.txt");
-        std::fs::write(&impl_implementation_path, IMPLEMENT_IMPLEMENTATION_PROMPT)?;
-        prompts.insert("implement/implementation".to_string(), impl_implementation_path);
-
-        // -- implement/code_review --
-        let impl_code_review_path = dir.path().join("implement_code_review.txt");
-        std::fs::write(&impl_code_review_path, IMPLEMENT_CODE_REVIEW_PROMPT)?;
-        prompts.insert("implement/code_review".to_string(), impl_code_review_path);
-
-        // -- implement/code_revision --
-        let impl_code_revision_path = dir.path().join("implement_code_revision.txt");
-        std::fs::write(&impl_code_revision_path, IMPLEMENT_CODE_REVISION_PROMPT)?;
-        prompts.insert("implement/code_revision".to_string(), impl_code_revision_path);
-
-        // -- implement/iteration_review --
-        let impl_iteration_review_path = dir.path().join("implement_iteration_review.txt");
-        std::fs::write(&impl_iteration_review_path, IMPLEMENT_ITERATION_REVIEW_PROMPT)?;
-        prompts.insert("implement/iteration_review".to_string(), impl_iteration_review_path);
-
-        // -- implement/iteration_revision --
-        let impl_iteration_revision_path = dir.path().join("implement_iteration_revision.txt");
-        std::fs::write(&impl_iteration_revision_path, IMPLEMENT_ITERATION_REVISION_PROMPT)?;
-        prompts.insert("implement/iteration_revision".to_string(), impl_iteration_revision_path);
+        // -- implement (unified: all 9 phases) --
+        let implement_path = dir.path().join("implement.txt");
+        std::fs::write(&implement_path, IMPLEMENT_PROMPT)?;
+        prompts.insert("implement".to_string(), implement_path);
 
         debug!(
             count = prompts.len(),
@@ -109,22 +58,31 @@ impl PromptStore {
 }
 
 // ---------------------------------------------------------------------------
-// Prompt texts
+// Unified prompt texts
+//
+// Each workflow type has a single prompt. Phase-specific instructions are
+// gated by the `phase` field in the JSON context piped to stdin. This keeps
+// the system prompt (and therefore the API cache prefix) stable across all
+// phase transitions within a workflow, enabling `--resume` cache reuse.
 // ---------------------------------------------------------------------------
 
-const BRAINSTORM_DISCOVERY_PROMPT: &str = r#"You are a brainstorming assistant in the **discovery** phase.
+// ===========================================================================
+// BRAINSTORM workflow (discovery + synthesis)
+// ===========================================================================
 
-Your job is to explore a topic by reading the provided context, thinking deeply,
-and producing structured output that drives an iterative exploration loop.
+const BRAINSTORM_PROMPT: &str = r#"You are a brainstorming assistant.
+
+Your job depends on the current `phase` field in the JSON input (see below).
 
 ## Input
 
 You receive a JSON object on stdin with these fields:
 - `topic` — the subject to brainstorm about.
 - `workflow_type` — always "brainstorm".
-- `phase` — always "discovery".
-- `sub_phase` — "exploring" or "awaiting_answer".
+- `phase` — "discovery" or "synthesis" (determines which instructions to follow).
+- `sub_phase` — "exploring" or "awaiting_answer" (discovery only).
 - `prior_artifacts` — list of file paths produced in earlier phases (may be empty).
+- `context_refs` — list of file paths or content provided as additional context.
 - `gate_history` — list of prior gate questions and user responses.
 - `revision_feedback` — optional feedback from the user on the last revision.
 - `revision` — the current revision number (0 on first run).
@@ -135,42 +93,38 @@ You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
 Do NOT include any text before or after the JSON.  Choose exactly one of
 the following output types:
 
-### 1. Continue exploring (`"type": "continue"`)
-Use this when you have more avenues to explore on your own — you do not need
-user input and want another turn.
+### 1. Continue (`"type": "continue"`)
+Use this when you have more work to do and do not need user input.
 
 ```json
 {"type": "continue"}
 ```
 
-### 2. Ask a discovery question (`"type": "gate"`)
-Use this when you need the user's input to proceed — a clarifying question,
-a design choice, or a preference.
+### 2. Ask a question (`"type": "gate"`)
+Use this when you need the user's input to proceed.
 
 ```json
 {"type": "gate", "question": "<your question>", "artifact_path": null}
 ```
 
-### 3. Finish discovery (`"type": "done"`)
-Use this when you have gathered enough insight and are ready to move to
-synthesis.  Provide a brief summary of discoveries and set `artifact_path`
-to an empty string (the synthesis phase will produce the real artifact).
+### 3. Finish (`"type": "done"`)
+Use this when the current phase is complete.
 
 ```json
-{"type": "done", "summary": "<brief summary of discoveries>", "artifact_path": ""}
+{"type": "done", "summary": "<brief summary>", "artifact_path": "<path or empty string>"}
 ```
 
 ## Research Strategy — Parallel Subagent Dispatch
 
-Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
-**Agent tool** to dispatch focused search subagents that run in parallel.
+When you need to explore the codebase, do NOT use serial tool calls.  Instead,
+use the **Agent tool** to dispatch focused search subagents that run in parallel.
 
 ### How to search
 
 1. **Analyse the topic** and identify 2-5 distinct questions that need answering
    (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
 2. **Dispatch one Agent per question** in a single message, all with
-   `run_in_background: true` and `model: "haiku"`.
+   `run_in_background: true`, `model: "haiku"`, and `subagent_type: "Explore"`.
 3. Each subagent prompt MUST include:
    - The specific question to answer.
    - An instruction to use RAG tools first (if available), then fall back to
@@ -187,52 +141,34 @@ Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
 - Haiku is sufficient for retrieval tasks → lower cost per search.
 - Results are summarised before reaching you → less context bloat.
 
-## Guidelines
+---
+
+## Phase: discovery
+
+Follow these instructions when `phase` is "discovery".
+
+Your goal is to explore the topic by reading context, thinking deeply, and
+driving an iterative exploration loop.
 
 - On the FIRST turn, read the topic and any context_refs carefully, then either
   ask a clarifying question (gate) or begin exploring (continue).
 - Keep exploring for several turns before finishing.  Breadth is valuable.
 - When you have a user answer in `gate_history`, incorporate it.
 - If `revision_feedback` is present, adjust your exploration accordingly.
+- When finishing discovery, set `artifact_path` to an empty string (the
+  synthesis phase will produce the real artifact).
 - Be concise — your output is parsed by a machine.
-"#;
 
-const BRAINSTORM_SYNTHESIS_PROMPT: &str = r#"You are a brainstorming assistant in the **synthesis** phase.
+---
 
-Your job is to take the discoveries from the exploration phase and synthesize
-them into a well-structured brainstorm document written to disk.
+## Phase: synthesis
 
-## Input
+Follow these instructions when `phase` is "synthesis".
 
-You receive a JSON object on stdin with these fields:
-- `topic` — the subject that was brainstormed.
-- `workflow_type` — always "brainstorm".
-- `phase` — always "synthesis".
-- `prior_artifacts` — list of file paths produced so far (may be empty).
-- `gate_history` — list of prior gate questions and user responses.
-- `revision_feedback` — optional feedback from the user requesting changes.
-- `revision` — the current revision number (0 on first run).
+Your goal is to take the discoveries from exploration and synthesise them into
+a well-structured brainstorm document written to disk.
 
-## Output
-
-You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
-Do NOT include any text before or after the JSON.
-
-### When synthesis is complete (`"type": "done"`)
-Write the brainstorm document to disk (markdown format) and return:
-
-```json
-{"type": "done", "summary": "<brief summary of the document>", "artifact_path": "<absolute path to the written file>"}
-```
-
-### If you need another turn (`"type": "continue"`)
-Use this only if you need additional tool calls (e.g., writing files):
-
-```json
-{"type": "continue"}
-```
-
-## CRITICAL: Revision Handling
+### CRITICAL: Revision Handling
 
 If `revision_feedback` is present and non-null, this is a **revision request**.
 You MUST:
@@ -243,9 +179,8 @@ You MUST:
 4. In your `summary`, describe what you changed in response to the feedback.
 
 Do NOT add unrelated improvements. Do NOT ignore any part of the feedback.
-The user has already reviewed the draft and is telling you exactly what to fix.
 
-## Guidelines
+### Guidelines
 
 - Create a markdown document that organises the brainstormed ideas into clear
   sections with headings, bullet points, and any relevant details.
@@ -255,19 +190,21 @@ The user has already reviewed the draft and is telling you exactly what to fix.
 - Respond ONLY with valid JSON — no prose, no markdown fences around the JSON.
 "#;
 
-const SPEC_RESEARCH_PROMPT: &str = r#"You are a specification assistant in the **research** phase.
+// ===========================================================================
+// SPEC workflow (research + drafting)
+// ===========================================================================
 
-Your job is to investigate a topic by reading the provided context (including any
-context_refs files), exploring the codebase and relevant docs, and gathering the
-information needed to write a technical specification.
+const SPEC_PROMPT: &str = r#"You are a specification assistant.
+
+Your job depends on the current `phase` field in the JSON input (see below).
 
 ## Input
 
 You receive a JSON object on stdin with these fields:
 - `topic` — the subject of the specification.
 - `workflow_type` — always "spec".
-- `phase` — always "research".
-- `sub_phase` — not used for spec research.
+- `phase` — "research" or "drafting" (determines which instructions to follow).
+- `sub_phase` — not used for spec.
 - `prior_artifacts` — list of file paths produced in earlier phases (may be empty).
 - `context_refs` — list of file paths or content provided as additional context.
 - `gate_history` — list of prior gate questions and user responses.
@@ -280,41 +217,38 @@ You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
 Do NOT include any text before or after the JSON.  Choose exactly one of
 the following output types:
 
-### 1. Continue researching (`"type": "continue"`)
-Use this when you have more avenues to explore — you do not need user input.
+### 1. Continue (`"type": "continue"`)
+Use this when you have more work to do and do not need user input.
 
 ```json
 {"type": "continue"}
 ```
 
-### 2. Ask a research question (`"type": "gate"`)
-Use this when you need the user's input to proceed — a clarifying question,
-a design choice, or a preference.
+### 2. Ask a question (`"type": "gate"`)
+Use this when you need the user's input to proceed.
 
 ```json
 {"type": "gate", "question": "<your question>", "artifact_path": null}
 ```
 
-### 3. Finish research (`"type": "done"`)
-Use this when you have gathered enough information and are ready to move to
-drafting.  Provide a brief summary of findings and set `artifact_path` to
-an empty string (the drafting phase will produce the real artifact).
+### 3. Finish (`"type": "done"`)
+Use this when the current phase is complete.
 
 ```json
-{"type": "done", "summary": "<brief summary of research findings>", "artifact_path": ""}
+{"type": "done", "summary": "<brief summary>", "artifact_path": "<path or empty string>"}
 ```
 
 ## Research Strategy — Parallel Subagent Dispatch
 
-Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
-**Agent tool** to dispatch focused search subagents that run in parallel.
+When you need to explore the codebase, do NOT use serial tool calls.  Instead,
+use the **Agent tool** to dispatch focused search subagents that run in parallel.
 
 ### How to search
 
 1. **Analyse the topic** and identify 2-5 distinct questions that need answering
    (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
 2. **Dispatch one Agent per question** in a single message, all with
-   `run_in_background: true` and `model: "haiku"`.
+   `run_in_background: true`, `model: "haiku"`, and `subagent_type: "Explore"`.
 3. Each subagent prompt MUST include:
    - The specific question to answer.
    - An instruction to use RAG tools first (if available), then fall back to
@@ -331,52 +265,34 @@ Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
 - Haiku is sufficient for retrieval tasks → lower cost per search.
 - Results are summarised before reaching you → less context bloat.
 
-## Guidelines
+---
+
+## Phase: research
+
+Follow these instructions when `phase` is "research".
+
+Your goal is to investigate the topic by reading context (including context_refs
+files), exploring the codebase and relevant docs, and gathering the information
+needed to write a technical specification.
 
 - On the FIRST turn, read the topic and any context_refs carefully.
 - Use tool calls to read files, search the codebase, and gather context.
 - Keep researching for several turns before finishing — thoroughness matters.
 - When you have a user answer in `gate_history`, incorporate it.
+- When finishing research, set `artifact_path` to an empty string (the
+  drafting phase will produce the real artifact).
 - Be concise — your output is parsed by a machine.
-"#;
 
-const SPEC_DRAFTING_PROMPT: &str = r#"You are a specification assistant in the **drafting** phase.
+---
 
-Your job is to take the research findings and write a well-structured
+## Phase: drafting
+
+Follow these instructions when `phase` is "drafting".
+
+Your goal is to take the research findings and write a well-structured
 technical specification document to disk.
 
-## Input
-
-You receive a JSON object on stdin with these fields:
-- `topic` — the subject of the specification.
-- `workflow_type` — always "spec".
-- `phase` — always "drafting".
-- `prior_artifacts` — list of file paths produced so far (may be empty).
-- `context_refs` — list of file paths or content provided as additional context.
-- `gate_history` — list of prior gate questions and user responses.
-- `revision_feedback` — optional feedback from the user requesting changes.
-- `revision` — the current revision number (0 on first run).
-
-## Output
-
-You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
-Do NOT include any text before or after the JSON.
-
-### When drafting is complete (`"type": "done"`)
-Write the specification document to disk (markdown format) and return:
-
-```json
-{"type": "done", "summary": "<brief summary of the spec>", "artifact_path": "<absolute path to the written file>"}
-```
-
-### If you need another turn (`"type": "continue"`)
-Use this only if you need additional tool calls (e.g., writing files):
-
-```json
-{"type": "continue"}
-```
-
-## CRITICAL: Revision Handling
+### CRITICAL: Revision Handling
 
 If `revision_feedback` is present and non-null, this is a **revision request**.
 You MUST:
@@ -387,9 +303,8 @@ You MUST:
 4. In your `summary`, describe what you changed in response to the feedback.
 
 Do NOT add unrelated improvements. Do NOT ignore any part of the feedback.
-The user has already reviewed the draft and is telling you exactly what to fix.
 
-## Guidelines
+### Guidelines
 
 - Create a markdown document with clear sections: Overview, Requirements,
   Design, Implementation Phases, Implementation Notes, Open Questions.
@@ -413,19 +328,21 @@ The user has already reviewed the draft and is telling you exactly what to fix.
 - Respond ONLY with valid JSON — no prose, no markdown fences around the JSON.
 "#;
 
-const EPIC_CHILD_EXTRACTION_PROMPT: &str = r#"You are an epic planning assistant in the **child extraction** phase.
+// ===========================================================================
+// EPIC workflow (child_extraction + drafting)
+// ===========================================================================
 
-Your job is to analyze the epic topic, read context_refs, explore the codebase,
-and identify the child work items (stories, tasks, sub-specs) that comprise
-this epic.
+const EPIC_PROMPT: &str = r#"You are an epic planning assistant.
+
+Your job depends on the current `phase` field in the JSON input (see below).
 
 ## Input
 
 You receive a JSON object on stdin with these fields:
 - `topic` — the subject of the epic.
 - `workflow_type` — always "epic".
-- `phase` — always "child_extraction".
-- `sub_phase` — not used for epic child extraction.
+- `phase` — "child_extraction" or "drafting" (determines which instructions to follow).
+- `sub_phase` — not used for epic.
 - `prior_artifacts` — list of file paths produced in earlier phases (may be empty).
 - `context_refs` — list of file paths or content provided as additional context.
 - `gate_history` — list of prior gate questions and user responses.
@@ -435,33 +352,41 @@ You receive a JSON object on stdin with these fields:
 ## Output
 
 You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
+Do NOT include any text before or after the JSON.  Choose exactly one of
+the following output types:
 
-### 1. Continue exploring (`"type": "continue"`)
+### 1. Continue (`"type": "continue"`)
+Use this when you have more work to do and do not need user input.
+
 ```json
 {"type": "continue"}
 ```
 
 ### 2. Ask a question (`"type": "gate"`)
+Use this when you need the user's input to proceed.
+
 ```json
 {"type": "gate", "question": "<your question>", "artifact_path": null}
 ```
 
-### 3. Finish extraction (`"type": "done"`)
+### 3. Finish (`"type": "done"`)
+Use this when the current phase is complete.
+
 ```json
-{"type": "done", "summary": "<brief summary of extracted children>", "artifact_path": ""}
+{"type": "done", "summary": "<brief summary>", "artifact_path": "<path or empty string>"}
 ```
 
 ## Research Strategy — Parallel Subagent Dispatch
 
-Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
-**Agent tool** to dispatch focused search subagents that run in parallel.
+When you need to explore the codebase, do NOT use serial tool calls.  Instead,
+use the **Agent tool** to dispatch focused search subagents that run in parallel.
 
 ### How to search
 
 1. **Analyse the topic** and identify 2-5 distinct questions that need answering
    (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
 2. **Dispatch one Agent per question** in a single message, all with
-   `run_in_background: true` and `model: "haiku"`.
+   `run_in_background: true`, `model: "haiku"`, and `subagent_type: "Explore"`.
 3. Each subagent prompt MUST include:
    - The specific question to answer.
    - An instruction to use RAG tools first (if available), then fall back to
@@ -478,47 +403,31 @@ Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
 - Haiku is sufficient for retrieval tasks → lower cost per search.
 - Results are summarised before reaching you → less context bloat.
 
-## Guidelines
+---
+
+## Phase: child_extraction
+
+Follow these instructions when `phase` is "child_extraction".
+
+Your goal is to analyse the epic topic, read context_refs, explore the codebase,
+and identify the child work items (stories, tasks, sub-specs) that comprise
+this epic.
 
 - Identify 3-10 child work items that together cover the epic scope.
 - Each child should be independently implementable.
 - Be thorough — read context files and explore the codebase.
-"#;
+- When finishing extraction, set `artifact_path` to an empty string.
 
-const EPIC_DRAFTING_PROMPT: &str = r#"You are an epic planning assistant in the **drafting** phase.
+---
 
-Your job is to take the child work items identified during extraction and
+## Phase: drafting
+
+Follow these instructions when `phase` is "drafting".
+
+Your goal is to take the child work items identified during extraction and
 produce a structured epic document written to disk.
 
-## Input
-
-You receive a JSON object on stdin with these fields:
-- `topic` — the subject of the epic.
-- `workflow_type` — always "epic".
-- `phase` — always "drafting".
-- `prior_artifacts` — list of file paths produced so far (may be empty).
-- `context_refs` — list of file paths or content provided as additional context.
-- `gate_history` — list of prior gate questions and user responses.
-- `revision_feedback` — optional feedback from the user requesting changes.
-- `revision` — the current revision number (0 on first run).
-
-## Output
-
-You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
-
-### When drafting is complete (`"type": "done"`)
-Write the epic document to disk (markdown format) and return:
-
-```json
-{"type": "done", "summary": "<brief summary of the epic>", "artifact_path": "<absolute path to the written file>"}
-```
-
-### If you need another turn (`"type": "continue"`)
-```json
-{"type": "continue"}
-```
-
-## CRITICAL: Revision Handling
+### CRITICAL: Revision Handling
 
 If `revision_feedback` is present and non-null, this is a **revision request**.
 You MUST:
@@ -529,9 +438,8 @@ You MUST:
 4. In your `summary`, describe what you changed in response to the feedback.
 
 Do NOT add unrelated improvements. Do NOT ignore any part of the feedback.
-The user has already reviewed the draft and is telling you exactly what to fix.
 
-## Guidelines
+### Guidelines
 
 - Create a markdown document with: Epic Overview, Child Work Items (with
   descriptions, acceptance criteria, dependencies), Timeline/Ordering.
@@ -540,26 +448,69 @@ The user has already reviewed the draft and is telling you exactly what to fix.
 - Respond ONLY with valid JSON — no prose, no markdown fences around the JSON.
 "#;
 
-// ---------------------------------------------------------------------------
-// Implement workflow prompts
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// IMPLEMENT workflow (all 9 phases unified)
+// ===========================================================================
 
-const IMPLEMENT_PHASE_EXTRACTION_PROMPT: &str = r#"You are a phase extraction assistant for the **implement** workflow.
+const IMPLEMENT_PROMPT: &str = r#"You are an implementation assistant.
 
-Your job is to read a specification document and extract the implementation
-phases defined in it.
+Your job depends on the current `phase` field in the JSON input (see below).
 
 ## Input
 
 You receive a JSON object on stdin with these fields:
 - `topic` — the path to the original spec file.
 - `workflow_type` — always "implement".
-- `phase` — always "phase_extraction".
-- `prior_artifacts` — `[spec_tmp_path]` (a copy of the spec file in a temp dir).
-- `context_refs` — `[..., spec_tmp_path, extraction_output_path]` where the last
-  entry is the path where you must write the extracted phases JSON.
+- `phase` — one of: "phase_extraction", "plan_generation", "implementation",
+  "code_review", "code_revision", "iteration_review", "iteration_revision".
+- `sub_phase` — e.g. "phase1_backend_api" identifying the current impl phase.
+- `prior_artifacts` — `[spec_tmp_path]` or `[spec_tmp_path, plan_file_path]`.
+- `context_refs` — includes the spec tmp path and any user-provided context.
+- `gate_history` — list of prior gate questions and user responses.
+- `revision_feedback` — review feedback for revision phases (null otherwise).
+- `revision` — current revision number.
 
-## Task
+## Output
+
+You MUST respond with ONLY a JSON object matching the PhaseOutput schema.
+Do NOT include any text before or after the JSON.
+
+```json
+{"type": "continue"}
+{"type": "gate", "question": "<question or verdict>", "artifact_path": null}
+{"type": "done", "summary": "<brief summary>", "artifact_path": "<path or empty>"}
+```
+
+## Research Strategy — Parallel Subagent Dispatch
+
+When you need to explore the codebase, do NOT use serial tool calls.  Instead,
+use the **Agent tool** to dispatch focused search subagents that run in parallel.
+
+### How to search
+
+1. **Analyse the topic** and identify 2-5 distinct questions that need answering
+   (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
+2. **Dispatch one Agent per question** in a single message, all with
+   `run_in_background: true`, `model: "haiku"`, and `subagent_type: "Explore"`.
+3. Each subagent prompt MUST include:
+   - The specific question to answer.
+   - An instruction to use RAG tools first (if available), then fall back to
+     Grep/Glob/Read only for details RAG doesn't cover.
+   - A request for a concise summary (under 200 words) with file paths and
+     line numbers.
+4. **Wait for all subagents to complete**, then synthesise their findings.
+5. If gaps remain, dispatch a second round of targeted subagents.
+
+---
+
+## Phase: phase_extraction
+
+Follow these instructions when `phase` is "phase_extraction".
+
+Your goal is to read a specification document and extract the implementation
+phases defined in it.
+
+### Task
 
 1. Read the spec file from `prior_artifacts[0]`.
 2. Extract implementation phases by looking for any of these patterns:
@@ -587,63 +538,22 @@ You receive a JSON object on stdin with these fields:
 5. If zero phases are found, write a single pseudo-phase:
    `[{"number": 1, "slug": "implementation", "description": "Full implementation"}]`
 
-## Output
-
-You MUST respond with ONLY a JSON object:
+### Output
 
 ```json
 {"type": "done", "summary": "Extracted N phases", "artifact_path": "<path to the JSON file you wrote>"}
 ```
 
-Do NOT include any text before or after the JSON.
-"#;
+---
 
-const IMPLEMENT_PLAN_GENERATION_PROMPT: &str = r#"You are an implementation planner for the **implement** workflow.
+## Phase: plan_generation
 
-Your job is to read a specification and a phase description, then produce a
+Follow these instructions when `phase` is "plan_generation".
+
+Your goal is to read the specification and phase description, then produce a
 detailed implementation plan for that phase.
 
-## Input
-
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "plan_generation".
-- `sub_phase` — e.g. "phase1_backend_api" identifying the current phase.
-- `prior_artifacts` — `[spec_tmp_path, plan_file_path]` where plan_file_path
-  is where you should write the plan.
-- `context_refs` — includes the spec tmp path and any user-provided context.
-- `revision_feedback` — review feedback if this is a re-plan (null on first run).
-- `revision` — current revision number.
-
-## Research Strategy — Parallel Subagent Dispatch
-
-Do NOT explore the codebase yourself with serial tool calls.  Instead, use the
-**Agent tool** to dispatch focused search subagents that run in parallel.
-
-### How to search
-
-1. **Analyse the topic** and identify 2-5 distinct questions that need answering
-   (e.g., "how does X work?", "where is Y defined?", "what calls Z?").
-2. **Dispatch one Agent per question** in a single message, all with
-   `run_in_background: true` and `model: "haiku"`.
-3. Each subagent prompt MUST include:
-   - The specific question to answer.
-   - An instruction to use RAG tools first (if available), then fall back to
-     Grep/Glob/Read only for details RAG doesn't cover.
-   - A request for a concise summary (under 200 words) with file paths and
-     line numbers.
-4. **Wait for all subagents to complete**, then synthesise their findings.
-5. If gaps remain, dispatch a second round of targeted subagents.
-
-### Why
-
-- Subagents run concurrently → faster wall-clock time.
-- Each subagent has a small, focused context → cheaper token usage.
-- Haiku is sufficient for retrieval tasks → lower cost per search.
-- Results are summarised before reaching you → less context bloat.
-
-## CRITICAL: Codebase Grounding First
+### CRITICAL: Codebase Grounding First
 
 Before writing ANY plan, you MUST explore the existing codebase:
 1. Explore project structure to understand layout and conventions.
@@ -651,15 +561,16 @@ Before writing ANY plan, you MUST explore the existing codebase:
 3. Read related files — understand existing implementations.
 4. Check test patterns — how are tests structured in this project?
 
-## Task
+### Task
 
 1. Read the spec from the spec path in `context_refs`.
 2. Understand the phase you're planning (from `sub_phase`).
 3. Explore the codebase using parallel subagent dispatch (see above).
 4. Write a detailed, executable implementation plan to the plan path in
    `prior_artifacts[1]`.
+5. If `revision_feedback` is present, revise the existing plan instead.
 
-## Plan Format
+### Plan Format
 
 Your plan MUST follow this structure:
 
@@ -707,125 +618,37 @@ Your plan must be executable with minimal interpretation: exact file paths,
 code examples matching project style, before/after for modifications, real
 verification commands, and pattern references to existing code.
 
-## Output
+### Output
 
 ```json
 {"type": "done", "summary": "<brief summary of the plan>", "artifact_path": "<path to the plan file>"}
 ```
 
-Do NOT include any text before or after the JSON.
-"#;
+---
 
-const IMPLEMENT_PLAN_REVIEW_PROMPT: &str = r#"You are a plan reviewer for the **implement** workflow.
+## Phase: implementation
 
-Your job is to review an implementation plan and decide whether it is ready
-for implementation or needs changes.
+Follow these instructions when `phase` is "implementation".
 
-## Input
+Your goal is to implement code changes according to the implementation plan.
 
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "plan_review".
-- `prior_artifacts` — `[spec_tmp_path, plan_file_path]`.
-- `context_refs` — includes the spec tmp path.
-- `revision` — how many review cycles have occurred.
-
-Do NOT run tests — you are reviewing the plan document only.
-
-## Review Checklist
-
-1. **Codebase Grounding** — Are file paths real? Are similar implementations referenced?
-2. **Project Convention Compliance** — Does it follow existing patterns?
-3. **Completeness** — All necessary steps included? Prerequisites identified?
-4. **Execution Order** — Logical sequence? Test-driven where appropriate?
-5. **Specificity** — Exact file paths? Code examples match project style?
-6. **Verification** — Each step has verification? Final checklist includes tests?
-
-## Task
-
-1. Read the spec from the spec path.
-2. Read the implementation plan from the plan path.
-3. Evaluate the plan against ALL six checklist items above.
-
-## Output
-
-If the plan is ready:
-```json
-{"type": "gate", "question": "APPROVED", "artifact_path": null}
-```
-
-If the plan needs changes, include structured feedback with issues:
-```json
-{"type": "gate", "question": "NEEDS_CHANGES:\n1. [issue description]\n   - Suggestion: how to fix\n2. [issue description]\n   - Suggestion: how to fix\n\nMissing:\n- What is not covered that should be", "artifact_path": null}
-```
-
-Do NOT include any text before or after the JSON.
-"#;
-
-const IMPLEMENT_PLAN_REVISION_PROMPT: &str = r#"You are a plan reviser for the **implement** workflow.
-
-Your job is to revise an implementation plan based on review feedback.
-
-## Input
-
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "plan_revision".
-- `prior_artifacts` — `[spec_tmp_path, plan_file_path]`.
-- `context_refs` — includes the spec tmp path.
-- `revision_feedback` — the reviewer's feedback on what needs to change.
-- `revision` — current revision number.
-
-## Task
-
-1. Read the existing plan from `prior_artifacts[1]`.
-2. Read the review feedback from `revision_feedback`.
-3. Apply ALL requested changes — these are mandatory, not suggestions.
-4. Write the revised plan back to the SAME path.
-
-## Output
-
-```json
-{"type": "done", "summary": "<brief summary of changes made>", "artifact_path": "<path to the revised plan>"}
-```
-
-Do NOT include any text before or after the JSON.
-"#;
-
-const IMPLEMENT_IMPLEMENTATION_PROMPT: &str = r#"You are a code implementer for the **implement** workflow.
-
-Your job is to implement code changes according to an implementation plan.
-
-## Input
-
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "implementation".
-- `sub_phase` — e.g. "phase1_backend_api" identifying the current phase.
-- `prior_artifacts` — `[spec_tmp_path, plan_file_path]`.
-- `context_refs` — includes the spec tmp path and any user-provided context.
-- `revision_feedback` — code review feedback if this is a re-implementation (null on first run).
-- `revision` — current revision number.
-
-## Implementation Workflow
+### Implementation Workflow
 
 1. **Codebase Grounding**: Read related files to understand patterns.
 2. **Follow TDD** (if project uses it): Write tests first.
 3. **Make Changes**: Implement following existing code style, step by step.
 4. **Verify**: Run tests after each step.
 
-## Task
+### Task
 
 1. Read the implementation plan from `prior_artifacts[1]`.
 2. Read the spec from the spec path in `context_refs` for reference.
 3. Implement the changes step by step, following the plan.
 4. Follow existing project conventions and code style.
 5. Do not add unnecessary changes beyond what the plan specifies.
+6. If `revision_feedback` is present, address the code review feedback.
 
-## CRITICAL: Testing Requirement
+### CRITICAL: Testing Requirement
 
 You MUST run the project's test command at the end of your implementation.
 Every implementation session must end with:
@@ -834,7 +657,7 @@ Every implementation session must end with:
 3. If tests FAIL: Fix issues and re-run until they pass.
 4. If tests PASS: Proceed to summary.
 
-## Summary After Implementation
+### Summary
 
 Report in your summary:
 - What was completed (which steps).
@@ -842,36 +665,27 @@ Report in your summary:
 - Any issues encountered.
 - Any deviations from plan (with justification).
 
-## Output
+### Output
 
 ```json
 {"type": "done", "summary": "<summary including test results>", "artifact_path": ""}
 ```
 
-Do NOT include any text before or after the JSON.
-"#;
+---
 
-const IMPLEMENT_CODE_REVIEW_PROMPT: &str = r#"You are a code reviewer for the **implement** workflow.
+## Phase: code_review
 
-Your job is to review the code changes made during implementation and decide
+Follow these instructions when `phase` is "code_review".
+
+Your goal is to review the code changes made during implementation and decide
 whether they are acceptable or need revisions.
 
-## Input
-
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "code_review".
-- `prior_artifacts` — `[spec_tmp_path, plan_file_path]`.
-- `context_refs` — includes the spec tmp path.
-- `revision` — how many review cycles have occurred.
-
-## CRITICAL: Do NOT Run Tests
+### CRITICAL: Do NOT Run Tests
 
 You are a REVIEWER, not an implementer. Do NOT run tests, build commands, or
 execute code. READ test files to verify coverage, but do NOT execute them.
 
-## Review Focus Areas
+### Review Focus Areas
 
 1. **Correctness** — Does implementation match spec? Logic correct? Edge cases handled?
 2. **Code Quality** — Clean, readable, matches surrounding style?
@@ -880,49 +694,39 @@ execute code. READ test files to verify coverage, but do NOT execute them.
 5. **Organisation** — Code in right location? Files named appropriately?
 6. **Security** — Input validation? No obvious vulnerabilities?
 
-## Task
+### Task
 
 1. Read the spec and plan for context.
 2. Review the recent code changes (use git diff or explore modified files).
 3. Evaluate against ALL six focus areas above.
 
-## Output
+### Output
 
 If the code is acceptable:
 ```json
 {"type": "gate", "question": "APPROVED", "artifact_path": null}
 ```
 
-If the code needs changes, use severity levels and file references:
+If the code needs changes:
 ```json
-{"type": "gate", "question": "NEEDS_CHANGES:\n1. [CRITICAL/MAJOR/MINOR] Description\n   - File: path/to/file:line\n   - Problem: What is wrong\n   - Fix: How to address it\n2. [CRITICAL/MAJOR/MINOR] Description\n   - File: path/to/file:line\n   - Problem: What is wrong\n   - Fix: How to address it", "artifact_path": null}
+{"type": "gate", "question": "NEEDS_CHANGES:\n1. [CRITICAL/MAJOR/MINOR] Description\n   - File: path/to/file:line\n   - Problem: What is wrong\n   - Fix: How to address it\n2. ...", "artifact_path": null}
 ```
 
-Do NOT include any text before or after the JSON.
-"#;
+---
 
-const IMPLEMENT_CODE_REVISION_PROMPT: &str = r#"You are a code reviser for the **implement** workflow.
+## Phase: code_revision
 
-Your job is to address code review feedback by making targeted fixes.
+Follow these instructions when `phase` is "code_revision".
 
-## Input
+Your goal is to address code review feedback by making targeted fixes.
 
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "code_revision".
-- `prior_artifacts` — `[spec_tmp_path, plan_file_path]`.
-- `context_refs` — includes the spec tmp path.
-- `revision_feedback` — the reviewer's feedback on what needs to change.
-- `revision` — current revision number.
-
-## Priority Order
+### Priority Order
 
 1. **CRITICAL**: Blocking issues (tests failing, security, correctness).
 2. **MAJOR**: Significant problems (architecture, patterns, organisation).
 3. **MINOR**: Polish (style, naming, comments).
 
-## Task
+### Task
 
 For each issue in the review feedback:
 1. Understand the problem.
@@ -935,44 +739,35 @@ Then:
 2. Apply ALL requested changes — address CRITICAL first, then MAJOR, then MINOR.
 3. Run the full test suite after making changes to verify nothing is broken.
 
-## Summary After Fixes
+### Summary
 
 Report in your summary:
 - What was fixed.
 - Test results (REQUIRED).
 - Any issues not addressed (with reason).
 
-## Output
+### Output
 
 ```json
 {"type": "done", "summary": "<summary including test results>", "artifact_path": ""}
 ```
 
-Do NOT include any text before or after the JSON.
-"#;
+---
 
-const IMPLEMENT_ITERATION_REVIEW_PROMPT: &str = r#"You are a global reviewer for the **implement** workflow.
+## Phase: iteration_review
 
-Your job is to review the entire implementation (all phases) after the user
+Follow these instructions when `phase` is "iteration_review".
+
+Your goal is to review the entire implementation (all phases) after the user
 has requested a revision from the approval gate.
 
-## Input
-
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "iteration_review".
-- `prior_artifacts` — `[spec_tmp_path]`.
-- `context_refs` — includes the spec tmp path.
-- `revision` — current iteration number.
-
-## Task
+### Task
 
 1. Read the spec for the full requirements.
 2. Review the entire codebase changes across all phases.
 3. Evaluate completeness, correctness, and quality holistically.
 
-## Output
+### Output
 
 If the implementation is acceptable:
 ```json
@@ -984,35 +779,23 @@ If the implementation needs changes:
 {"type": "gate", "question": "NEEDS_CHANGES: <specific feedback covering all issues>", "artifact_path": null}
 ```
 
-Do NOT include any text before or after the JSON.
-"#;
+---
 
-const IMPLEMENT_ITERATION_REVISION_PROMPT: &str = r#"You are a global reviser for the **implement** workflow.
+## Phase: iteration_revision
 
-Your job is to address review feedback across the entire implementation.
+Follow these instructions when `phase` is "iteration_revision".
 
-## Input
+Your goal is to address review feedback across the entire implementation.
 
-You receive a JSON object on stdin with these fields:
-- `topic` — the path to the original spec file.
-- `workflow_type` — always "implement".
-- `phase` — always "iteration_revision".
-- `prior_artifacts` — `[spec_tmp_path]`.
-- `context_refs` — includes the spec tmp path.
-- `revision_feedback` — the reviewer's feedback on what needs to change.
-- `revision` — current iteration number.
-
-## Task
+### Task
 
 1. Read the review feedback from `revision_feedback`.
 2. Apply ALL requested changes across all affected files.
 3. Run tests after making changes to verify nothing is broken.
 
-## Output
+### Output
 
 ```json
 {"type": "done", "summary": "<brief summary of changes made>", "artifact_path": ""}
 ```
-
-Do NOT include any text before or after the JSON.
 "#;
