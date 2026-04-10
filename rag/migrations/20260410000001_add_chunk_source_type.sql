@@ -1,0 +1,1 @@
+ALTER TABLE chunks ADD COLUMN source_type TEXT NOT NULL DEFAULT 'text';

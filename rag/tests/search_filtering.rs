@@ -40,6 +40,7 @@ async fn insert_source_with_chunk(
         content: content.to_string(),
         embedding,
         metadata: json!({}),
+        source_type: "text".into(),
     };
     queries::insert_chunks(pool, &[chunk]).await.unwrap();
     source_id

@@ -46,9 +46,14 @@ pub type ProgressCallback = Arc<dyn Fn(f64, Option<f64>, &str) + Send + Sync>;
 
 struct PreparedFile {
     relative_path: String,
-    content: String,
+    content: FileContent,
     content_type: String,
     content_hash: String,
+}
+
+enum FileContent {
+    Text(String),
+    PdfBytes(Vec<u8>),
 }
 
 enum FileAction {
@@ -190,12 +195,31 @@ impl DirectoryIngestPipeline {
                 }
             };
 
+            let content_type = infer_content_type(&rel_str).to_string();
+
+            if is_pdf_file(&rel_str) {
+                // PDF path: keep raw bytes, skip binary/UTF-8 checks
+                if raw_bytes.is_empty() {
+                    summary.skipped_empty += 1;
+                    continue;
+                }
+                let hash = content_hash_bytes(&raw_bytes);
+                prepared.push(PreparedFile {
+                    relative_path: rel_str,
+                    content: FileContent::PdfBytes(raw_bytes),
+                    content_type,
+                    content_hash: hash,
+                });
+                continue;
+            }
+
+            // Text path: existing behaviour
             if is_binary(&raw_bytes) {
                 summary.skipped_binary += 1;
                 continue;
             }
 
-            let content = match String::from_utf8(raw_bytes) {
+            let text_content = match String::from_utf8(raw_bytes) {
                 Ok(s) => s,
                 Err(e) => {
                     summary.failed += 1;
@@ -207,17 +231,16 @@ impl DirectoryIngestPipeline {
                 }
             };
 
-            if content.trim().is_empty() {
+            if text_content.trim().is_empty() {
                 summary.skipped_empty += 1;
                 continue;
             }
 
-            let content_type = infer_content_type(&rel_str).to_string();
-            let hash = content_hash(&content);
+            let hash = content_hash(&text_content);
 
             prepared.push(PreparedFile {
                 relative_path: rel_str,
-                content,
+                content: FileContent::Text(text_content),
                 content_type,
                 content_hash: hash,
             });
@@ -320,8 +343,21 @@ impl DirectoryIngestPipeline {
             };
             let _ = meta; // used later during conversion
 
-            let new_hashes =
-                chunk_and_hash(&file.content, &file.relative_path, &file.content_type, &chunk_config);
+            let new_hashes = match &file.content {
+                FileContent::Text(text) => {
+                    chunk_and_hash(text, &file.relative_path, &file.content_type, &chunk_config)
+                }
+                FileContent::PdfBytes(bytes) => {
+                    // For PDF rename detection, hash the raw bytes as a single chunk.
+                    // Full PDF re-chunking would require the PdfExtractor which is async;
+                    // using a raw-bytes hash is sufficient for detecting exact renames.
+                    let mut set = HashSet::new();
+                    set.insert(hash_chunk_content(
+                        &format!("pdf:{}", content_hash_bytes(bytes)),
+                    ));
+                    set
+                }
+            };
 
             let mut best_match: Option<(uuid::Uuid, f64)> = None;
             for orphan in &orphans {
@@ -367,7 +403,7 @@ impl DirectoryIngestPipeline {
                 FileAction::New(
                     PreparedFile {
                         relative_path: String::new(),
-                        content: String::new(),
+                        content: FileContent::Text(String::new()),
                         content_type: String::new(),
                         content_hash: String::new(),
                     },
@@ -405,41 +441,76 @@ impl DirectoryIngestPipeline {
         let project_clone = project.clone();
         let pool = self.pool.clone();
         let storage = self.ingest.storage().cloned();
+        let delete = self.delete.clone();
         let mut result_stream = stream::iter(actions)
             .map(move |action| {
                 let ingest = self.ingest.clone();
+                let delete = delete.clone();
                 let project = project_clone.clone();
                 let pool = pool.clone();
                 let storage = storage.clone();
                 async move {
                     match action {
-                        FileAction::New(file, meta) => ingest
-                            .ingest(
-                                &file.content,
-                                &file.relative_path,
-                                &file.content_type,
-                                meta,
-                                project,
-                                None,
-                            )
-                            .await
-                            .map(|_| ActionResult::Ingested)
-                            .map_err(|e| (file.relative_path, e.to_string())),
+                        FileAction::New(file, meta) => match file.content {
+                            FileContent::PdfBytes(ref bytes) => ingest
+                                .ingest_pdf(
+                                    bytes,
+                                    &file.relative_path,
+                                    meta,
+                                    project,
+                                    None,
+                                )
+                                .await
+                                .map(|_| ActionResult::Ingested)
+                                .map_err(|e| (file.relative_path, e.to_string())),
+                            FileContent::Text(ref text) => ingest
+                                .ingest(
+                                    text,
+                                    &file.relative_path,
+                                    &file.content_type,
+                                    meta,
+                                    project,
+                                    None,
+                                )
+                                .await
+                                .map(|_| ActionResult::Ingested)
+                                .map_err(|e| (file.relative_path, e.to_string())),
+                        },
                         FileAction::Update {
                             file,
                             metadata: meta,
                             old_source,
-                        } => ingest
-                            .update_in_place(
-                                &old_source,
-                                &file.content,
-                                &file.content_type,
-                                meta,
-                                project,
-                            )
-                            .await
-                            .map(|_| ActionResult::Ingested)
-                            .map_err(|e| (file.relative_path, e.to_string())),
+                        } => match file.content {
+                            FileContent::PdfBytes(ref bytes) => {
+                                // For PDFs, delete old chunks and re-ingest
+                                // (update_in_place doesn't support PDF metadata)
+                                if let Err(e) = delete.delete(old_source.id).await {
+                                    return Err((file.relative_path, e.to_string()));
+                                }
+                                ingest
+                                    .ingest_pdf(
+                                        bytes,
+                                        &file.relative_path,
+                                        meta,
+                                        project,
+                                        None,
+                                    )
+                                    .await
+                                    .map(|_| ActionResult::Ingested)
+                                    .map_err(|e| (file.relative_path, e.to_string()))
+                            }
+                            FileContent::Text(ref text) => ingest
+                                .update_in_place(
+                                    &old_source,
+                                    text,
+                                    &file.content_type,
+                                    meta,
+                                    project,
+                                )
+                                .await
+                                .map(|_| ActionResult::Ingested)
+                                .map_err(|e| (file.relative_path, e.to_string())),
+                        },
                         FileAction::Rename {
                             file,
                             metadata: meta,
@@ -459,7 +530,10 @@ impl DirectoryIngestPipeline {
                             }
                             // PUT new content to S3 under orphan's existing key
                             if let Some(ref storage) = storage {
-                                let data = Bytes::from(file.content.into_bytes());
+                                let data = match &file.content {
+                                    FileContent::Text(text) => Bytes::from(text.clone().into_bytes()),
+                                    FileContent::PdfBytes(bytes) => Bytes::from(bytes.clone()),
+                                };
                                 if let Err(e) =
                                     storage.put_object(&orphan_source.s3_key, data, &file.content_type).await
                                 {
@@ -473,32 +547,57 @@ impl DirectoryIngestPipeline {
                             metadata: meta,
                             orphan_source,
                         } => {
-                            // Rename the source first
-                            if let Err(e) = queries::rename_source(
-                                &pool,
-                                orphan_source.id,
-                                &file.relative_path,
-                                &meta,
-                                &file.content_type,
-                            )
-                            .await
-                            {
-                                return Err((file.relative_path, e.to_string()));
+                            match file.content {
+                                FileContent::PdfBytes(ref bytes) => {
+                                    // Delete old, ingest new
+                                    if let Err(e) = delete.delete(orphan_source.id).await {
+                                        return Err((file.relative_path, e.to_string()));
+                                    }
+                                    ingest
+                                        .ingest_pdf(
+                                            bytes,
+                                            &file.relative_path,
+                                            meta,
+                                            project,
+                                            None,
+                                        )
+                                        .await
+                                        .map(|_| ActionResult::Renamed)
+                                        .map_err(|e| (file.relative_path, e.to_string()))
+                                }
+                                FileContent::Text(ref _text) => {
+                                    // Rename the source first
+                                    if let Err(e) = queries::rename_source(
+                                        &pool,
+                                        orphan_source.id,
+                                        &file.relative_path,
+                                        &meta,
+                                        &file.content_type,
+                                    )
+                                    .await
+                                    {
+                                        return Err((file.relative_path, e.to_string()));
+                                    }
+                                    // Then update content in place (re-chunk + re-embed changed chunks)
+                                    let mut renamed_source = orphan_source;
+                                    renamed_source.filename = file.relative_path.clone();
+                                    let text = match &file.content {
+                                        FileContent::Text(t) => t.as_str(),
+                                        _ => unreachable!(),
+                                    };
+                                    ingest
+                                        .update_in_place(
+                                            &renamed_source,
+                                            text,
+                                            &file.content_type,
+                                            meta,
+                                            project,
+                                        )
+                                        .await
+                                        .map(|_| ActionResult::Renamed)
+                                        .map_err(|e| (file.relative_path, e.to_string()))
+                                }
                             }
-                            // Then update content in place (re-chunk + re-embed changed chunks)
-                            let mut renamed_source = orphan_source;
-                            renamed_source.filename = file.relative_path.clone();
-                            ingest
-                                .update_in_place(
-                                    &renamed_source,
-                                    &file.content,
-                                    &file.content_type,
-                                    meta,
-                                    project,
-                                )
-                                .await
-                                .map(|_| ActionResult::Renamed)
-                                .map_err(|e| (file.relative_path, e.to_string()))
                         }
                     }
                 }
@@ -601,8 +700,23 @@ fn infer_content_type(filename: &str) -> &'static str {
         Some("json") => "application/json",
         Some("sql") => "text/sql",
         Some("sh") => "text/x-shellscript",
+        Some("pdf") => "application/pdf",
         _ => "text/plain",
     }
+}
+
+/// Check if a file is a PDF by its extension.
+fn is_pdf_file(filename: &str) -> bool {
+    Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false)
+}
+
+fn content_hash_bytes(content: &[u8]) -> String {
+    let hash = Sha256::digest(content);
+    format!("sha256:{hash:x}")
 }
 
 fn is_binary(content: &[u8]) -> bool {
@@ -783,6 +897,28 @@ mod tests {
             push_error(&mut errors, format!("error {i}"));
         }
         assert_eq!(errors.len(), MAX_ERRORS);
+    }
+
+    #[test]
+    fn infer_content_type_pdf() {
+        assert_eq!(infer_content_type("document.pdf"), "application/pdf");
+        assert_eq!(infer_content_type("report.PDF"), "application/pdf");
+    }
+
+    #[test]
+    fn is_pdf_file_detects_extension() {
+        assert!(is_pdf_file("doc.pdf"));
+        assert!(is_pdf_file("report.PDF"));
+        assert!(!is_pdf_file("readme.md"));
+        assert!(!is_pdf_file("data.json"));
+    }
+
+    #[test]
+    fn content_hash_bytes_deterministic() {
+        let h1 = content_hash_bytes(b"hello");
+        let h2 = content_hash_bytes(b"hello");
+        assert_eq!(h1, h2);
+        assert!(h1.starts_with("sha256:"));
     }
 
     #[test]

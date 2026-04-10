@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use pgvector::Vector;
@@ -11,6 +12,7 @@ use crate::db::models::{NewChunk, NewSource, Source};
 use crate::db::queries;
 use crate::embedding::EmbeddingService;
 use crate::error::{AppError, AppResult};
+use crate::pipelines::pdf::{PdfExtractor, map_chunks_to_pdf_metadata};
 use crate::storage::S3Storage;
 
 #[derive(Clone)]
@@ -19,6 +21,8 @@ pub struct IngestPipeline {
     storage: Option<S3Storage>,
     chunk_config: ChunkConfig,
     embedding: EmbeddingService,
+    pdf_extractor: Option<Arc<PdfExtractor>>,
+    max_pdf_bytes: u64,
 }
 
 impl IngestPipeline {
@@ -27,12 +31,16 @@ impl IngestPipeline {
         storage: Option<S3Storage>,
         chunk_config: ChunkConfig,
         embedding: EmbeddingService,
+        pdf_extractor: Option<Arc<PdfExtractor>>,
+        max_pdf_bytes: u64,
     ) -> Self {
         Self {
             pool,
             storage,
             chunk_config,
             embedding,
+            pdf_extractor,
+            max_pdf_bytes,
         }
     }
 
@@ -132,6 +140,15 @@ impl IngestPipeline {
             Ok(Ok(v)) => v,
         };
 
+        // Determine source_type from content
+        let source_type = if let Some(_lang) = detect_language(filename) {
+            "code"
+        } else if content_type.to_lowercase().contains("markdown") {
+            "markdown"
+        } else {
+            "text"
+        };
+
         let new_chunks: Vec<NewChunk> = chunk_triples
             .into_iter()
             .zip(vectors.into_iter())
@@ -142,6 +159,7 @@ impl IngestPipeline {
                 content,
                 embedding,
                 metadata,
+                source_type: source_type.to_owned(),
             })
             .collect();
 
@@ -255,6 +273,16 @@ impl IngestPipeline {
         // 6. Merge: assign vectors from reuse map or fresh batch
         let mut fresh_iter = fresh_vectors.into_iter();
         let source_id = old_source.id;
+
+        // Determine source_type from content
+        let source_type = if let Some(_lang) = detect_language(&old_source.filename) {
+            "code"
+        } else if content_type.to_lowercase().contains("markdown") {
+            "markdown"
+        } else {
+            "text"
+        };
+
         let new_chunks: Vec<NewChunk> = chunk_triples
             .into_iter()
             .enumerate()
@@ -271,6 +299,7 @@ impl IngestPipeline {
                     content: text,
                     embedding,
                     metadata: meta,
+                    source_type: source_type.to_owned(),
                 }
             })
             .collect();
@@ -291,6 +320,150 @@ impl IngestPipeline {
 
         // 9. Return updated source
         Ok(updated_source)
+    }
+
+    /// Ingest a PDF document: upload raw bytes to S3, extract text via
+    /// PdfExtractor (on a blocking thread), chunk, map bbox metadata, embed,
+    /// and store chunks in Postgres.
+    pub async fn ingest_pdf(
+        &self,
+        raw_bytes: &[u8],
+        filename: &str,
+        metadata: serde_json::Value,
+        project: Option<String>,
+        owner_user_id: Option<Uuid>,
+    ) -> AppResult<Source> {
+        // 1. Validate PDF support is enabled
+        let extractor = self
+            .pdf_extractor
+            .as_ref()
+            .ok_or_else(|| {
+                AppError::Validation(
+                    "PDF ingestion is not enabled (PDFIUM_LIB_PATH not configured)".into(),
+                )
+            })?
+            .clone();
+
+        // 2. Validate size (spec: reject with 413-style error before extraction)
+        if raw_bytes.len() as u64 > self.max_pdf_bytes {
+            return Err(AppError::Validation(format!(
+                "PDF file size ({} bytes) exceeds maximum allowed ({} bytes)",
+                raw_bytes.len(),
+                self.max_pdf_bytes,
+            )));
+        }
+
+        if raw_bytes.is_empty() {
+            return Err(AppError::Validation("PDF content must not be empty".into()));
+        }
+
+        // 3. Build S3 key following the spec convention: {namespace}/{sha256_of_content}.pdf
+        let sha256_hex = {
+            let mut hasher = Sha256::new();
+            hasher.update(raw_bytes);
+            format!("{:x}", hasher.finalize())
+        };
+        let namespace = project.as_deref().unwrap_or("default");
+        let s3_key = format!("{namespace}/{sha256_hex}.pdf");
+        let content_type = "application/pdf";
+
+        let source_id = Uuid::new_v4();
+        let new_source = NewSource {
+            id: source_id,
+            s3_key: s3_key.clone(),
+            filename: filename.to_owned(),
+            content_type: content_type.to_owned(),
+            metadata,
+            project,
+            owner_user_id,
+        };
+        let source = queries::insert_source(&self.pool, &new_source).await?;
+
+        // 4. Upload raw PDF to S3
+        if let Some(ref storage) = self.storage {
+            let data = Bytes::from(raw_bytes.to_vec());
+            if let Err(e) = storage.put_object(&s3_key, data, content_type).await {
+                self.cleanup(source_id).await;
+                return Err(e);
+            }
+        }
+
+        // 5. Extract text via PdfExtractor on blocking thread (NFR-1)
+        let bytes_owned = raw_bytes.to_vec();
+        let (spans, joined) = tokio::task::spawn_blocking(move || {
+            extractor.extract(&bytes_owned)
+        })
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!("PDF extraction task panicked: {e}"))
+        })??;
+
+        // 6. Chunk the extracted text using the shared text chunker
+        let text_chunks = chunk_text(&joined, &self.chunk_config);
+
+        if text_chunks.is_empty() {
+            self.cleanup(source_id).await;
+            return Err(AppError::PdfExtraction(
+                "no chunks produced from extracted PDF text".into(),
+            ));
+        }
+
+        // 7. Map chunks to PDF metadata (page_number + bbox)
+        let chunk_metadata_vec =
+            map_chunks_to_pdf_metadata(&text_chunks, &spans, &joined);
+
+        // 8. Build (index, content, metadata) triples
+        let chunk_triples: Vec<(usize, String, serde_json::Value)> = text_chunks
+            .into_iter()
+            .zip(chunk_metadata_vec.into_iter())
+            .map(|(c, meta)| (c.index, c.content, meta))
+            .collect();
+
+        // 9. Embed chunks (same pattern as text ingest)
+        let svc = self.embedding.clone();
+        let texts: Vec<String> =
+            chunk_triples.iter().map(|(_, c, _)| c.clone()).collect();
+        let join_result = tokio::task::spawn_blocking(move || {
+            let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+            svc.embed_batch(&refs)
+        })
+        .await;
+
+        let vectors: Vec<pgvector::Vector> = match join_result {
+            Err(e) => {
+                self.cleanup(source_id).await;
+                return Err(AppError::Internal(format!(
+                    "embedding task panicked: {e}"
+                )));
+            }
+            Ok(Err(e)) => {
+                self.cleanup(source_id).await;
+                return Err(e);
+            }
+            Ok(Ok(v)) => v,
+        };
+
+        // 10. Store chunks in Postgres (FR-6: source_type = "pdf" MUST be set).
+        let new_chunks: Vec<NewChunk> = chunk_triples
+            .into_iter()
+            .zip(vectors.into_iter())
+            .map(|((index, content, metadata), embedding)| NewChunk {
+                id: Uuid::new_v4(),
+                source_id,
+                chunk_index: index as i32,
+                content,
+                embedding,
+                metadata,
+                source_type: "pdf".to_owned(),
+            })
+            .collect();
+
+        if let Err(e) = queries::insert_chunks(&self.pool, &new_chunks).await {
+            self.cleanup(source_id).await;
+            return Err(e);
+        }
+
+        Ok(source)
     }
 
     async fn cleanup(&self, source_id: Uuid) {

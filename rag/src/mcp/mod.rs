@@ -27,6 +27,8 @@ use rag_mcp::pipelines::{
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IngestParams {
     /// The full text content of the document to ingest.
+    /// For PDF files (content_type "application/pdf"), this must be
+    /// the base64-encoded raw PDF bytes.
     pub content: String,
     /// Human-readable filename (e.g. "design.md").
     pub filename: String,
@@ -129,7 +131,7 @@ impl McpServer {
 
 #[tool_router]
 impl McpServer {
-    #[tool(description = "Ingest a document into the knowledge base. Stores the original to S3 when configured, chunks the text, embeds the chunks, and persists everything to PostgreSQL. Returns a JSON object with the source record (id, filename, content_type, metadata, created_at).")]
+    #[tool(description = "Ingest a document into the knowledge base. Stores the original to S3 when configured, chunks the text, embeds the chunks, and persists everything to PostgreSQL. For PDF files, set content_type to 'application/pdf' and provide base64-encoded PDF bytes as the content. Returns a JSON object with the source record (id, filename, content_type, metadata, created_at).")]
     async fn ingest(
         &self,
         Parameters(params): Parameters<IngestParams>,
@@ -137,12 +139,63 @@ impl McpServer {
         let metadata = params
             .metadata
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
-        let result: Result<_, McpError> = self
-            .ingest
-            .ingest(&params.content, &params.filename, &params.content_type, metadata, params.project, None)
-            .await
-            .map_err(app_error_to_mcp_error);
-        let source = result?;
+
+        // Detect PDF by content_type first; magic-bytes fallback handles
+        // callers that omit or mis-spell the MIME type (spec: MCP Tool Changes).
+        let content_type_is_pdf = params.content_type.to_lowercase().contains("pdf");
+
+        use base64::Engine;
+        let maybe_raw: Option<Vec<u8>> = if content_type_is_pdf {
+            // Already known to be PDF — decode unconditionally.
+            Some(
+                base64::engine::general_purpose::STANDARD
+                    .decode(&params.content)
+                    .map_err(|e| {
+                        McpError::invalid_params(
+                            format!("PDF content must be base64-encoded: {e}"),
+                            None,
+                        )
+                    })?,
+            )
+        } else {
+            // Try to decode as base64; if it succeeds and starts with %PDF magic
+            // bytes (0x25 0x50 0x44 0x46), treat as PDF regardless of content_type.
+            base64::engine::general_purpose::STANDARD
+                .decode(&params.content)
+                .ok()
+                .filter(|b| b.starts_with(b"%PDF"))
+        };
+
+        let is_pdf = content_type_is_pdf || maybe_raw.is_some();
+
+        let source = if is_pdf {
+            let raw_bytes = maybe_raw.unwrap_or_default();
+
+            self.ingest
+                .ingest_pdf(
+                    &raw_bytes,
+                    &params.filename,
+                    metadata,
+                    params.project,
+                    None,
+                )
+                .await
+                .map_err(app_error_to_mcp_error)?
+        } else {
+            // Text path: existing behaviour
+            self.ingest
+                .ingest(
+                    &params.content,
+                    &params.filename,
+                    &params.content_type,
+                    metadata,
+                    params.project,
+                    None,
+                )
+                .await
+                .map_err(app_error_to_mcp_error)?
+        };
+
         let json = serde_json::to_string(&source)
             .map_err(|e| McpError::internal_error(format!("serialization error: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))

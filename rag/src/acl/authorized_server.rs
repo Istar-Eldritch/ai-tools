@@ -98,7 +98,7 @@ impl AuthorizedMcpServer {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "content": {"type": "string", "description": "Full text content"},
+                        "content": {"type": "string", "description": "Full text content. For PDFs (content_type 'application/pdf'), provide base64-encoded bytes."},
                         "filename": {"type": "string", "description": "Human-readable filename"},
                         "content_type": {"type": "string", "description": "MIME content type"},
                         "metadata": {"type": "object", "description": "Arbitrary metadata"},
@@ -270,18 +270,54 @@ impl AuthorizedMcpServer {
             .metadata
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
 
-        match self
-            .ingest
-            .ingest(
-                &params.content,
-                &params.filename,
-                &params.content_type,
-                metadata,
-                params.project,
-                Some(ctx.user_id),
-            )
-            .await
-        {
+        // Mirror the MCP handler logic: detect PDF by content_type OR magic bytes.
+        use base64::Engine;
+        let content_type_is_pdf = params.content_type.to_lowercase().contains("pdf");
+
+        let maybe_raw: Option<Vec<u8>> = if content_type_is_pdf {
+            match base64::engine::general_purpose::STANDARD.decode(&params.content) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    return ToolCallResult::error(format!(
+                        "PDF content must be base64-encoded: {e}"
+                    ))
+                }
+            }
+        } else {
+            // Magic-bytes fallback: if base64 decodes to %PDF, treat as PDF.
+            base64::engine::general_purpose::STANDARD
+                .decode(&params.content)
+                .ok()
+                .filter(|b| b.starts_with(b"%PDF"))
+        };
+
+        let is_pdf = content_type_is_pdf || maybe_raw.is_some();
+
+        let result = if is_pdf {
+            let raw_bytes = maybe_raw.unwrap_or_default(); // always Some when is_pdf
+            self.ingest
+                .ingest_pdf(
+                    &raw_bytes,
+                    &params.filename,
+                    metadata,
+                    params.project,
+                    Some(ctx.user_id),
+                )
+                .await
+        } else {
+            self.ingest
+                .ingest(
+                    &params.content,
+                    &params.filename,
+                    &params.content_type,
+                    metadata,
+                    params.project,
+                    Some(ctx.user_id),
+                )
+                .await
+        };
+
+        match result {
             Ok(source) => match serde_json::to_string(&source) {
                 Ok(json) => ToolCallResult::success(json),
                 Err(e) => ToolCallResult::error(format!("serialization error: {e}")),

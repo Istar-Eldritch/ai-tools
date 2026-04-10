@@ -18,6 +18,7 @@ use rag_mcp::http::{self as http_mod, AppState};
 use rag_mcp::pipelines::delete::DeletePipeline;
 use rag_mcp::pipelines::directory_ingest::DirectoryIngestPipeline;
 use rag_mcp::pipelines::ingest::IngestPipeline;
+use rag_mcp::pipelines::pdf::PdfExtractor;
 use rag_mcp::pipelines::search::SearchPipeline;
 use rag_mcp::storage::S3Storage;
 use rmcp::transport::stdio;
@@ -140,11 +141,25 @@ async fn main() -> anyhow::Result<()> {
                 min_chunk_size: config.min_chunk_size,
             };
 
+            let pdf_extractor = match &config.pdfium_lib_path {
+                Some(path) => {
+                    let extractor = PdfExtractor::new(std::path::Path::new(path))?;
+                    tracing::info!(path = %path, "PDF extractor loaded");
+                    Some(Arc::new(extractor))
+                }
+                None => {
+                    tracing::info!("PDF ingestion disabled (PDFIUM_LIB_PATH not set)");
+                    None
+                }
+            };
+
             let ingest_pipeline = IngestPipeline::new(
                 pool.clone(),
                 storage.clone(),
                 chunk_config,
                 embedding.clone(),
+                pdf_extractor.clone(),
+                config.max_pdf_bytes,
             );
             let search_pipeline = SearchPipeline::new(
                 pool.clone(),
@@ -203,11 +218,25 @@ async fn main() -> anyhow::Result<()> {
                 min_chunk_size: config.min_chunk_size,
             };
 
+            let pdf_extractor = match &config.pdfium_lib_path {
+                Some(path) => {
+                    let extractor = PdfExtractor::new(std::path::Path::new(path))?;
+                    tracing::info!(path = %path, "PDF extractor loaded (HTTP mode)");
+                    Some(Arc::new(extractor))
+                }
+                None => {
+                    tracing::info!("PDF ingestion disabled (PDFIUM_LIB_PATH not set)");
+                    None
+                }
+            };
+
             let ingest_pipeline = IngestPipeline::new(
                 pool.clone(),
                 Some(storage.clone()),
                 chunk_config,
                 embedding.clone(),
+                pdf_extractor,
+                config.max_pdf_bytes,
             );
             let search_pipeline = SearchPipeline::new(
                 pool.clone(),

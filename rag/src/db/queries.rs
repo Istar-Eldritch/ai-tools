@@ -76,8 +76,8 @@ pub async fn insert_chunks(pool: &PgPool, chunks: &[NewChunk]) -> AppResult<u64>
     let mut count: u64 = 0;
     for chunk in chunks {
         let result = sqlx::query(
-            "INSERT INTO chunks (id, source_id, chunk_index, content, embedding, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            "INSERT INTO chunks (id, source_id, chunk_index, content, embedding, metadata, source_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (source_id, chunk_index) DO NOTHING"
         )
         .bind(chunk.id)
@@ -86,6 +86,7 @@ pub async fn insert_chunks(pool: &PgPool, chunks: &[NewChunk]) -> AppResult<u64>
         .bind(&chunk.content)
         .bind(&chunk.embedding)
         .bind(&chunk.metadata)
+        .bind(&chunk.source_type)
         .execute(&mut *tx)
         .await?;
         count += result.rows_affected();
@@ -231,8 +232,8 @@ pub async fn replace_chunks(pool: &PgPool, source_id: Uuid, new_chunks: &[NewChu
     let mut count: u64 = 0;
     for chunk in new_chunks {
         let result = sqlx::query(
-            "INSERT INTO chunks (id, source_id, chunk_index, content, embedding, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO chunks (id, source_id, chunk_index, content, embedding, metadata, source_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         )
         .bind(chunk.id)
         .bind(chunk.source_id)
@@ -240,6 +241,7 @@ pub async fn replace_chunks(pool: &PgPool, source_id: Uuid, new_chunks: &[NewChu
         .bind(&chunk.content)
         .bind(&chunk.embedding)
         .bind(&chunk.metadata)
+        .bind(&chunk.source_type)
         .execute(&mut *tx)
         .await?;
         count += result.rows_affected();

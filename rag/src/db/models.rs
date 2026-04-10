@@ -73,6 +73,7 @@ pub struct NewChunk {
     pub content: String,
     pub embedding: Vector,
     pub metadata: serde_json::Value,
+    pub source_type: String,
 }
 
 // -- Auth / ACL models --

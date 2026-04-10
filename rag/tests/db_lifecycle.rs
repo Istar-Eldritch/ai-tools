@@ -54,6 +54,7 @@ async fn source_chunk_lifecycle() {
             content: "first chunk".into(),
             embedding: Vector::from(emb_a.clone()),
             metadata: json!({}),
+            source_type: "text".into(),
         },
         NewChunk {
             id: Uuid::new_v4(),
@@ -62,6 +63,7 @@ async fn source_chunk_lifecycle() {
             content: "second chunk".into(),
             embedding: Vector::from(emb_b.clone()),
             metadata: json!({}),
+            source_type: "text".into(),
         },
     ];
     let inserted = queries::insert_chunks(&pool, &chunks).await.unwrap();
