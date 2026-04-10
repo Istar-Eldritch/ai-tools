@@ -120,6 +120,13 @@ impl WorkflowPhase for ImplementState {
 impl HasGate for BrainstormState {
     fn gate_content(&self) -> Option<GateContent> {
         match self {
+            BrainstormState::Discovery(brainstorm::DiscoveryPhase::AwaitingAnswer {
+                question,
+            }) => Some(GateContent {
+                summary: question.clone(),
+                artifact_path: None,
+                suggested_actions: vec!["approve".to_string(), "cancel".to_string()],
+            }),
             BrainstormState::AwaitingApproval {
                 artifact_path,
                 revision,
@@ -360,6 +367,9 @@ impl WorkflowState {
     pub fn session_state(&self) -> SessionState {
         match self {
             Self::Brainstorm(s) => match s {
+                BrainstormState::Discovery(
+                    brainstorm::DiscoveryPhase::AwaitingAnswer { .. },
+                ) => SessionState::WaitingAtGate,
                 BrainstormState::Discovery(_) | BrainstormState::Synthesis { .. } => {
                     SessionState::Running
                 }

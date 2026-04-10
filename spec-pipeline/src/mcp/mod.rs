@@ -177,6 +177,7 @@ impl McpServer {
             WorkflowType::Brainstorm => {
                 WorkflowState::Brainstorm(BrainstormState::Discovery(DiscoveryPhase::Exploring {
                     turn: 0,
+                    gate_answer: None,
                 }))
             }
             WorkflowType::Spec => WorkflowState::Spec(SpecState::Research { turn: 0, gate_answer: None }),

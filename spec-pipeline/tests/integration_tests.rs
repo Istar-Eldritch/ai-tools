@@ -27,7 +27,7 @@ fn session_serialization_round_trip_brainstorm() {
         id: uuid::Uuid::new_v4(),
         topic: "test brainstorm".to_string(),
         workflow_state: WorkflowState::Brainstorm(BrainstormState::Discovery(
-            DiscoveryPhase::Exploring { turn: 3 },
+            DiscoveryPhase::Exploring { turn: 3, gate_answer: None },
         )),
         context_refs: vec!["ref1.md".to_string(), "ref2.md".to_string()],
         model_override: Some("opus".to_string()),
@@ -109,7 +109,7 @@ fn session_serialization_round_trip_epic() {
 #[test]
 fn brainstorm_session_state_running() {
     let ws = WorkflowState::Brainstorm(BrainstormState::Discovery(
-        DiscoveryPhase::Exploring { turn: 0 },
+        DiscoveryPhase::Exploring { turn: 0, gate_answer: None },
     ));
     assert_eq!(ws.session_state(), SessionState::Running);
     assert_eq!(ws.workflow_type(), WorkflowType::Brainstorm);
@@ -290,7 +290,7 @@ fn model_config_defaults() {
 #[test]
 fn to_error_gate_preserves_workflow_type() {
     let running_brainstorm = WorkflowState::Brainstorm(BrainstormState::Discovery(
-        DiscoveryPhase::Exploring { turn: 5 },
+        DiscoveryPhase::Exploring { turn: 5, gate_answer: None },
     ));
     let error_bs = running_brainstorm.to_error_gate();
     assert_eq!(error_bs.workflow_type(), WorkflowType::Brainstorm);
@@ -374,7 +374,7 @@ fn workflow_type_display() {
 fn phase_roles_are_sensible() {
     // Discovery / research phases use Discovery role
     let bs_disc = WorkflowState::Brainstorm(BrainstormState::Discovery(
-        DiscoveryPhase::Exploring { turn: 0 },
+        DiscoveryPhase::Exploring { turn: 0, gate_answer: None },
     ));
     assert_eq!(bs_disc.phase_role(), PhaseRole::Discovery);
 

@@ -48,7 +48,12 @@ pub enum BrainstormState {
 pub enum DiscoveryPhase {
     /// Actively exploring the topic.
     #[serde(rename = "exploring")]
-    Exploring { turn: u32 },
+    Exploring {
+        turn: u32,
+        /// Answer from the user to a prior discovery question, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate_answer: Option<String>,
+    },
     /// Waiting for the user to answer a question.
     #[serde(rename = "awaiting_answer")]
     AwaitingAnswer { question: String },

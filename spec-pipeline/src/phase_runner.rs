@@ -119,6 +119,9 @@ pub async fn run_brainstorm_session(
             };
 
             let revision_feedback = match &bs {
+                BrainstormState::Discovery(DiscoveryPhase::Exploring {
+                    gate_answer, ..
+                }) => gate_answer.clone(),
                 BrainstormState::Synthesis { feedback, .. } => feedback.clone(),
                 _ => None,
             };
@@ -782,8 +785,8 @@ async fn process_brainstorm_output(
     match output {
         RawPhaseOutput::Continue => {
             let new_state = match bs_snapshot {
-                BrainstormState::Discovery(DiscoveryPhase::Exploring { turn }) => {
-                    BrainstormState::Discovery(DiscoveryPhase::Exploring { turn: turn + 1 })
+                BrainstormState::Discovery(DiscoveryPhase::Exploring { turn, .. }) => {
+                    BrainstormState::Discovery(DiscoveryPhase::Exploring { turn: turn + 1, gate_answer: None })
                 }
                 BrainstormState::Synthesis { draft_path, revision, .. } => {
                     BrainstormState::Synthesis { draft_path, revision, feedback: None }
@@ -1205,6 +1208,19 @@ async fn apply_approve(
                 artifact_path: artifact_path.clone(),
             })
         }
+        WorkflowState::Brainstorm(BrainstormState::Discovery(
+            DiscoveryPhase::AwaitingAnswer { question },
+        )) => {
+            // User answered the discovery question — resume exploring.
+            let answer = content.unwrap_or_default();
+            info!(%session_id, %question, %answer, "discovery question answered, resuming");
+            WorkflowState::Brainstorm(BrainstormState::Discovery(
+                DiscoveryPhase::Exploring {
+                    turn: 0,
+                    gate_answer: Some(format!("Q: {question}\nA: {answer}")),
+                },
+            ))
+        }
         WorkflowState::Spec(SpecState::AwaitingAnswer { question }) => {
             // User answered the research question — resume research.
             let answer = content.unwrap_or_default();
@@ -1272,7 +1288,9 @@ async fn apply_approve(
     // Check if this is a mid-workflow gate that should continue the loop.
     let should_continue = matches!(
         ws,
-        WorkflowState::Spec(SpecState::AwaitingAnswer { .. })
+        WorkflowState::Brainstorm(BrainstormState::Discovery(
+            DiscoveryPhase::AwaitingAnswer { .. }
+        )) | WorkflowState::Spec(SpecState::AwaitingAnswer { .. })
             | WorkflowState::Implement(ImplementState::Configuring { .. })
     );
 
@@ -1445,7 +1463,7 @@ async fn apply_retry(
         WorkflowState::Brainstorm(BrainstormState::ErrorGate { failed_phase, .. }) => {
             match failed_phase.as_str() {
                 "discovery" => WorkflowState::Brainstorm(BrainstormState::Discovery(
-                    DiscoveryPhase::Exploring { turn: 0 },
+                    DiscoveryPhase::Exploring { turn: 0, gate_answer: None },
                 )),
                 "synthesis" => WorkflowState::Brainstorm(BrainstormState::Synthesis {
                     draft_path: PathBuf::from(""),
