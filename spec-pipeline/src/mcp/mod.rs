@@ -367,38 +367,6 @@ impl McpServer {
             return build_session_snapshot(id, &self.registry).await;
         }
 
-        // Emit gate_response_received notification
-        {
-            let handle = self.registry.get(id).ok_or_else(|| {
-                McpError::internal_error(format!("Session {id} vanished"), None)
-            })?;
-            let session = handle.lock().await;
-            let wt = session.workflow_state.workflow_type().to_string();
-            let phase = session.workflow_state.phase_name().to_string();
-            let sub_phase = session.workflow_state.sub_phase_name().map(|s| s.to_string());
-            let state_str = format!("{:?}", session.session_state());
-            let cost = session.total_cost_usd;
-            drop(session);
-
-            self.notifier
-                .notify_event(&NotifEvent {
-                    schema_version: "1",
-                    session_id: id,
-                    workflow_type: wt,
-                    event_type: SessionEventType::GateResponseReceived,
-                    session_state: state_str,
-                    phase,
-                    sub_phase,
-                    message: format!("Gate response accepted: {}", params.response_type),
-                    gate_content: None,
-                    progress: 0.0,
-                    total_cost_usd: cost,
-                    timestamp: Utc::now(),
-                    error: None,
-                })
-                .await;
-        }
-
         // Block until next gate/completion, emitting progress notifications.
         // Pass `true` to skip the stale WaitingAtGate/ErrorGate early-exit:
         // we just sent a gate response, so the current watch value is the OLD
