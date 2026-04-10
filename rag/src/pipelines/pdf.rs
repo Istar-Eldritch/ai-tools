@@ -265,7 +265,16 @@ pub fn map_chunks_to_pdf_metadata(
         .map(|chunk| {
             // Find the byte offset of this chunk within the joined string.
             // TextChunk doesn't carry byte offsets, so we locate via find().
-            let chunk_start = joined.find(&chunk.content).unwrap_or(0);
+            let chunk_start = match joined.find(&chunk.content) {
+                Some(pos) => pos,
+                None => {
+                    tracing::warn!(
+                        chunk_index = chunk.index,
+                        "chunk content not found in joined document string; attributing to page 1"
+                    );
+                    0
+                }
+            };
 
             // Binary search: find the last span whose byte_offset <= chunk_start
             let span_idx = spans
@@ -519,6 +528,47 @@ mod tests {
         let metadata = map_chunks_to_pdf_metadata(&chunks, &spans, &joined);
         assert_eq!(metadata[0]["page_number"], 1);
         assert_eq!(metadata[1]["page_number"], 2);
+    }
+
+    #[test]
+    fn map_chunk_spanning_page_boundary() {
+        // A TextChunk whose content straddles the page boundary must be attributed
+        // to the *starting* page (page 1), because `chunk_start` falls within
+        // span[0]'s byte range.
+        //
+        //   joined = "Hello from page one\n\nGreetings from page two"
+        //             ^byte 0 (span 0)       ^byte 21 (span 1)
+        //
+        // The cross-page chunk "page one\n\nGreetings" starts at byte 11, which
+        // is inside span 0's range → page_number must be 1.
+        let mut spans = vec![
+            PageTextSpan {
+                page_number: 1,
+                text: "Hello from page one".into(),
+                bbox: Some(PdfBbox { top: 800.0, left: 72.0, bottom: 700.0, right: 500.0 }),
+                byte_offset: 0,
+            },
+            PageTextSpan {
+                page_number: 2,
+                text: "Greetings from page two".into(),
+                bbox: Some(PdfBbox { top: 790.0, left: 72.0, bottom: 690.0, right: 510.0 }),
+                byte_offset: 0,
+            },
+        ];
+        let joined = join_spans(&mut spans);
+        // Sanity-check: span 1's byte_offset should be len("Hello from page one") + 2 = 21
+        assert_eq!(spans[1].byte_offset, 21);
+
+        // Chunk content spans the "\n\n" separator and begins inside page 1's range.
+        let cross_page_content = "page one\n\nGreetings";
+        assert!(joined.contains(cross_page_content), "test precondition: chunk must be a substring of joined");
+
+        let chunks = vec![TextChunk { index: 0, content: cross_page_content.into() }];
+        let metadata = map_chunks_to_pdf_metadata(&chunks, &spans, &joined);
+        // Starting page is page 1 — the chunk's leading byte falls in span 0.
+        assert_eq!(metadata[0]["page_number"], 1);
+        // bbox should come from span 0 (page 1's bbox), not null.
+        assert!(!metadata[0]["bbox"].is_null());
     }
 
     // ---- map_chunks_to_pdf_metadata: empty spans guard ----
