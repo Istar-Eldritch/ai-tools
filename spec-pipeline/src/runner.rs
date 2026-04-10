@@ -417,6 +417,25 @@ impl ClaudeRunner {
                                 .map(|s| serde_json::to_string(s).unwrap_or_default())
                                 .filter(|s| !s.is_empty());
 
+                            let has_so = so_from_result_event.is_some() || structured_output.is_some();
+
+                            // Background agents (run_in_background) emit their own
+                            // result events when they complete. These have no
+                            // structured_output and would overwrite the main
+                            // session's result. Skip them if we already captured a
+                            // result with valid structured output.
+                            if !has_so && result_event.is_some() {
+                                let num_turns_val = v
+                                    .get("num_turns")
+                                    .and_then(|n| n.as_u64())
+                                    .unwrap_or(0);
+                                debug!(
+                                    num_turns = num_turns_val,
+                                    "skipping secondary result event — primary result with structured output already captured"
+                                );
+                                continue;
+                            }
+
                             let so_from_tool_capture = structured_output.take();
 
                             let result_str = v
