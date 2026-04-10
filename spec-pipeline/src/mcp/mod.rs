@@ -241,7 +241,7 @@ impl McpServer {
         }
 
         // Block until gate/completion, emitting progress notifications.
-        await_with_progress(session_id, &self.notifier, &meta, &client).await?;
+        await_with_progress(session_id, &self.notifier, &meta, &client, false).await?;
 
         build_session_snapshot(session_id, &self.registry).await
     }
@@ -399,7 +399,10 @@ impl McpServer {
         }
 
         // Block until next gate/completion, emitting progress notifications.
-        await_with_progress(id, &self.notifier, &meta, &client).await?;
+        // Pass `true` to skip the stale WaitingAtGate/ErrorGate early-exit:
+        // we just sent a gate response, so the current watch value is the OLD
+        // gate state that hasn't been cleared yet by the session loop.
+        await_with_progress(id, &self.notifier, &meta, &client, true).await?;
 
         build_session_snapshot(id, &self.registry).await
     }
@@ -528,6 +531,7 @@ async fn await_with_progress(
     notifier: &SessionNotifier,
     meta: &Meta,
     client: &Peer<RoleServer>,
+    after_gate_response: bool,
 ) -> Result<(), McpError> {
     let mut state_rx = notifier
         .subscribe(session_id)
@@ -542,14 +546,20 @@ async fn await_with_progress(
     // Guard against subscribe-after-send race: if the session already reached
     // a terminal state before we subscribed, the watch considers that value
     // "already seen" and changed() will never fire. Check immediately.
+    //
+    // When called after sending a gate response (`after_gate_response`), the
+    // watch may still show the OLD gate state (WaitingAtGate / ErrorGate)
+    // because the session loop hasn't processed the response yet.  In that
+    // case we must NOT exit early on those states — only on truly terminal
+    // states (Complete / Cancelled).
     {
         let current = *state_rx.borrow();
         match current {
-            SessionState::WaitingAtGate
-            | SessionState::ErrorGate
-            | SessionState::Complete
-            | SessionState::Cancelled => return Ok(()),
-            SessionState::Running => {}
+            SessionState::WaitingAtGate | SessionState::ErrorGate if !after_gate_response => {
+                return Ok(());
+            }
+            SessionState::Complete | SessionState::Cancelled => return Ok(()),
+            _ => {}
         }
     }
 
