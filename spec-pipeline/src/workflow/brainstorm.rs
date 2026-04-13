@@ -11,6 +11,9 @@ pub enum BrainstormState {
     /// Open-ended discovery conversation.
     #[serde(rename = "discovery")]
     Discovery(DiscoveryPhase),
+    /// Discovery complete — awaiting user confirmation before synthesis.
+    #[serde(rename = "awaiting_synthesis_approval")]
+    AwaitingSynthesisApproval { summary: String },
     /// Synthesising a draft document from discovery notes.
     #[serde(rename = "synthesis")]
     Synthesis {
@@ -64,6 +67,7 @@ impl BrainstormState {
     pub fn phase_name(&self) -> &str {
         match self {
             Self::Discovery(_) => "discovery",
+            Self::AwaitingSynthesisApproval { .. } => "awaiting_synthesis_approval",
             Self::Synthesis { .. } => "synthesis",
             Self::AwaitingApproval { .. } => "awaiting_approval",
             Self::Complete { .. } => "complete",
@@ -85,6 +89,7 @@ impl BrainstormState {
     pub fn phase_role(&self) -> PhaseRole {
         match self {
             Self::Discovery(_) => PhaseRole::Discovery,
+            Self::AwaitingSynthesisApproval { .. } => PhaseRole::Review,
             Self::Synthesis { .. } => PhaseRole::Synthesis,
             Self::AwaitingApproval { .. } => PhaseRole::Review,
             Self::Complete { .. } => PhaseRole::Review,

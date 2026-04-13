@@ -106,6 +106,7 @@ pub async fn run_brainstorm_session(
                 // Terminal / gate states -- nothing to run
                 BrainstormState::Complete { .. }
                 | BrainstormState::Cancelled
+                | BrainstormState::AwaitingSynthesisApproval { .. }
                 | BrainstormState::AwaitingApproval { .. }
                 | BrainstormState::ErrorGate { .. } => {
                     info!(%session_id, phase = bs.phase_name(), "session in terminal/gate state, exiting loop");
@@ -246,6 +247,7 @@ pub async fn run_spec_session(
                 SpecState::Complete { .. }
                 | SpecState::Cancelled
                 | SpecState::AwaitingAnswer { .. }
+                | SpecState::AwaitingDraftingApproval { .. }
                 | SpecState::AwaitingApproval { .. }
                 | SpecState::ErrorGate { .. } => {
                     info!(%session_id, phase = ss.phase_name(), "session in terminal/gate state, exiting loop");
@@ -845,15 +847,8 @@ async fn process_brainstorm_output(
 
             match bs_snapshot {
                 BrainstormState::Discovery(_) => {
-                    let draft = if artifact_path.is_empty() {
-                        PathBuf::from("")
-                    } else {
-                        PathBuf::from(&artifact_path)
-                    };
-                    let new_state = BrainstormState::Synthesis {
-                        draft_path: draft,
-                        revision: 0,
-                        feedback: None,
+                    let new_state = BrainstormState::AwaitingSynthesisApproval {
+                        summary: summary.clone(),
                     };
                     if let Err(e) = registry
                         .update(session_id, move |s| {
@@ -862,10 +857,10 @@ async fn process_brainstorm_output(
                         })
                         .await
                     {
-                        error!(%session_id, error = %e, "failed to persist Discovery->Synthesis");
+                        error!(%session_id, error = %e, "failed to persist Discovery->AwaitingSynthesisApproval");
                         return InternalAction::Break;
                     }
-                    InternalAction::Continue
+                    InternalAction::AwaitGate
                 }
                 BrainstormState::Synthesis { revision, .. } => {
                     let path = PathBuf::from(&artifact_path);
@@ -970,15 +965,8 @@ async fn process_spec_output(
 
             match ss_snapshot {
                 SpecState::Research { .. } => {
-                    let draft = if artifact_path.is_empty() {
-                        PathBuf::from("")
-                    } else {
-                        PathBuf::from(&artifact_path)
-                    };
-                    let new_state = SpecState::Drafting {
-                        draft_path: draft,
-                        revision: 0,
-                        feedback: None,
+                    let new_state = SpecState::AwaitingDraftingApproval {
+                        summary: summary.clone(),
                     };
                     if let Err(e) = registry
                         .update(session_id, move |s| {
@@ -987,10 +975,10 @@ async fn process_spec_output(
                         })
                         .await
                     {
-                        error!(%session_id, error = %e, "failed to persist Research->Drafting");
+                        error!(%session_id, error = %e, "failed to persist Research->AwaitingDraftingApproval");
                         return InternalAction::Break;
                     }
-                    InternalAction::Continue
+                    InternalAction::AwaitGate
                 }
                 SpecState::Drafting { revision, .. } => {
                     let path = PathBuf::from(&artifact_path);
@@ -1220,6 +1208,24 @@ async fn apply_approve(
                     gate_answer: Some(format!("Q: {question}\nA: {answer}")),
                 },
             ))
+        }
+        WorkflowState::Brainstorm(BrainstormState::AwaitingSynthesisApproval { .. }) => {
+            // User approved discovery findings — proceed to synthesis.
+            info!(%session_id, "discovery findings approved, proceeding to synthesis");
+            WorkflowState::Brainstorm(BrainstormState::Synthesis {
+                draft_path: PathBuf::new(),
+                revision: 0,
+                feedback: None,
+            })
+        }
+        WorkflowState::Spec(SpecState::AwaitingDraftingApproval { .. }) => {
+            // User approved research findings — proceed to drafting.
+            info!(%session_id, "research findings approved, proceeding to drafting");
+            WorkflowState::Spec(SpecState::Drafting {
+                draft_path: PathBuf::new(),
+                revision: 0,
+                feedback: None,
+            })
         }
         WorkflowState::Spec(SpecState::AwaitingAnswer { question }) => {
             // User answered the research question — resume research.

@@ -19,6 +19,9 @@ pub enum SpecState {
     /// Research paused — waiting for user answer to a clarifying question.
     #[serde(rename = "awaiting_answer")]
     AwaitingAnswer { question: String },
+    /// Research complete — awaiting user confirmation before drafting.
+    #[serde(rename = "awaiting_drafting_approval")]
+    AwaitingDraftingApproval { summary: String },
     /// Drafting the specification document.
     #[serde(rename = "drafting")]
     Drafting {
@@ -56,6 +59,7 @@ impl SpecState {
         match self {
             Self::Research { .. } => "research",
             Self::AwaitingAnswer { .. } => "awaiting_answer",
+            Self::AwaitingDraftingApproval { .. } => "awaiting_drafting_approval",
             Self::Drafting { .. } => "drafting",
             Self::AwaitingApproval { .. } => "awaiting_approval",
             Self::Complete { .. } => "complete",
@@ -74,6 +78,7 @@ impl SpecState {
         match self {
             Self::Research { .. } => PhaseRole::Discovery,
             Self::AwaitingAnswer { .. } => PhaseRole::Discovery,
+            Self::AwaitingDraftingApproval { .. } => PhaseRole::Review,
             Self::Drafting { .. } => PhaseRole::Synthesis,
             Self::AwaitingApproval { .. } => PhaseRole::Review,
             Self::Complete { .. } => PhaseRole::Review,

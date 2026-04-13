@@ -150,9 +150,13 @@ Follow these instructions when `phase` is "discovery".
 Your goal is to explore the topic by reading context, thinking deeply, and
 driving an iterative exploration loop.
 
-- On the FIRST turn, read the topic and any context_refs carefully, then either
-  ask a clarifying question (gate) or begin exploring (continue).
-- Keep exploring for several turns before finishing.  Breadth is valuable.
+- On the FIRST turn, read the topic and any context_refs carefully, then
+  ask at least one clarifying question (gate) to align with the user's intent
+  before exploring. Do NOT skip this step.
+- After each user answer, explore further OR ask follow-up questions.
+  Aim to ask 2-4 questions across the discovery phase to ensure you fully
+  understand the user's goals, constraints, and priorities.
+- Keep exploring for several turns before finishing. Breadth is valuable.
 - When you have a user answer in `gate_history`, incorporate it.
 - If `revision_feedback` is present, adjust your exploration accordingly.
 - When finishing discovery, set `artifact_path` to an empty string (the
@@ -275,7 +279,12 @@ Your goal is to investigate the topic by reading context (including context_refs
 files), exploring the codebase and relevant docs, and gathering the information
 needed to write a technical specification.
 
-- On the FIRST turn, read the topic and any context_refs carefully.
+- On the FIRST turn, read the topic and any context_refs carefully, then
+  ask at least one clarifying question (gate) about scope, priorities, or
+  constraints before diving into deep research. Do NOT skip this step.
+- After each user answer, research further OR ask follow-up questions.
+  Aim to ask 2-4 questions across the research phase to ensure the spec
+  covers what the user actually needs.
 - Use tool calls to read files, search the codebase, and gather context.
 - Keep researching for several turns before finishing — thoroughness matters.
 - When you have a user answer in `gate_history`, incorporate it.

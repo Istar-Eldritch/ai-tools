@@ -127,6 +127,14 @@ impl HasGate for BrainstormState {
                 artifact_path: None,
                 suggested_actions: vec!["approve".to_string(), "cancel".to_string()],
             }),
+            BrainstormState::AwaitingSynthesisApproval { summary } => Some(GateContent {
+                summary: format!(
+                    "Discovery complete. Here's what was found:\n\n{summary}\n\n\
+                     Approve to proceed to synthesis, or cancel."
+                ),
+                artifact_path: None,
+                suggested_actions: vec!["approve".to_string(), "cancel".to_string()],
+            }),
             BrainstormState::AwaitingApproval {
                 artifact_path,
                 revision,
@@ -190,6 +198,14 @@ impl HasGate for SpecState {
                     suggested_actions: actions,
                 })
             }
+            SpecState::AwaitingDraftingApproval { summary } => Some(GateContent {
+                summary: format!(
+                    "Research complete. Here's what was found:\n\n{summary}\n\n\
+                     Approve to proceed to drafting, or cancel."
+                ),
+                artifact_path: None,
+                suggested_actions: vec!["approve".to_string(), "cancel".to_string()],
+            }),
             SpecState::AwaitingAnswer { question } => Some(GateContent {
                 summary: question.clone(),
                 artifact_path: None,
@@ -368,6 +384,7 @@ impl WorkflowState {
                 BrainstormState::Discovery(_) | BrainstormState::Synthesis { .. } => {
                     SessionState::Running
                 }
+                BrainstormState::AwaitingSynthesisApproval { .. } => SessionState::WaitingAtGate,
                 BrainstormState::AwaitingApproval { .. } => SessionState::WaitingAtGate,
                 BrainstormState::ErrorGate { .. } => SessionState::ErrorGate,
                 BrainstormState::Complete { .. } => SessionState::Complete,
@@ -376,6 +393,7 @@ impl WorkflowState {
             Self::Spec(s) => match s {
                 SpecState::Research { .. } | SpecState::Drafting { .. } => SessionState::Running,
                 SpecState::AwaitingAnswer { .. } => SessionState::WaitingAtGate,
+                SpecState::AwaitingDraftingApproval { .. } => SessionState::WaitingAtGate,
                 SpecState::AwaitingApproval { .. } => SessionState::WaitingAtGate,
                 SpecState::ErrorGate { .. } => SessionState::ErrorGate,
                 SpecState::Complete { .. } => SessionState::Complete,

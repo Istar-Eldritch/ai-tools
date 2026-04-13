@@ -276,11 +276,13 @@ pub fn progress_for(workflow_type: &str, phase: &str, at_gate: bool) -> (f64, f6
                 1.0
             }
         }
+        ("brainstorm", "awaiting_synthesis_approval") => 1.5,
         ("brainstorm", "synthesis") => 2.0,
         ("brainstorm", "awaiting_approval") => 3.0,
         ("brainstorm", "complete") => 4.0,
 
         ("spec", "research") => 1.0,
+        ("spec", "awaiting_drafting_approval") => 1.5,
         ("spec", "drafting") => 2.0,
         ("spec", "awaiting_approval") => 3.0,
         ("spec", "complete") => 4.0,

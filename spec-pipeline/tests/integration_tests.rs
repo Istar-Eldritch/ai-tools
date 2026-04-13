@@ -155,6 +155,30 @@ fn brainstorm_error_gate() {
 }
 
 #[test]
+fn brainstorm_awaiting_synthesis_approval_gate() {
+    let ws = WorkflowState::Brainstorm(BrainstormState::AwaitingSynthesisApproval {
+        summary: "Found several approaches".to_string(),
+    });
+    assert_eq!(ws.session_state(), SessionState::WaitingAtGate);
+    let gate = ws.gate_content().expect("should have gate content");
+    assert!(gate.summary.contains("Discovery complete"));
+    assert!(gate.suggested_actions.contains(&"approve".to_string()));
+    assert!(gate.suggested_actions.contains(&"cancel".to_string()));
+}
+
+#[test]
+fn spec_awaiting_drafting_approval_gate() {
+    let ws = WorkflowState::Spec(SpecState::AwaitingDraftingApproval {
+        summary: "Researched the problem space".to_string(),
+    });
+    assert_eq!(ws.session_state(), SessionState::WaitingAtGate);
+    let gate = ws.gate_content().expect("should have gate content");
+    assert!(gate.summary.contains("Research complete"));
+    assert!(gate.suggested_actions.contains(&"approve".to_string()));
+    assert!(gate.suggested_actions.contains(&"cancel".to_string()));
+}
+
+#[test]
 fn spec_state_transitions() {
     let research = WorkflowState::Spec(SpecState::Research { turn: 0, gate_answer: None });
     assert_eq!(research.session_state(), SessionState::Running);
