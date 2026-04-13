@@ -1244,21 +1244,12 @@ async fn apply_approve(
             // Approve at the configuration gate: begin the autonomous run.
             let num_phases = phases.len();
             let initial_metrics = Vec::with_capacity(num_phases);
-            if config.skip_plan_generation {
-                WorkflowState::Implement(ImplementState::Implementation {
-                    phases: phases.clone(),
-                    current_phase_idx: 0,
-                    config: config.clone(),
-                    metrics: initial_metrics,
-                })
-            } else {
-                WorkflowState::Implement(ImplementState::PlanGeneration {
-                    phases: phases.clone(),
-                    current_phase_idx: 0,
-                    config: config.clone(),
-                    metrics: initial_metrics,
-                })
-            }
+            WorkflowState::Implement(ImplementState::Implementation {
+                phases: phases.clone(),
+                current_phase_idx: 0,
+                config: config.clone(),
+                metrics: initial_metrics,
+            })
         }
         WorkflowState::Implement(ImplementState::AwaitingApproval {
             metrics,
@@ -1738,9 +1729,6 @@ async fn apply_configure(
 
     // Parse partial config and merge fields that are present.
     if let Ok(overrides) = serde_json::from_str::<serde_json::Value>(config_json) {
-        if let Some(v) = overrides.get("planner").and_then(|v| v.as_str()) {
-            config.planner = v.to_string();
-        }
         if let Some(v) = overrides.get("reviewer").and_then(|v| v.as_str()) {
             config.reviewer = v.to_string();
         }
@@ -1752,9 +1740,6 @@ async fn apply_configure(
         }
         if let Some(v) = overrides.get("code_revision_limit").and_then(|v| v.as_u64()) {
             config.code_revision_limit = v as u32;
-        }
-        if let Some(v) = overrides.get("skip_plan_generation").and_then(|v| v.as_bool()) {
-            config.skip_plan_generation = v;
         }
     } else {
         warn!(%session_id, %config_json, "failed to parse configure JSON, keeping existing config");
@@ -1785,7 +1770,6 @@ async fn apply_configure(
 /// Resolve which model to use for a given implement sub-phase.
 fn resolve_implement_model(sub_phase: &str, config: &ImplementConfig) -> String {
     match sub_phase {
-        "plan_generation" => config.planner.clone(),
         "code_review" | "iteration_review" => config.reviewer.clone(),
         "code_revision" | "iteration_revision" => config.reviser.clone(),
         "implementation" => config.implementer.clone(),
@@ -1906,13 +1890,6 @@ pub async fn run_implement_session(
                         .unwrap_or_else(|| model_config.for_role(role).to_string());
                     ("phase_extraction", "implement", m)
                 }
-                ImplementState::PlanGeneration { config, .. } => {
-                    let m = session
-                        .model_override
-                        .clone()
-                        .unwrap_or_else(|| resolve_implement_model("plan_generation", config));
-                    ("plan_generation", "implement", m)
-                }
                 ImplementState::Implementation { config, .. } => {
                     let m = session
                         .model_override
@@ -1980,14 +1957,9 @@ pub async fn run_implement_session(
             // Build prior_artifacts: always include the spec tmp path.
             let mut prior_artifacts = vec![spec_tmp_path.display().to_string()];
 
-            // For phases that work with a plan, include the plan path.
+            // For phases that have a current phase, include the plan path.
             match &is {
-                ImplementState::PlanGeneration {
-                    phases,
-                    current_phase_idx,
-                    ..
-                }
-                | ImplementState::Implementation {
+                ImplementState::Implementation {
                     phases,
                     current_phase_idx,
                     ..
@@ -2024,12 +1996,7 @@ pub async fn run_implement_session(
 
             // Add current phase description as sub_phase for agent context.
             let sub_phase = match &is {
-                ImplementState::PlanGeneration {
-                    phases,
-                    current_phase_idx,
-                    ..
-                }
-                | ImplementState::Implementation {
+                ImplementState::Implementation {
                     phases,
                     current_phase_idx,
                     ..
@@ -2181,7 +2148,6 @@ async fn process_implement_output(
                         } else {
                             metrics.push(PhaseMetrics {
                                 phase_number: phase_num,
-                                plan_cycles: 0,
                                 code_cycles: code_revision + 1,
                                 code_approved_first_pass: approved && code_revision == 0,
                             });
@@ -2205,15 +2171,8 @@ async fn process_implement_output(
                                 metrics,
                                 approval_revision: 0,
                             }
-                        } else if config.skip_plan_generation {
-                            ImplementState::Implementation {
-                                phases,
-                                current_phase_idx: next_idx,
-                                config,
-                                metrics,
-                            }
                         } else {
-                            ImplementState::PlanGeneration {
+                            ImplementState::Implementation {
                                 phases,
                                 current_phase_idx: next_idx,
                                 config,
@@ -2354,20 +2313,6 @@ async fn process_implement_output(
                         config: ImplementConfig::default(),
                     }
                 }
-                ImplementState::PlanGeneration {
-                    phases,
-                    current_phase_idx,
-                    config,
-                    metrics,
-                } => {
-                    // Plan generated; move directly to Implementation.
-                    ImplementState::Implementation {
-                        phases,
-                        current_phase_idx,
-                        config,
-                        metrics,
-                    }
-                }
                 ImplementState::Implementation {
                     phases,
                     current_phase_idx,
@@ -2375,7 +2320,7 @@ async fn process_implement_output(
                     mut metrics,
                 } => {
                     // Implementation done; move to CodeReview.
-                    // If we skipped planning, ensure metrics entry exists.
+                    // Ensure metrics entry exists for this phase.
                     let phase_num = phases
                         .get(current_phase_idx)
                         .map(|p| p.number)
@@ -2383,7 +2328,6 @@ async fn process_implement_output(
                     if !metrics.iter().any(|m| m.phase_number == phase_num) {
                         metrics.push(PhaseMetrics {
                             phase_number: phase_num,
-                            plan_cycles: 0,
                             code_cycles: 0,
                             code_approved_first_pass: false,
                         });

@@ -461,10 +461,10 @@ Your job depends on the current `phase` field in the JSON input (see below).
 You receive a JSON object on stdin with these fields:
 - `topic` — the path to the original spec file.
 - `workflow_type` — always "implement".
-- `phase` — one of: "phase_extraction", "plan_generation", "implementation",
+- `phase` — one of: "phase_extraction", "implementation",
   "code_review", "code_revision", "iteration_review", "iteration_revision".
 - `sub_phase` — e.g. "phase1_backend_api" identifying the current impl phase.
-- `prior_artifacts` — `[spec_tmp_path]` or `[spec_tmp_path, plan_file_path]`.
+- `prior_artifacts` — `[spec_tmp_path]`.
 - `context_refs` — includes the spec tmp path and any user-provided context.
 - `gate_history` — list of prior gate questions and user responses.
 - `revision_feedback` — review feedback for revision phases (null otherwise).
@@ -546,106 +546,36 @@ phases defined in it.
 
 ---
 
-## Phase: plan_generation
+## Phase: implementation
 
-Follow these instructions when `phase` is "plan_generation".
+Follow these instructions when `phase` is "implementation".
 
-Your goal is to read the specification and phase description, then produce a
-detailed implementation plan for that phase.
+Your goal is to implement code changes for the current phase of the spec.
 
 ### CRITICAL: Codebase Grounding First
 
-Before writing ANY plan, you MUST explore the existing codebase:
+Before writing ANY code, you MUST explore the existing codebase:
 1. Explore project structure to understand layout and conventions.
 2. Find similar code — look for patterns to follow.
 3. Read related files — understand existing implementations.
 4. Check test patterns — how are tests structured in this project?
 
+### Implementation Workflow
+
+1. **Codebase Grounding** (do this FIRST — see above).
+2. **Plan your approach**: Design your implementation strategy based on
+   what you found. Consider file paths, code patterns, and dependencies.
+3. **Follow TDD** (if project uses it): Write tests first.
+4. **Make Changes**: Implement following existing code style, step by step.
+5. **Verify**: Run tests after each step.
+
 ### Task
 
 1. Read the spec from the spec path in `context_refs`.
-2. Understand the phase you're planning (from `sub_phase`).
-3. Explore the codebase using parallel subagent dispatch (see above).
-4. Write a detailed, executable implementation plan to the plan path in
-   `prior_artifacts[1]`.
-5. If `revision_feedback` is present, revise the existing plan instead.
-
-### Plan Format
-
-Your plan MUST follow this structure:
-
-```markdown
-# Phase N: <Phase Name>
-
-**Estimated Effort**: X days
-
-## Overview
-Brief description of what this phase accomplishes.
-
-## Prerequisites
-- Phase N-1 complete (if applicable)
-- Any other prerequisites
-
-## Steps
-
-### Step N.1: [Specific Step Name]
-- Files: path/to/file (verified exists)
-- Pattern Reference: Based on path/to/similar_existing
-- Action: Specific changes to make (with before/after code)
-- Verify: How to test this step
-
-### Step N.2: ...
-
-## Files Summary
-
-### New Files
-| File | Purpose | Pattern From |
-|------|---------|--------------|
-| path/to/new | Description | Based on existing_similar |
-
-### Modified Files
-| File | Changes |
-|------|---------|
-| path/to/existing | What sections change |
-
-## Completion Checklist
-- [ ] Step N.1 complete
-- [ ] Step N.2 complete
-- [ ] All tests pass
-```
-
-Your plan must be executable with minimal interpretation: exact file paths,
-code examples matching project style, before/after for modifications, real
-verification commands, and pattern references to existing code.
-
-### Output
-
-```json
-{"type": "done", "summary": "<brief summary of the plan>", "artifact_path": "<path to the plan file>"}
-```
-
----
-
-## Phase: implementation
-
-Follow these instructions when `phase` is "implementation".
-
-Your goal is to implement code changes according to the implementation plan.
-
-### Implementation Workflow
-
-1. **Codebase Grounding**: Read related files to understand patterns.
-2. **Follow TDD** (if project uses it): Write tests first.
-3. **Make Changes**: Implement following existing code style, step by step.
-4. **Verify**: Run tests after each step.
-
-### Task
-
-1. Read the implementation plan from `prior_artifacts[1]`.
-2. Read the spec from the spec path in `context_refs` for reference.
-3. Implement the changes step by step, following the plan.
-4. Follow existing project conventions and code style.
-5. Do not add unnecessary changes beyond what the plan specifies.
+2. Understand the phase you're implementing (from `sub_phase`).
+3. Explore the codebase thoroughly before writing any code.
+4. Implement the changes step by step.
+5. Follow existing project conventions and code style.
 6. If `revision_feedback` is present, address the code review feedback.
 
 ### CRITICAL: Testing Requirement
@@ -663,7 +593,6 @@ Report in your summary:
 - What was completed (which steps).
 - Test results (REQUIRED — include pass/fail status).
 - Any issues encountered.
-- Any deviations from plan (with justification).
 
 ### Output
 
@@ -696,7 +625,7 @@ execute code. READ test files to verify coverage, but do NOT execute them.
 
 ### Task
 
-1. Read the spec and plan for context.
+1. Read the spec for context.
 2. Review the recent code changes (use git diff or explore modified files).
 3. Evaluate against ALL six focus areas above.
 

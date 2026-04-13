@@ -16,8 +16,6 @@ pub struct ExtractedPhase {
 /// User-configurable model assignments for the implement workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImplementConfig {
-    /// Model used to generate phase implementation plans.
-    pub planner: String,
     /// Model used to review code.
     pub reviewer: String,
     /// Model used to revise code after review.
@@ -26,19 +24,15 @@ pub struct ImplementConfig {
     pub implementer: String,
     /// Max code review+revision cycles per phase before forcing advancement.
     pub code_revision_limit: u32,
-    /// When true, skip PlanGeneration for all phases.
-    pub skip_plan_generation: bool,
 }
 
 impl Default for ImplementConfig {
     fn default() -> Self {
         Self {
-            planner: "opus".to_string(),
             reviewer: "sonnet".to_string(),
             reviser: "sonnet".to_string(),
             implementer: "opus".to_string(),
             code_revision_limit: 3,
-            skip_plan_generation: false,
         }
     }
 }
@@ -47,7 +41,6 @@ impl Default for ImplementConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhaseMetrics {
     pub phase_number: u32,
-    pub plan_cycles: u32,
     pub code_cycles: u32,
     pub code_approved_first_pass: bool,
 }
@@ -65,15 +58,6 @@ pub enum ImplementState {
     Configuring {
         phases: Vec<ExtractedPhase>,
         config: ImplementConfig,
-    },
-
-    /// Generating an implementation plan for the current phase.
-    #[serde(rename = "plan_generation")]
-    PlanGeneration {
-        phases: Vec<ExtractedPhase>,
-        current_phase_idx: usize,
-        config: ImplementConfig,
-        metrics: Vec<PhaseMetrics>,
     },
 
     /// Implementing the current phase.
@@ -160,7 +144,6 @@ impl ImplementState {
         match self {
             Self::PhaseExtraction => "phase_extraction",
             Self::Configuring { .. } => "configuring",
-            Self::PlanGeneration { .. } => "plan_generation",
             Self::Implementation { .. } => "implementation",
             Self::CodeReview { .. } => "code_review",
             Self::CodeRevision { .. } => "code_revision",
@@ -183,7 +166,6 @@ impl ImplementState {
     pub fn phase_role(&self) -> PhaseRole {
         match self {
             Self::PhaseExtraction => PhaseRole::Discovery,
-            Self::PlanGeneration { .. } => PhaseRole::Synthesis,
             Self::Implementation { .. } => PhaseRole::Synthesis,
             Self::CodeReview { .. } => PhaseRole::Review,
             Self::CodeRevision { .. } => PhaseRole::Synthesis,

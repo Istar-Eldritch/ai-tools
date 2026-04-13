@@ -261,20 +261,16 @@ impl HasGate for ImplementState {
                     "Implement workflow ready. Review extracted phases and model configuration.\n\n\
                      Phases:\n{}\n\n\
                      Model config:\n\
-                     - planner: {}\n\
                      - reviewer: {}\n\
                      - reviser: {}\n\
                      - implementer: {}\n\
-                     - code_revision_limit: {}\n\
-                     - skip_plan_generation: {}\n\n\
+                     - code_revision_limit: {}\n\n\
                      Respond with 'approve' to begin, 'configure' with JSON to adjust, or 'cancel'.",
                     phase_list.join("\n"),
-                    config.planner,
                     config.reviewer,
                     config.reviser,
                     config.implementer,
                     config.code_revision_limit,
-                    config.skip_plan_generation,
                 );
                 Some(GateContent {
                     summary,
@@ -287,7 +283,6 @@ impl HasGate for ImplementState {
                 })
             }
             ImplementState::AwaitingApproval { metrics, approval_revision, .. } => {
-                let total_plan_cycles: u32 = metrics.iter().map(|m| m.plan_cycles).sum();
                 let total_code_cycles: u32 = metrics.iter().map(|m| m.code_cycles).sum();
                 let first_pass_count = metrics.iter().filter(|m| m.code_approved_first_pass).count();
                 let total_phases = metrics.len();
@@ -300,18 +295,18 @@ impl HasGate for ImplementState {
 
                 let summary = if *approval_revision >= crate::phase_runner::FEEDBACK_DEPTH_LIMIT {
                     format!(
-                        "Implementation complete. {} phases implemented. Plan cycles: {} total. \
+                        "Implementation complete. {} phases implemented. \
                          Code cycles: {} total. Code approved on first pass: {}/{} phases. \
                          Revision limit ({}) reached -- please approve or cancel.",
-                        total_phases, total_plan_cycles, total_code_cycles,
+                        total_phases, total_code_cycles,
                         first_pass_count, total_phases,
                         crate::phase_runner::FEEDBACK_DEPTH_LIMIT,
                     )
                 } else {
                     format!(
-                        "Implementation complete. {} phases implemented. Plan cycles: {} total. \
+                        "Implementation complete. {} phases implemented. \
                          Code cycles: {} total. Code approved on first pass: {}/{} phases.",
-                        total_phases, total_plan_cycles, total_code_cycles,
+                        total_phases, total_code_cycles,
                         first_pass_count, total_phases,
                     )
                 };
@@ -397,7 +392,6 @@ impl WorkflowState {
             },
             Self::Implement(s) => match s {
                 ImplementState::PhaseExtraction
-                | ImplementState::PlanGeneration { .. }
                 | ImplementState::Implementation { .. }
                 | ImplementState::CodeReview { .. }
                 | ImplementState::CodeRevision { .. }

@@ -474,14 +474,6 @@ fn implement_state_session_state_mapping() {
     });
     assert_eq!(configuring.session_state(), SessionState::WaitingAtGate);
 
-    let plan_gen = WorkflowState::Implement(ImplementState::PlanGeneration {
-        phases: vec![],
-        current_phase_idx: 0,
-        config: ImplementConfig::default(),
-        metrics: vec![],
-    });
-    assert_eq!(plan_gen.session_state(), SessionState::Running);
-
     let implementation = WorkflowState::Implement(ImplementState::Implementation {
         phases: vec![],
         current_phase_idx: 0,
@@ -519,12 +511,10 @@ fn implement_state_session_state_mapping() {
 #[test]
 fn implement_config_defaults() {
     let config = ImplementConfig::default();
-    assert_eq!(config.planner, "opus");
     assert_eq!(config.reviewer, "sonnet");
     assert_eq!(config.reviser, "sonnet");
     assert_eq!(config.implementer, "opus");
     assert_eq!(config.code_revision_limit, 3);
-    assert!(!config.skip_plan_generation);
 }
 
 #[test]
@@ -559,7 +549,6 @@ fn implement_awaiting_approval_gate_content() {
         config: ImplementConfig::default(),
         metrics: vec![PhaseMetrics {
             phase_number: 1,
-            plan_cycles: 2,
             code_cycles: 1,
             code_approved_first_pass: true,
         }],
@@ -575,14 +564,6 @@ fn implement_awaiting_approval_gate_content() {
 fn implement_phase_roles() {
     let extraction = WorkflowState::Implement(ImplementState::PhaseExtraction);
     assert_eq!(extraction.phase_role(), PhaseRole::Discovery);
-
-    let plan_gen = WorkflowState::Implement(ImplementState::PlanGeneration {
-        phases: vec![],
-        current_phase_idx: 0,
-        config: ImplementConfig::default(),
-        metrics: vec![],
-    });
-    assert_eq!(plan_gen.phase_role(), PhaseRole::Synthesis);
 
     let implementation = WorkflowState::Implement(ImplementState::Implementation {
         phases: vec![],
@@ -604,7 +585,7 @@ fn implement_phase_roles() {
 
 #[test]
 fn to_error_gate_implement() {
-    let running = WorkflowState::Implement(ImplementState::PlanGeneration {
+    let running = WorkflowState::Implement(ImplementState::Implementation {
         phases: vec![],
         current_phase_idx: 0,
         config: ImplementConfig::default(),
@@ -618,11 +599,11 @@ fn to_error_gate_implement() {
 #[test]
 fn gate_response_configure_serialization() {
     let configure = GateResponse::Configure {
-        config_json: r#"{"planner":"sonnet"}"#.to_string(),
+        config_json: r#"{"reviewer":"opus"}"#.to_string(),
     };
     let json = serde_json::to_string(&configure).expect("serialize");
     assert!(json.contains("configure"));
-    assert!(json.contains("planner"));
+    assert!(json.contains("reviewer"));
 }
 
 // ---------------------------------------------------------------------------
@@ -767,10 +748,10 @@ fn notification_progress_values() {
     assert_eq!(progress_for("brainstorm", "awaiting_approval", false), (3.0, 4.0));
     assert_eq!(progress_for("brainstorm", "complete", false), (4.0, 4.0));
 
-    // Implement: 8 total
-    assert_eq!(progress_for("implement", "phase_extraction", false), (1.0, 8.0));
-    assert_eq!(progress_for("implement", "implementation", false), (5.0, 8.0));
-    assert_eq!(progress_for("implement", "complete", false), (8.0, 8.0));
+    // Implement: 6 total
+    assert_eq!(progress_for("implement", "phase_extraction", false), (1.0, 6.0));
+    assert_eq!(progress_for("implement", "implementation", false), (3.0, 6.0));
+    assert_eq!(progress_for("implement", "complete", false), (6.0, 6.0));
 }
 
 #[tokio::test]
