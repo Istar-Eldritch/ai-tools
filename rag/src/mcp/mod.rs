@@ -29,7 +29,15 @@ pub struct IngestParams {
     /// The full text content of the document to ingest.
     /// For PDF files (content_type "application/pdf"), this must be
     /// the base64-encoded raw PDF bytes.
+    /// When using `file_path` or `upload_token`, pass an empty string for this field.
     pub content: String,
+    /// Absolute path to a local file (stdio transport only).
+    /// When present, the server reads raw bytes directly from this path,
+    /// ignoring `content`. Rejected over HTTP transport.
+    pub file_path: Option<String>,
+    /// Staging token returned by POST /upload (HTTP transport only).
+    /// Not supported over stdio — use `file_path` instead.
+    pub upload_token: Option<String>,
     /// Human-readable filename (e.g. "design.md").
     pub filename: String,
     /// MIME content type (e.g. "text/plain" or "text/markdown").
@@ -131,15 +139,79 @@ impl McpServer {
 
 #[tool_router]
 impl McpServer {
-    #[tool(description = "Ingest a document into the knowledge base. Stores the original to S3 when configured, chunks the text, embeds the chunks, and persists everything to PostgreSQL. For PDF files, set content_type to 'application/pdf' and provide base64-encoded PDF bytes as the content. Returns a JSON object with the source record (id, filename, content_type, metadata, created_at).")]
+    #[tool(description = "Ingest a document into the knowledge base. Stores the original to S3 when configured, chunks the text, embeds the chunks, and persists everything to PostgreSQL. For PDF files, set content_type to 'application/pdf' and provide base64-encoded PDF bytes as the content. Alternatively, pass file_path with the absolute path to a local file (stdio transport only) and set content to an empty string. Returns a JSON object with the source record (id, filename, content_type, metadata, created_at).")]
     async fn ingest(
         &self,
         Parameters(params): Parameters<IngestParams>,
     ) -> Result<CallToolResult, McpError> {
+        // ── upload_token rejection (stdio only) ─────────────────────
+        // Upload tokens are only meaningful in HTTP mode; reject here.
+        if params.upload_token.as_ref().is_some_and(|s| !s.is_empty()) {
+            return Err(McpError::invalid_params(
+                "upload_token is not supported over stdio; use file_path instead".to_string(),
+                None,
+            ));
+        }
+
         let metadata = params
             .metadata
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
 
+        // ── file_path resolution (stdio only) ──────────────────────────
+        // When file_path is provided, read raw bytes directly from the
+        // local filesystem, bypassing the content/base64 path entirely.
+        if let Some(ref path) = params.file_path {
+            if !path.is_empty() {
+                let raw_bytes = tokio::fs::read(path).await.map_err(|e| {
+                    McpError::invalid_params(
+                        format!("failed to read file_path '{}': {}", path, e),
+                        None,
+                    )
+                })?;
+
+                // Detect PDF: check content_type or magic bytes
+                let content_type_is_pdf = params.content_type.to_lowercase().contains("pdf");
+                let is_pdf = content_type_is_pdf || raw_bytes.starts_with(b"%PDF");
+
+                let source = if is_pdf {
+                    self.ingest
+                        .ingest_pdf(
+                            &raw_bytes,
+                            &params.filename,
+                            metadata,
+                            params.project,
+                            None,
+                        )
+                        .await
+                        .map_err(app_error_to_mcp_error)?
+                } else {
+                    // Text file: convert bytes to string
+                    let text = String::from_utf8(raw_bytes).map_err(|e| {
+                        McpError::invalid_params(
+                            format!("file_path content is not valid UTF-8: {e}"),
+                            None,
+                        )
+                    })?;
+                    self.ingest
+                        .ingest(
+                            &text,
+                            &params.filename,
+                            &params.content_type,
+                            metadata,
+                            params.project,
+                            None,
+                        )
+                        .await
+                        .map_err(app_error_to_mcp_error)?
+                };
+
+                let json = serde_json::to_string(&source)
+                    .map_err(|e| McpError::internal_error(format!("serialization error: {e}"), None))?;
+                return Ok(CallToolResult::success(vec![Content::text(json)]));
+            }
+        }
+
+        // ── Legacy content/base64 path (unchanged) ─────────────────────
         // Detect PDF by content_type first; magic-bytes fallback handles
         // callers that omit or mis-spell the MIME type (spec: MCP Tool Changes).
         let content_type_is_pdf = params.content_type.to_lowercase().contains("pdf");

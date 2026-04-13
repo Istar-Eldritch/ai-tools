@@ -14,6 +14,7 @@ use rag_mcp::db;
 use rag_mcp::embedding::EmbeddingService;
 use rag_mcp::http::oauth_state::{PendingAuthStore, PendingCodeStore};
 use rag_mcp::http::session::SessionStore;
+use rag_mcp::http::upload::UploadStore;
 use rag_mcp::http::{self as http_mod, AppState};
 use rag_mcp::pipelines::delete::DeletePipeline;
 use rag_mcp::pipelines::directory_ingest::DirectoryIngestPipeline;
@@ -281,6 +282,18 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
 
+            let upload_store = Arc::new(UploadStore::new(300)); // 300-second TTL
+            {
+                let us = Arc::clone(&upload_store);
+                tokio::spawn(async move {
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                    loop {
+                        ticker.tick().await;
+                        us.evict_expired();
+                    }
+                });
+            }
+
             let authorized_server = AuthorizedMcpServer::new(
                 pool.clone(),
                 ingest_pipeline,
@@ -308,6 +321,8 @@ async fn main() -> anyhow::Result<()> {
                 authorized_server,
                 first_admin_email: http_config.first_admin_email.clone(),
                 allowed_redirect_uris: http_config.allowed_redirect_uris.clone(),
+                upload_store,
+                max_upload_bytes: config.max_pdf_bytes,
             });
 
             let bind_addr = http_config.http_bind.clone();
@@ -316,6 +331,8 @@ async fn main() -> anyhow::Result<()> {
             HttpServer::new(move || {
                 App::new()
                     .app_data(app_state.clone())
+                    .app_data(web::JsonConfig::default().limit(64 * 1024 * 1024)) // 64 MB
+                    .app_data(web::PayloadConfig::default().limit(128 * 1024 * 1024)) // 128 MB for multipart
                     .configure(http_mod::configure_routes)
             })
             .bind(&bind_addr)?

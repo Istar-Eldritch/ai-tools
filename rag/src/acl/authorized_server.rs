@@ -89,16 +89,24 @@ impl AuthorizedMcpServer {
         }
     }
 
+    /// Public accessor for the ingest pipeline, used by the HTTP handler
+    /// to resolve upload tokens and call `ingest_pdf` directly.
+    pub fn ingest_pipeline(&self) -> &IngestPipeline {
+        &self.ingest
+    }
+
     /// List available tools, showing admin tools only if user is admin.
     pub fn tool_list(&self, ctx: &UserContext) -> Vec<ToolDef> {
         let mut tools = vec![
             ToolDef {
                 name: "ingest".into(),
-                description: "Ingest a document into the knowledge base.".into(),
+                description: "Ingest a document into the knowledge base. When using file_path (stdio only), pass an empty string for content.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "content": {"type": "string", "description": "Full text content. For PDFs (content_type 'application/pdf'), provide base64-encoded bytes."},
+                        "content": {"type": "string", "description": "Full text content. For PDFs (content_type 'application/pdf'), provide base64-encoded bytes. Pass empty string when using file_path or upload_token."},
+                        "file_path": {"type": "string", "description": "Absolute path to a local file (stdio transport only). Rejected over HTTP."},
+                        "upload_token": {"type": "string", "description": "Staging token from POST /upload (HTTP only). Mutually exclusive with content and file_path."},
                         "filename": {"type": "string", "description": "Human-readable filename"},
                         "content_type": {"type": "string", "description": "MIME content type"},
                         "metadata": {"type": "object", "description": "Arbitrary metadata"},
@@ -233,6 +241,11 @@ impl AuthorizedMcpServer {
         #[derive(Deserialize)]
         struct Params {
             content: String,
+            #[serde(default)]
+            file_path: Option<String>,
+            #[serde(default)]
+            #[allow(dead_code)] // resolved in mcp_handler before reaching here
+            upload_token: Option<String>,
             filename: String,
             content_type: String,
             metadata: Option<serde_json::Value>,
@@ -243,6 +256,13 @@ impl AuthorizedMcpServer {
             Ok(p) => p,
             Err(e) => return ToolCallResult::error(format!("invalid params: {e}")),
         };
+
+        // file_path is stdio-only; reject if present over HTTP.
+        if params.file_path.as_ref().is_some_and(|s| !s.is_empty()) {
+            return ToolCallResult::error(
+                "file_path is not supported over HTTP; use POST /upload instead".into(),
+            );
+        }
 
         // ACL check: non-admin users must have writer or admin role on the target project.
         if !ctx.is_admin {

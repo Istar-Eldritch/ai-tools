@@ -3,6 +3,8 @@ pub mod mcp_handler;
 pub mod middleware;
 pub mod oauth_state;
 pub mod session;
+pub mod upload;
+pub mod upload_handler;
 
 use std::sync::Arc;
 
@@ -14,6 +16,7 @@ use crate::auth::api_key::ApiKeyCache;
 use crate::auth::google::GoogleOAuthClient;
 use crate::http::oauth_state::{PendingAuthStore, PendingCodeStore};
 use crate::http::session::SessionStore;
+use crate::http::upload::UploadStore;
 
 /// Shared application state for the Actix Web server.
 pub struct AppState {
@@ -30,6 +33,8 @@ pub struct AppState {
     pub first_admin_email: Option<String>,
     /// Allowlist of permitted client redirect_uri values. Empty means no restriction.
     pub allowed_redirect_uris: Vec<String>,
+    pub upload_store: Arc<UploadStore>,
+    pub max_upload_bytes: u64,
 }
 
 /// Configure Actix Web routes.
@@ -43,5 +48,6 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     .route("/oauth/token", web::post().to(auth_handler::token))
     .route("/mcp", web::post().to(mcp_handler::handle_mcp))
     .route("/mcp", web::get().to(mcp_handler::handle_mcp_get))
-    .route("/mcp", web::delete().to(mcp_handler::handle_mcp_delete));
+    .route("/mcp", web::delete().to(mcp_handler::handle_mcp_delete))
+    .route("/upload", web::post().to(upload_handler::handle_upload));
 }

@@ -4,6 +4,7 @@ use serde_json::json;
 
 use crate::acl::authorized_server::{ERR_PERMISSION_DENIED, ERR_UNSUPPORTED};
 use crate::acl::context::UserContext;
+use crate::db::queries;
 
 use super::middleware::extract_user_from_api_key;
 use super::AppState;
@@ -241,6 +242,121 @@ async fn handle_tools_call(
             ERR_UNSUPPORTED,
             "ingest_directory is not supported over HTTP".into(),
         ));
+    }
+
+    // Reject file_path on ingest over HTTP (stdio-only; use POST /upload instead)
+    if tool_name == "ingest" {
+        if let Some(args) = params.get("arguments") {
+            if args.get("file_path").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty()) {
+                return HttpResponse::Ok().json(JsonRpcResponse::error(
+                    id,
+                    ERR_UNSUPPORTED,
+                    "file_path is not supported over HTTP; use POST /upload instead".into(),
+                ));
+            }
+        }
+    }
+
+    // Resolve upload_token directly: bypass MCP dispatch to avoid
+    // passing raw PDF bytes through the JSON arguments map.
+    if tool_name == "ingest"
+        && let Some(args) = params.get("arguments")
+        && let Some(token_str) = args.get("upload_token").and_then(|v| v.as_str())
+        && !token_str.is_empty()
+    {
+        let token = match uuid::Uuid::parse_str(token_str) {
+            Ok(t) => t,
+            Err(_) => {
+                return HttpResponse::Ok().json(JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    "invalid upload_token: not a valid UUID".into(),
+                ));
+            }
+        };
+
+        let staged = match state.upload_store.take(&token) {
+            Some(s) => s,
+            None => {
+                return HttpResponse::Ok().json(JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    "upload_token not found or expired".into(),
+                ));
+            }
+        };
+
+        // Extract remaining ingest params from arguments
+        let filename = args
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&staged.filename)
+            .to_string();
+        let metadata = args
+            .get("metadata")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let project = args
+            .get("project")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // ACL check for project access (mirror authorized_server logic)
+        if !ctx.is_admin
+            && let Some(ref project_name) = project
+        {
+            match queries::check_project_write_access(
+                &state.pool,
+                ctx.user_id,
+                project_name,
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return HttpResponse::Ok().json(JsonRpcResponse::error(
+                        id,
+                        ERR_PERMISSION_DENIED,
+                        "PERMISSION_DENIED: writer or admin role required on this project".into(),
+                    ));
+                }
+                Err(e) => {
+                    return HttpResponse::Ok().json(JsonRpcResponse::error(
+                        id,
+                        -32603,
+                        format!("ACL check failed: {e}"),
+                    ));
+                }
+            }
+        }
+
+        // Call ingest_pdf directly on the pipeline
+        let pipeline = state.authorized_server.ingest_pipeline();
+        match pipeline
+            .ingest_pdf(
+                &staged.bytes,
+                &filename,
+                metadata,
+                project,
+                Some(ctx.user_id),
+            )
+            .await
+        {
+            Ok(source) => {
+                let json = serde_json::to_value(&source).unwrap_or(serde_json::json!({}));
+                let result = serde_json::json!({
+                    "content": [{"type": "text", "text": json.to_string()}],
+                });
+                return HttpResponse::Ok().json(JsonRpcResponse::success(id, result));
+            }
+            Err(e) => {
+                return HttpResponse::Ok().json(JsonRpcResponse::error(
+                    id,
+                    -32603,
+                    format!("ingest failed: {e}"),
+                ));
+            }
+        }
     }
 
     let arguments = params
