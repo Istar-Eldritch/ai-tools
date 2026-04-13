@@ -2187,6 +2187,15 @@ async fn process_implement_output(
                             });
                         }
 
+                        // Commit phase changes before advancing.
+                        if let Some(phase) = phases.get(current_phase_idx) {
+                            let msg = format!(
+                                "spec-pipeline: complete phase {} - {}\n\n{}\n\nSession: {}",
+                                phase.number, phase.slug, phase.description, session_id
+                            );
+                            create_phase_commit(session_id, &msg).await;
+                        }
+
                         // Move to next phase or AwaitingApproval.
                         let next_idx = current_phase_idx + 1;
                         if next_idx >= phases.len() {
@@ -2237,6 +2246,14 @@ async fn process_implement_output(
                                 limit = FEEDBACK_DEPTH_LIMIT,
                                 "iteration review limit reached, returning to approval gate"
                             );
+                        }
+                        // Commit post-approval revision changes.
+                        {
+                            let msg = format!(
+                                "spec-pipeline: post-approval revisions (iteration {})\n\nSession: {}",
+                                iteration, session_id
+                            );
+                            create_phase_commit(session_id, &msg).await;
                         }
                         ImplementState::AwaitingApproval {
                             phases,
@@ -2442,4 +2459,72 @@ async fn process_implement_output(
             }
         }
     }
+}
+
+/// Create a git commit for completed phase work. Non-fatal: logs warnings on failure.
+async fn create_phase_commit(session_id: Uuid, commit_message: &str) {
+    // 1. Check for uncommitted changes.
+    let status_output = match tokio::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(%session_id, error = %e, "failed to run git status");
+            return;
+        }
+    };
+
+    if !status_output.status.success() {
+        let stderr = String::from_utf8_lossy(&status_output.stderr);
+        warn!(%session_id, %stderr, "git status failed (not a git repo?)");
+        return;
+    }
+
+    let status_str = String::from_utf8_lossy(&status_output.stdout);
+    if status_str.trim().is_empty() {
+        info!(%session_id, "no changes to commit after phase");
+        return;
+    }
+
+    // 2. Stage all changes.
+    let add_output = match tokio::process::Command::new("git")
+        .args(["add", "-A"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(%session_id, error = %e, "failed to run git add");
+            return;
+        }
+    };
+
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr);
+        warn!(%session_id, %stderr, "git add -A failed");
+        return;
+    }
+
+    // 3. Commit.
+    let commit_output = match tokio::process::Command::new("git")
+        .args(["commit", "-m", commit_message])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(%session_id, error = %e, "failed to run git commit");
+            return;
+        }
+    };
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        warn!(%session_id, %stderr, "git commit failed");
+        return;
+    }
+
+    info!(%session_id, "committed phase changes");
 }
