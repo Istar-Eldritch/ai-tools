@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Thin auth-adding curl wrapper for the SparkyFitness API.
+# Reads SPARKYFITNESS_BASE_URL and SPARKYFITNESS_API_KEY from
+# ~/.config/sparkyfitness/credentials.
+
+set -euo pipefail
+
+CRED="${SPARKYFITNESS_CRED_FILE:-$HOME/.config/sparkyfitness/credentials}"
+if [[ ! -r "$CRED" ]]; then
+  echo "sf: missing credentials at $CRED" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+. "$CRED"
+: "${SPARKYFITNESS_BASE_URL:?missing in $CRED}"
+: "${SPARKYFITNESS_API_KEY:?missing in $CRED}"
+
+CURL_OPTS=()
+if [[ -n "${SPARKYFITNESS_CA_BUNDLE:-}" ]]; then
+  CURL_OPTS+=(--cacert "$SPARKYFITNESS_CA_BUNDLE")
+elif [[ "${SPARKYFITNESS_INSECURE:-0}" == "1" ]]; then
+  CURL_OPTS+=(-k)
+fi
+
+usage() {
+  cat <<EOF
+Usage: sf <method> <path> [body-json]
+       sf raw <method> <path> [body-json]   # prints raw body, no jq
+       sf goals [YYYY-MM-DD]                # default: today
+       sf today                              # daily summary for today
+       sf summary [YYYY-MM-DD]
+       sf meals [searchTerm]
+       sf meal-types
+       sf foods <searchTerm> [page] [pageSize]
+       sf food <foodId>
+       sf entries <YYYY-MM-DD>
+       sf templates                         # meal-plan templates
+       sf weekly-plan [YYYY-MM-DD]          # active weekly plan for date
+
+Examples:
+  sf goals 2026-04-27
+  sf foods oat 1 5
+  sf POST /api/food-entries '{"food_id":"...","variant_id":"...","meal_type":"breakfast","quantity":50,"unit":"g","entry_date":"2026-04-27"}'
+EOF
+}
+
+req() {
+  local method="$1" path="$2" body="${3:-}"
+  local url="${SPARKYFITNESS_BASE_URL}${path}"
+  if [[ -n "$body" ]]; then
+    curl "${CURL_OPTS[@]}" -sS --fail-with-body \
+      -H "Authorization: Bearer $SPARKYFITNESS_API_KEY" \
+      -H "Content-Type: application/json" \
+      -X "$method" -d "$body" "$url"
+  else
+    curl "${CURL_OPTS[@]}" -sS --fail-with-body \
+      -H "Authorization: Bearer $SPARKYFITNESS_API_KEY" \
+      -X "$method" "$url"
+  fi
+}
+
+pretty() {
+  if command -v jq >/dev/null 2>&1; then
+    jq .
+  else
+    python3 -m json.tool
+  fi
+}
+
+today() { date -u +%F; }
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  ""|-h|--help|help) usage; exit 0;;
+  raw)
+    req "$1" "$2" "${3:-}"; echo;;
+  GET|POST|PUT|DELETE|PATCH)
+    req "$cmd" "$1" "${2:-}" | pretty;;
+  goals)
+    d="${1:-$(today)}"
+    req GET "/api/goals/by-date/$d" | pretty;;
+  today)
+    req GET "/api/daily-summary?date=$(today)" | pretty;;
+  summary)
+    d="${1:-$(today)}"
+    req GET "/api/daily-summary?date=$d" | pretty;;
+  meals)
+    if [[ $# -gt 0 ]]; then
+      req GET "/api/meals/search?searchTerm=$(printf %s "$1" | jq -sRr @uri)" | pretty
+    else
+      req GET "/api/meals" | pretty
+    fi;;
+  meal-types)
+    req GET "/api/meal-types" | pretty;;
+  foods)
+    [[ $# -ge 1 ]] || { echo "sf foods <searchTerm> [page] [pageSize]" >&2; exit 1; }
+    q="$1"; page="${2:-1}"; size="${3:-10}"
+    enc=$(printf %s "$q" | jq -sRr @uri)
+    req GET "/api/foods/foods-paginated?searchTerm=$enc&page=$page&pageSize=$size" | pretty;;
+  food)
+    [[ $# -eq 1 ]] || { echo "sf food <foodId>" >&2; exit 1; }
+    req GET "/api/foods/$1" | pretty;;
+  entries)
+    [[ $# -eq 1 ]] || { echo "sf entries <YYYY-MM-DD>" >&2; exit 1; }
+    req GET "/api/food-entries/by-date/$1" | pretty;;
+  templates)
+    req GET "/api/meal-plan-templates" | pretty;;
+  weekly-plan)
+    d="${1:-$(today)}"
+    req GET "/api/weekly-goal-plans/active?date=$d" | pretty;;
+  *) echo "sf: unknown command '$cmd'" >&2; usage >&2; exit 1;;
+esac
