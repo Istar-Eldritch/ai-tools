@@ -8,5 +8,5 @@ CREATE TABLE IF NOT EXISTS chunks (
     UNIQUE (source_id, chunk_index)
 );
 
-CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx
-    ON chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS chunks_embedding_vchordrq_idx
+    ON chunks USING vchordrq (embedding vector_cosine_ops);

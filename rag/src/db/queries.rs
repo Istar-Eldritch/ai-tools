@@ -9,6 +9,9 @@ use super::models::{
 };
 
 pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Source> {
+    if let Some(ref project) = source.project {
+        ensure_project_exists(pool, project).await?;
+    }
     let row = sqlx::query_as::<_, Source>(
         "INSERT INTO sources (id, s3_key, filename, content_type, metadata, project, owner_user_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -24,6 +27,18 @@ pub async fn insert_source(pool: &PgPool, source: &NewSource) -> AppResult<Sourc
     .fetch_one(pool)
     .await?;
     Ok(row)
+}
+
+/// Ensures a row exists in `projects` for the given name. Idempotent; does nothing
+/// if the row is already present. Invoked from `insert_source` so that ingesting
+/// a document with a project tag also registers the project, keeping
+/// `list_projects` in sync with projects that have content.
+pub async fn ensure_project_exists(pool: &PgPool, name: &str) -> AppResult<()> {
+    sqlx::query("INSERT INTO projects (name) VALUES ($1) ON CONFLICT (name) DO NOTHING")
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn get_source_by_id(pool: &PgPool, id: Uuid) -> AppResult<Option<Source>> {

@@ -90,6 +90,9 @@ pub struct IngestDirectoryParams {
     pub project: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct ListProjectsParams {}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListSourcesParams {
     /// Filter results to a specific project name.
@@ -389,6 +392,19 @@ impl McpServer {
         .map_err(app_error_to_mcp_error)?;
 
         let json = serde_json::to_string(&results)
+            .map_err(|e| McpError::internal_error(format!("serialization error: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "List all projects in the knowledge base. Returns a JSON array of project records, each with id, name, description, and created_at. Includes projects with zero sources (unlike deduping list_sources, which only surfaces projects that already have content).")]
+    async fn list_projects(
+        &self,
+        Parameters(_): Parameters<ListProjectsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let projects = db_queries::list_projects(&self.pool)
+            .await
+            .map_err(app_error_to_mcp_error)?;
+        let json = serde_json::to_string(&projects)
             .map_err(|e| McpError::internal_error(format!("serialization error: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }

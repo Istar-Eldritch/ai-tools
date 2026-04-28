@@ -1,12 +1,12 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: tensorchord/vchord-postgres:pg16-v1.1.1
     environment:
       POSTGRES_USER: rag
       POSTGRES_PASSWORD: rag
       POSTGRES_DB: rag
     ports:
-      - "5432:5432"
+      - "6000:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init-db:/docker-entrypoint-initdb.d
