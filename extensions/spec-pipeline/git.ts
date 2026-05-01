@@ -319,7 +319,7 @@ export async function createAgentCommit(
 	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void,
 	scopeFiles?: string[]
 ): Promise<{ success: boolean; commitHash?: string; usedFallback?: boolean }> {
-	// Import generateCommitMessage (async, uses Haiku)
+	// Import generateCommitMessage (async, uses configured commit-message model)
 	const { generateCommitMessage } = await import("./commit-agent.ts");
 	
 	// Step 1: Get files to commit
@@ -358,13 +358,13 @@ export async function createAgentCommit(
 	const diffResult = await execGit(cwd, ["diff", "--cached", "--no-color"]);
 	let diff = diffResult.code === 0 ? diffResult.stdout : undefined;
 	
-	// Truncate diff if too large (keep under ~8KB to avoid overwhelming Haiku)
+	// Truncate diff if too large (keep under ~8KB to avoid overwhelming the commit-message model)
 	const MAX_DIFF_LENGTH = 8000;
 	if (diff && diff.length > MAX_DIFF_LENGTH) {
 		diff = diff.slice(0, MAX_DIFF_LENGTH) + "\n... (diff truncated)";
 	}
 	
-	// Step 6: Generate commit message using Haiku
+	// Step 6: Generate commit message using configured commit-message model
 	const messageResult = await generateCommitMessage({
 		role: context.role as any,
 		modelConfig: context.modelConfig as any,

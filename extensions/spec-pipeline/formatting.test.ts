@@ -145,11 +145,11 @@ describe("formatModelConfig", () => {
 		expect(formatModelConfig({ model: "gpt-5.5", thinking: "high" })).toBe("gpt-5.5/high");
 	});
 
-	it("formats sonnet with medium thinking", () => {
+	it("formats gpt-5.4 with medium thinking", () => {
 		expect(formatModelConfig({ model: "gpt-5.4", thinking: "medium" })).toBe("gpt-5.4/medium");
 	});
 
-	it("formats haiku with off thinking", () => {
+	it("formats gpt-5.4-mini with off thinking", () => {
 		expect(formatModelConfig({ model: "gpt-5.4-mini", thinking: "off" })).toBe("gpt-5.4-mini/off");
 	});
 });

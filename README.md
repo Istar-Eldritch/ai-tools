@@ -23,7 +23,7 @@ A comprehensive workflow automation extension that takes projects from idea to i
 
 **Key Features:**
 - **Fully Conversational** - Discovery and drafting are natural conversations with AI
-- **Tiered Review System** - Implementation uses cheap model (Sonnet) first, expensive (Opus) as quality gate
+- **Tiered Review System** - Implementation uses cheap model (GPT-5.4) first, expensive (GPT-5.5) as quality gate; plan review is disabled by default
 - **Conversational Scoping** - `/plan` command assesses scope and recommends roadmap/epic/feature level
 - **Hierarchical Planning** - Break down large initiatives: roadmaps → epics → features
 - **Git Integration** - Automatic branching, commits, checkpoints, and error recovery
@@ -61,14 +61,14 @@ A comprehensive workflow automation extension that takes projects from idea to i
   "testCommand": "npm test",
   "contextFiles": ["CONTRIBUTING.md", "docs/architecture.md"],
   "models": {
-    "implementer": { "model": "opus", "thinking": "high" },
+    "implementer": { "model": "gpt-5.5", "thinking": "high" },
     "codeReviewer": {
-      "cheap": { "model": "sonnet", "thinking": "medium" },
-      "expensive": { "model": "opus", "thinking": "high" }
+      "cheap": { "model": "gpt-5.4", "thinking": "medium" },
+      "expensive": { "model": "gpt-5.5", "thinking": "high" }
     }
   },
   "reviewCycles": {
-    "planReviewer": { "cheap": 2, "expensive": 1 },
+    "planReviewer": { "cheap": 0, "expensive": 0 },
     "codeReviewer": { "cheap": 3, "expensive": 2 }
   }
 }

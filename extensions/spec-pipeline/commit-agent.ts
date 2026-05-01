@@ -1,7 +1,7 @@
 /**
- * Commit message generation using Haiku via the pi SDK for better context-aware messages.
+ * Commit message generation using the configured model via the pi SDK for better context-aware messages.
  * 
- * Uses a minimal SDK session with NO tools so Haiku just generates text
+ * Uses a minimal SDK session with NO tools so the model just generates text
  * without trying to read files or run commands.
  */
 
@@ -130,7 +130,7 @@ function buildFileListBody(files: string[]): string {
 
 /**
  * Generate a fallback commit message based on the agent context.
- * Used when Haiku generation fails or times out.
+ * Used when model generation fails or times out.
  */
 function generateFallbackMessage(context: CommitMessageContext): string {
 	const { role, files, phase, phaseName, cycle } = context;
@@ -177,7 +177,7 @@ function generateFallbackMessage(context: CommitMessageContext): string {
 }
 
 /**
- * Build a prompt for Haiku to generate a contextual commit message
+ * Build a prompt to generate a contextual commit message
  */
 function buildCommitPrompt(context: CommitMessageContext): string {
 	const { role, files, phase, phaseName, docName, cycle, reviewFeedback, diff } = context;
@@ -327,7 +327,7 @@ export async function generateCommitMessage(
 		let message = output.trim();
 		
 		if (process.env.DEBUG_COMMIT_MESSAGES) {
-			console.error("Haiku output:", JSON.stringify(message));
+			console.error("Commit message model output:", JSON.stringify(message));
 		}
 		
 		// Remove markdown code blocks if present
@@ -349,7 +349,7 @@ export async function generateCommitMessage(
 	} catch (error) {
 		// On any error, use fallback
 		if (process.env.DEBUG_COMMIT_MESSAGES) {
-			console.error("Haiku error:", error);
+			console.error("Commit message model error:", error);
 		}
 		return { type: "fallback", message: generateFallbackMessage(context) };
 	}

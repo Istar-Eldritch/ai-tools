@@ -92,8 +92,8 @@ Added support for Google and GitHub OAuth providers.`;
 feat(pipeline): add tiered review system
 
 Implements a two-tier review process:
-- Cheap tier uses Sonnet for initial review
-- Expensive tier uses Opus for final QA
+- Cheap tier uses GPT-5.4 for initial review
+- Expensive tier uses GPT-5.5 for final QA
 
 Closes #123
 \`\`\``;

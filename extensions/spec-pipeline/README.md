@@ -288,9 +288,9 @@ The AI implements the spec (or discovery summary) with interleaved planning, cod
 6. **Commit** - Automatic git commit with AI-generated message
 
 **Tiered Review:**
-- **Cheap tier** (e.g., Sonnet) reviews first for N cycles
+- **Cheap tier** (e.g., GPT-5.4) reviews first for N cycles
 - If NEEDS_CHANGES, `addressReview` agent applies fixes automatically
-- **Expensive tier** (e.g., Opus) validates for M cycles as quality gate
+- **Expensive tier** (e.g., GPT-5.5) validates for M cycles as quality gate
 - Cycles configurable per reviewer (planReviewer, codeReviewer)
 
 **Error Recovery:**
@@ -353,7 +353,7 @@ Create `.pi/spec-pipeline.json` in your project root:
   "testCommand": "npm test",
   "contextFiles": ["CONTRIBUTING.md", "docs/architecture.md"],
   "models": {
-    "implementer": { "model": "claude-opus-4-6", "thinking": "high" }
+    "implementer": { "model": "gpt-5.5", "thinking": "high" }
   },
   "reviewCycles": {
     "codeReviewer": { "cheap": 3, "expensive": 2 }
@@ -396,17 +396,17 @@ Configure models per-role to optimize cost and quality:
 ```json
 {
   "models": {
-    "planDrafter": { "model": "claude-opus-4-6", "thinking": "high" },
+    "planDrafter": { "model": "gpt-5.5", "thinking": "high" },
     "planReviewer": {
-      "cheap": { "model": "claude-sonnet-4-5", "thinking": "medium" },
-      "expensive": { "model": "claude-opus-4-6", "thinking": "high" }
+      "cheap": { "model": "gpt-5.4", "thinking": "medium" },
+      "expensive": { "model": "gpt-5.5", "thinking": "high" }
     },
-    "implementer": { "model": "claude-opus-4-6", "thinking": "high" },
+    "implementer": { "model": "gpt-5.5", "thinking": "high" },
     "codeReviewer": {
-      "cheap": { "model": "claude-sonnet-4-5", "thinking": "medium" },
-      "expensive": { "model": "claude-opus-4-6", "thinking": "high" }
+      "cheap": { "model": "gpt-5.4", "thinking": "medium" },
+      "expensive": { "model": "gpt-5.5", "thinking": "high" }
     },
-    "addressReview": { "model": "claude-sonnet-4-5", "thinking": "medium" }
+    "addressReview": { "model": "gpt-5.4", "thinking": "medium" }
   }
 }
 ```
@@ -417,26 +417,26 @@ Configure models per-role to optimize cost and quality:
 
 | Role | Default Model | Default Thinking | Purpose |
 |------|---------------|------------------|---------|
-| `planDrafter` | claude-opus-4-6 | high | Draft implementation plan for each phase |
-| `implementer` | claude-opus-4-6 | high | Write code for each phase |
-| `addressReview` | claude-sonnet-4-5 | medium | Apply fixes based on review feedback |
-| `agentCommitMessageWriter` | claude-haiku-4-5 | off | Generate commit messages |
+| `planDrafter` | gpt-5.5 | high | Draft implementation plan for each phase |
+| `implementer` | gpt-5.5 | high | Write code for each phase |
+| `addressReview` | gpt-5.4 | medium | Apply fixes based on review feedback |
+| `agentCommitMessageWriter` | gpt-5.4-mini | off | Generate commit messages |
 
 **Tiered Review Roles (used in `/implement`):**
 
 | Role | Default Cheap | Default Expensive | Purpose |
 |------|---------------|-------------------|---------|
-| `planReviewer` | claude-sonnet-4-5/medium | claude-opus-4-6/high | Review implementation plans (tiered) |
-| `codeReviewer` | claude-sonnet-4-5/medium | claude-opus-4-6/high | Review code changes (tiered) |
+| `planReviewer` | gpt-5.4/medium | gpt-5.5/high | Review implementation plans (tiered) |
+| `codeReviewer` | gpt-5.4/medium | gpt-5.5/high | Review code changes (tiered) |
 
 #### Model Options
 
 **Available models:**
 
 The `model` field accepts any model identifier supported by the pi CLI. Use the same model names you would pass to `pi --model`. For example:
-- `claude-opus-4-6` - Claude Opus 4 (most capable, most expensive)
-- `claude-sonnet-4-5` - Claude Sonnet 4.5 (balanced capability/cost)
-- `claude-haiku-4-5` - Claude Haiku 4.5 (fast, cheap)
+- `gpt-5.5` - most capable, most expensive
+- `gpt-5.4` - balanced capability/cost
+- `gpt-5.4-mini` - fast, cheap
 
 Any model supported by pi can be used (e.g., `gpt-5.1-codex`, `gemini-2.5-pro`, etc.).
 
@@ -465,7 +465,7 @@ Or configure per-reviewer:
 ```json
 {
   "reviewCycles": {
-    "planReviewer": { "cheap": 2, "expensive": 1 },
+    "planReviewer": { "cheap": 0, "expensive": 0 },
     "codeReviewer": { "cheap": 3, "expensive": 2 }
   }
 }
@@ -473,12 +473,12 @@ Or configure per-reviewer:
 
 **How tiered review works:**
 
-1. **Cheap tier** runs first (e.g., Sonnet) for N cycles
+1. **Cheap tier** runs first (e.g., GPT-5.4) for N cycles
    - Reviews content, returns verdict: APPROVED or NEEDS_CHANGES
    - If NEEDS_CHANGES, `addressReview` agent applies fixes
    - Repeats until APPROVED or max cheap cycles reached
 
-2. **Expensive tier** runs for final QA (e.g., Opus) for M cycles
+2. **Expensive tier** runs for final QA (e.g., GPT-5.5) for M cycles
    - Even if cheap tier approved, expensive tier validates
    - If NEEDS_CHANGES, `addressReview` applies fixes
    - Repeats until APPROVED or max expensive cycles reached
@@ -492,7 +492,7 @@ Or configure per-reviewer:
 ```json
 {
   "reviewCycles": {
-    "planReviewer": { "cheap": 2, "expensive": 0 }  // Skip expensive, only cheap
+    "planReviewer": { "cheap": 0, "expensive": 0 }  // Skip plan review entirely
   }
 }
 ```
@@ -702,7 +702,7 @@ Errors are tracked in state with full context:
 {
   "lastError": {
     "timestamp": "2026-02-10T10:30:00Z",
-    "agent": "claude-opus-4-6",
+    "agent": "gpt-5.5",
     "role": "implementer",
     "phase": 2,
     "exitCode": 1,
@@ -733,7 +733,7 @@ The pipeline tracks detailed metrics for optimization:
     "agentCalls": [
       {
         "role": "planDrafter",
-        "model": "claude-opus-4-6",
+        "model": "gpt-5.5",
         "thinking": "high",
         "startTime": "2026-02-10T10:00:00Z",
         "endTime": "2026-02-10T10:15:00Z",

@@ -22,10 +22,10 @@
  *      - Description: Enters discovery mode → writes summary → starts implementation
  *   2. Discovery (if using description): Conversational — LLM proposes assumptions
  *   3. For each implementation phase (plan + implement interleaved):
- *      - Plan Drafting: Opus drafts implementation plan
- *      - Plan Review: Tiered review (Sonnet → Opus)
- *      - Implementation: Opus implements according to plan
- *      - Code Review: Tiered review (Sonnet → Opus)
+ *      - Plan Drafting: GPT-5.5 drafts implementation plan
+ *      - Plan Review: disabled by default (configurable tiered review: GPT-5.4 → GPT-5.5)
+ *      - Implementation: GPT-5.5 implements according to plan
+ *      - Code Review: Tiered review (GPT-5.4 → GPT-5.5)
  *   3. User reviews the implementation
  *
  * Usage:
