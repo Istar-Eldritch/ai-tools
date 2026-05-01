@@ -1,5 +1,9 @@
 import type { Api, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
-import { ClaudeNativeProcess, type ClaudeProcessConfig } from "./claude-process.ts";
+import {
+	ClaudeNativeProcess,
+	type ClaudeProcessConfig,
+	type ClaudeProcessExitEvent,
+} from "./claude-process.ts";
 import { buildClaudeArgs, modelAlias, numberFromEnv } from "./claude-protocol.ts";
 
 export const DEFAULT_SESSION_IDENTITY = "default";
@@ -67,14 +71,17 @@ export class ClaudeNativeProcessPool {
 		}
 
 		if (!runtime) {
+			let createdRuntime: ClaudeProcessRuntime | undefined;
 			const processConfig: ClaudeProcessConfig = {
 				bin: env.CLAUDE_NATIVE_BIN || "claude",
 				args: buildClaudeArgs(model, this.claudeSessionIds.get(keyId)),
 				cwd,
 				env,
 				idleTimeoutMs: numberFromEnv("CLAUDE_NATIVE_IDLE_TIMEOUT_MS", 600_000) ?? 600_000,
+				onExit: (event) => this.handleProcessExit(keyId, createdRuntime, event),
 			};
-			runtime = this.config.createProcess?.(processConfig) ?? new ClaudeNativeProcess(processConfig);
+			createdRuntime = this.config.createProcess?.(processConfig) ?? new ClaudeNativeProcess(processConfig);
+			runtime = createdRuntime;
 			this.processes.set(keyId, runtime);
 		}
 
@@ -109,6 +116,19 @@ export class ClaudeNativeProcessPool {
 			this.retireAll(`cwd changed from ${this.lastObservedCwd} to ${cwd}`);
 		}
 		this.lastObservedCwd = cwd;
+	}
+
+	private handleProcessExit(
+		keyId: string,
+		runtime: ClaudeProcessRuntime | undefined,
+		event: ClaudeProcessExitEvent,
+	): void {
+		if (runtime && this.processes.get(keyId) === runtime) {
+			this.processes.delete(keyId);
+		}
+		if (event.unsafeSession) {
+			this.claudeSessionIds.delete(keyId);
+		}
 	}
 
 	invalidateKey(key: ClaudeProcessKey, reason: string, options: { clearSession?: boolean } = {}): void {

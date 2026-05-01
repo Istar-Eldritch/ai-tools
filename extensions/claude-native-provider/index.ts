@@ -115,6 +115,27 @@ function updateUsageFromResult(model: Model<Api>, output: AssistantMessage, mess
 	calculateCost(model, output.usage);
 }
 
+function turnErrorCode(err: unknown): string | undefined {
+	return typeof err === "object" && err !== null && "code" in err ? String((err as any).code) : undefined;
+}
+
+function turnErrorUnsafeSession(err: unknown): boolean {
+	return typeof err === "object" && err !== null && "unsafeSession" in err && Boolean((err as any).unsafeSession);
+}
+
+function errorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+function shouldClearSessionAfterFailure(err: unknown, signal?: AbortSignal): boolean {
+	const code = turnErrorCode(err);
+	return turnErrorUnsafeSession(err)
+		|| signal?.aborted === true
+		|| code === "aborted"
+		|| code === "timeout"
+		|| code === "stdin_error";
+}
+
 export function streamClaudeNative(
 	model: Model<Api>,
 	context: Context,
@@ -157,13 +178,13 @@ export function streamClaudeNative(
 		stream.end();
 	};
 
-	const finishError = (errorMessage: string) => {
+	const finishError = (message: string, reason: "aborted" | "error" = "error") => {
 		if (heartbeatHandle) clearInterval(heartbeatHandle);
 		if (finished) return;
 		finished = true;
-		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-		output.errorMessage = errorMessage;
-		stream.push({ type: "error", reason: output.stopReason, error: output });
+		output.stopReason = reason;
+		output.errorMessage = message;
+		stream.push({ type: "error", reason, error: output });
 		stream.end();
 	};
 
@@ -214,7 +235,14 @@ export function streamClaudeNative(
 	}, {
 		signal: options?.signal,
 		timeoutMs,
-	}).then(finishDone, (err) => finishError(err instanceof Error ? err.message : String(err)));
+	}).then(finishDone, (err) => {
+		const message = errorMessage(err);
+		const clearSession = shouldClearSessionAfterFailure(err, options?.signal);
+		processPool.invalidateKey(key, `request failed: ${message}`, { clearSession });
+		const code = turnErrorCode(err);
+		const reason = options?.signal?.aborted || code === "aborted" ? "aborted" : "error";
+		finishError(message, reason);
+	});
 
 	return stream;
 }

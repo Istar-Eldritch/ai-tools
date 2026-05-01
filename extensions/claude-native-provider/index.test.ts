@@ -5,7 +5,7 @@ interface Scenario {
 	stderr?: string[];
 	statuses?: string[];
 	malformed?: string[];
-	reject?: string;
+	reject?: string | Error | { message: string; code?: string; unsafeSession?: boolean };
 	waitFor?: Promise<void>;
 }
 
@@ -51,7 +51,13 @@ class MockClaudeNativeProcess {
 			messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
 		};
 
-		if (scenario.reject) throw new Error(scenario.reject);
+		if (scenario.reject) {
+			if (typeof scenario.reject === "string" || scenario.reject instanceof Error) throw scenario.reject;
+			const err = new Error(scenario.reject.message) as Error & { code?: string; unsafeSession?: boolean };
+			err.code = scenario.reject.code;
+			err.unsafeSession = scenario.reject.unsafeSession;
+			throw err;
+		}
 		if (scenario.waitFor) await scenario.waitFor;
 		for (const status of scenario.statuses ?? []) handlers.onStatus?.(status);
 		for (const line of scenario.malformed ?? []) handlers.onMalformedJson?.(line);
@@ -73,7 +79,12 @@ async function collectEvents(stream: AsyncIterable<any>) {
 }
 
 function createModel(id = "sonnet") {
-	return { id, api: "claude-native-cli", provider: "claude-native" } as any;
+	return {
+		id,
+		api: "claude-native-cli",
+		provider: "claude-native",
+		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+	} as any;
 }
 
 function createContext(text = "hello from user") {
@@ -372,6 +383,116 @@ describe("claude native provider integration", () => {
 
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
 		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual(["session_shutdown"]);
+	});
+
+	it("maps usage and costs from Claude result events", async () => {
+		MockClaudeNativeProcess.scenarios.push({
+			messages: [{
+				type: "result",
+				subtype: "success",
+				is_error: false,
+				result: "ok",
+				usage: {
+					input_tokens: 10,
+					output_tokens: 5,
+					cache_read_input_tokens: 2,
+					cache_creation_input_tokens: 1,
+				},
+			}],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const events = await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("usage")));
+		const done = events.at(-1);
+
+		expect(done).toMatchObject({ type: "done", reason: "stop" });
+		expect(done.message.usage).toMatchObject({ input: 10, output: 5, cacheRead: 2, cacheWrite: 1, totalTokens: 18 });
+		expect(done.message.usage.cost.total).toBeGreaterThan(0);
+	});
+
+	it("suppresses status/thinking events when CLAUDE_NATIVE_STATUS_UPDATES=0", async () => {
+		process.env.CLAUDE_NATIVE_STATUS_UPDATES = "0";
+		MockClaudeNativeProcess.scenarios.push({
+			statuses: ["booted"],
+			stderr: ["warning\n"],
+			messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const events = await collectEvents(streamClaudeNative(createModel(), createContext("quiet")));
+
+		expect(events.some((event) => event.type.startsWith("thinking"))).toBe(false);
+		expect(events.at(-1)).toMatchObject({ type: "done", reason: "stop" });
+	});
+
+	it("surfaces Claude Code tool summaries as user-visible text", async () => {
+		MockClaudeNativeProcess.scenarios.push({
+			messages: [
+				{ type: "streamlined_tool_use_summary", tool_summary: "Read package.json" },
+				{ type: "result", subtype: "success", is_error: false, result: "done" },
+			],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const events = await collectEvents(streamClaudeNative(createModel(), createContext("tools")));
+
+		expect(events.some((event) => event.type === "text_delta" && event.delta.includes("Read package.json"))).toBe(true);
+	});
+
+	it("emits aborted Pi error events and clears unsafe session state", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-before", result: "before" }] },
+			{ reject: { message: "Claude Code request aborted", code: "aborted", unsafeSession: true } },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel(), createContext("before"), { sessionId: "pi-a" }));
+		const controller = new AbortController();
+		controller.abort();
+		const abortedEvents = await collectEvents(streamClaudeNative(createModel(), createContext("abort"), { sessionId: "pi-a", signal: controller.signal } as any));
+		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
+
+		expect(abortedEvents.at(-1)).toMatchObject({ type: "error", reason: "aborted" });
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("request failed");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("claude-before");
+	});
+
+	it("emits timeout errors and clears unsafe session state", async () => {
+		process.env.CLAUDE_NATIVE_TIMEOUT_MS = "50";
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-before", result: "before" }] },
+			{ reject: { message: "Claude Code timed out after 50ms", code: "timeout", unsafeSession: true } },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel(), createContext("before"), { sessionId: "pi-a" }));
+		const timeoutEvents = await collectEvents(streamClaudeNative(createModel(), createContext("timeout"), { sessionId: "pi-a" }));
+		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
+
+		expect(MockClaudeNativeProcess.instances[0].turnOptions[1].timeoutMs).toBe(50);
+		expect(timeoutEvents.at(-1)).toMatchObject({ type: "error", reason: "error" });
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+	});
+
+	it("restarts after a safe between-turn crash and resumes the remembered Claude session", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-safe", result: "before" }] },
+			{ reject: { message: "Claude Code exited with code 0", code: "process_close", unsafeSession: false } },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel(), createContext("before"), { sessionId: "pi-a" }));
+		const failedEvents = await collectEvents(streamClaudeNative(createModel(), createContext("failed"), { sessionId: "pi-a" }));
+		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
+
+		expect(failedEvents.at(-1)).toMatchObject({ type: "error", reason: "error" });
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-safe"]));
 	});
 
 	it("emits an error event when Claude returns a failed result even with a stop_reason", async () => {

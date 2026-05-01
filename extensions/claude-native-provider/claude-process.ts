@@ -16,6 +16,32 @@ export interface ClaudeTurnOptions {
 	timeoutMs?: number;
 }
 
+export type ClaudeTurnFailureCode =
+	| "aborted"
+	| "timeout"
+	| "stdin_error"
+	| "process_error"
+	| "process_close"
+	| "terminated";
+
+export class ClaudeTurnError extends Error {
+	constructor(
+		message: string,
+		readonly code: ClaudeTurnFailureCode,
+		readonly unsafeSession = false,
+	) {
+		super(message);
+		this.name = "ClaudeTurnError";
+		Object.setPrototypeOf(this, ClaudeTurnError.prototype);
+	}
+}
+
+export interface ClaudeProcessExitEvent {
+	code: ClaudeTurnFailureCode | "idle";
+	reason: string;
+	unsafeSession: boolean;
+}
+
 export interface ClaudeProcessConfig {
 	bin: string;
 	args: string[];
@@ -23,6 +49,7 @@ export interface ClaudeProcessConfig {
 	env: NodeJS.ProcessEnv;
 	idleTimeoutMs: number;
 	spawnFn?: SpawnFn;
+	onExit?: (event: ClaudeProcessExitEvent) => void;
 }
 
 interface InFlightTurn {
@@ -60,26 +87,13 @@ export class ClaudeNativeProcess {
 	}
 
 	terminate(reason: string): void {
-		this.closed = true;
-		this.clearIdleTimer();
-		this.cleanupInFlight(new Error(`Claude Code process terminated: ${reason}`));
-		this.rl?.close();
-		this.rl = undefined;
-		const child = this.child;
-		this.child = undefined;
-		if (child && !child.killed) {
-			try {
-				child.kill("SIGTERM");
-			} catch {
-				// ignore
-			}
-		}
+		this.terminateWithEvent(reason, "terminated");
 	}
 
 	private start(): void {
 		if (this.isLive()) return;
+		if (this.closed) throw new ClaudeTurnError("Claude Code process is closed", "terminated", false);
 		this.clearIdleTimer();
-		this.closed = false;
 		const spawnFn = this.config.spawnFn ?? spawn;
 		const child = spawnFn(this.config.bin, this.config.args, {
 			cwd: this.config.cwd,
@@ -90,8 +104,8 @@ export class ClaudeNativeProcess {
 		this.rl = readline.createInterface({ input: child.stdout });
 		this.rl.on("line", (line) => this.handleStdoutLine(line));
 		child.stderr.on("data", (chunk) => this.inFlight?.handlers.onStderr?.(chunk.toString()));
-		child.on("error", (err) => this.handleProcessFailure(err, child));
-		child.on("close", (code) => this.handleProcessFailure(new Error(`Claude Code exited with code ${code}`), child));
+		child.on("error", (err) => this.handleProcessFailure(err, child, "process_error"));
+		child.on("close", (code) => this.handleProcessFailure(new Error(`Claude Code exited with code ${code}`), child, "process_close"));
 	}
 
 	private runTurnNow(prompt: string, handlers: ClaudeProcessEventHandlers, options: ClaudeTurnOptions): Promise<void> {
@@ -108,13 +122,13 @@ export class ClaudeNativeProcess {
 
 			if (options.timeoutMs && options.timeoutMs > 0) {
 				this.inFlight.timeoutHandle = setTimeout(() => {
-					this.failInFlight(new Error(`Claude Code timed out after ${options.timeoutMs}ms`));
+					this.failInFlight(new ClaudeTurnError(`Claude Code timed out after ${options.timeoutMs}ms`, "timeout", true));
 				}, options.timeoutMs);
 				this.inFlight.timeoutHandle.unref?.();
 			}
 
 			if (options.signal) {
-				this.inFlight.abortHandler = () => this.failInFlight(new Error("Claude Code request aborted"));
+				this.inFlight.abortHandler = () => this.failInFlight(new ClaudeTurnError("Claude Code request aborted", "aborted", true));
 				if (options.signal.aborted) {
 					this.inFlight.abortHandler();
 					return;
@@ -123,7 +137,7 @@ export class ClaudeNativeProcess {
 			}
 
 			this.child!.stdin.write(encodeUserInput(prompt), (err) => {
-				if (err) this.failInFlight(err);
+				if (err) this.failInFlight(new ClaudeTurnError(err.message, "stdin_error", true));
 			});
 		});
 	}
@@ -151,20 +165,21 @@ export class ClaudeNativeProcess {
 
 	private failInFlight(error: Error): void {
 		if (!this.inFlight) return;
+		const turnError = error instanceof ClaudeTurnError
+			? error
+			: new ClaudeTurnError(error.message, "terminated", true);
+
 		this.closed = true;
 		this.clearIdleTimer();
-		this.cleanupInFlight(error);
-		this.rl?.close();
-		this.rl = undefined;
-		const child = this.child;
-		this.child = undefined;
-		if (child && !child.killed) {
-			try {
-				child.kill("SIGTERM");
-			} catch {
-				// ignore
-			}
-		}
+		this.cleanupInFlight(turnError);
+		this.closeReadline();
+		const child = this.detachChild();
+		this.config.onExit?.({
+			code: turnError.code,
+			reason: turnError.message,
+			unsafeSession: turnError.unsafeSession,
+		});
+		this.killChild(child);
 	}
 
 	private cleanupInFlight(error?: Error): void {
@@ -176,21 +191,55 @@ export class ClaudeNativeProcess {
 		if (error) turn.reject(error);
 	}
 
-	private handleProcessFailure(error: Error, child: ChildProcessWithoutNullStreams): void {
-		if (child !== this.child) return;
-		this.closed = true;
-		this.clearIdleTimer();
-		this.cleanupInFlight(error);
+	private closeReadline(): void {
 		this.rl?.close();
 		this.rl = undefined;
+	}
+
+	private detachChild(): ChildProcessWithoutNullStreams | undefined {
+		const child = this.child;
 		this.child = undefined;
+		return child;
+	}
+
+	private killChild(child: ChildProcessWithoutNullStreams | undefined): void {
+		if (child && !child.killed) {
+			try {
+				child.kill("SIGTERM");
+			} catch {
+				// ignore
+			}
+		}
+	}
+
+	private terminateWithEvent(reason: string, code: ClaudeProcessExitEvent["code"]): void {
+		if (this.closed && !this.child && !this.inFlight && !this.rl) return;
+		const hadInFlight = !!this.inFlight;
+		this.closed = true;
+		this.clearIdleTimer();
+		this.cleanupInFlight(new ClaudeTurnError(`Claude Code process terminated: ${reason}`, "terminated", hadInFlight));
+		this.closeReadline();
+		const child = this.detachChild();
+		this.config.onExit?.({ code, reason, unsafeSession: hadInFlight });
+		this.killChild(child);
+	}
+
+	private handleProcessFailure(error: Error, child: ChildProcessWithoutNullStreams, code: "process_error" | "process_close"): void {
+		if (child !== this.child) return;
+		const hadInFlight = !!this.inFlight;
+		this.closed = true;
+		this.clearIdleTimer();
+		this.cleanupInFlight(new ClaudeTurnError(error.message, code, hadInFlight));
+		this.closeReadline();
+		this.child = undefined;
+		this.config.onExit?.({ code, reason: error.message, unsafeSession: hadInFlight });
 	}
 
 	private armIdleTimer(): void {
 		this.clearIdleTimer();
 		if (this.config.idleTimeoutMs <= 0) return;
 		this.idleHandle = setTimeout(() => {
-			this.terminate(`idle timeout after ${this.config.idleTimeoutMs}ms`);
+			this.terminateWithEvent(`idle timeout after ${this.config.idleTimeoutMs}ms`, "idle");
 		}, this.config.idleTimeoutMs);
 		this.idleHandle.unref?.();
 	}

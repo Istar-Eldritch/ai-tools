@@ -24,6 +24,7 @@ class FakeClaudeChild extends EventEmitter {
 
 function createProcess(child: FakeClaudeChild, idleTimeoutMs = 1_000) {
 	const spawnFn = vi.fn(() => child as any);
+	const exits: any[] = [];
 	const proc = new ClaudeNativeProcess({
 		bin: "claude",
 		args: ["-p", "--input-format", "stream-json", "--output-format", "stream-json"],
@@ -31,8 +32,9 @@ function createProcess(child: FakeClaudeChild, idleTimeoutMs = 1_000) {
 		env: process.env,
 		idleTimeoutMs,
 		spawnFn: spawnFn as any,
+		onExit: (event) => exits.push(event),
 	});
-	return { proc, spawnFn };
+	return { proc, spawnFn, exits };
 }
 
 function writeJson(child: FakeClaudeChild, message: any) {
@@ -162,19 +164,34 @@ describe("ClaudeNativeProcess", () => {
 	it("timeout terminates and rejects the active turn", async () => {
 		vi.useFakeTimers();
 		const child = new FakeClaudeChild();
-		const { proc } = createProcess(child);
+		const { proc, exits } = createProcess(child);
 
 		const turn = proc.runTurn("hello", { onMessage: () => {} }, { timeoutMs: 100 });
 		vi.advanceTimersByTime(100);
 
 		await expect(turn).rejects.toThrow(/timed out/);
 		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(exits).toEqual([expect.objectContaining({ code: "timeout", unsafeSession: true })]);
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("reports timeout as an unsafe exit", async () => {
+		vi.useFakeTimers();
+		const child = new FakeClaudeChild();
+		const { proc, exits } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} }, { timeoutMs: 100 });
+		vi.advanceTimersByTime(100);
+
+		await expect(turn).rejects.toMatchObject({ code: "timeout", unsafeSession: true });
+		expect(exits).toEqual([expect.objectContaining({ code: "timeout", unsafeSession: true })]);
+		expect(exits).toHaveLength(1);
 		expect(proc.isLive()).toBe(false);
 	});
 
 	it("abort signal terminates and rejects", async () => {
 		const child = new FakeClaudeChild();
-		const { proc } = createProcess(child);
+		const { proc, exits } = createProcess(child);
 		const controller = new AbortController();
 
 		const turn = proc.runTurn("hello", { onMessage: () => {} }, { signal: controller.signal });
@@ -182,23 +199,78 @@ describe("ClaudeNativeProcess", () => {
 
 		await expect(turn).rejects.toThrow(/aborted/);
 		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(exits).toEqual([expect.objectContaining({ code: "aborted", unsafeSession: true })]);
 		expect(proc.isLive()).toBe(false);
+	});
+
+	it("reports abort as an unsafe exit", async () => {
+		const child = new FakeClaudeChild();
+		const { proc, exits } = createProcess(child);
+		const controller = new AbortController();
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} }, { signal: controller.signal });
+		controller.abort();
+
+		await expect(turn).rejects.toMatchObject({ code: "aborted", unsafeSession: true });
+		expect(exits).toEqual([expect.objectContaining({ code: "aborted", unsafeSession: true })]);
+		expect(exits).toHaveLength(1);
 	});
 
 	it("unexpected child close rejects the active turn and does not hang", async () => {
 		const child = new FakeClaudeChild();
-		const { proc } = createProcess(child);
+		const { proc, exits } = createProcess(child);
 
 		const turn = proc.runTurn("hello", { onMessage: () => {} });
 		child.emit("close", 1);
 
 		await expect(turn).rejects.toThrow(/exited with code 1/);
+		expect(exits).toEqual([expect.objectContaining({ code: "process_close", unsafeSession: true })]);
 		expect(proc.isLive()).toBe(false);
+	});
+
+	it("reports between-turn child close as safe for session resume", async () => {
+		const child = new FakeClaudeChild();
+		const { proc, exits } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+
+		child.emit("close", 0);
+		expect(exits.at(-1)).toEqual(expect.objectContaining({ code: "process_close", unsafeSession: false }));
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("reports in-flight child close as unsafe and rejects without hanging", async () => {
+		const child = new FakeClaudeChild();
+		const { proc, exits } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		child.emit("close", 1);
+
+		await expect(turn).rejects.toMatchObject({ code: "process_close", unsafeSession: true });
+		expect(exits).toEqual([expect.objectContaining({ code: "process_close", unsafeSession: true })]);
+	});
+
+	it("queued same-process turn starts only after the first turn fails", async () => {
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+
+		const first = proc.runTurn("one", { onMessage: () => {} });
+		const second = proc.runTurn("two", { onMessage: () => {} });
+
+		expect(child.writes).toHaveLength(1);
+		child.emit("close", 1);
+		await expect(first).rejects.toMatchObject({ code: "process_close" });
+
+		await Promise.resolve();
+		expect(child.writes).toHaveLength(1);
+		await expect(second).rejects.toBeInstanceOf(Error);
 	});
 
 	it("terminate rejects in-flight work and sends SIGTERM once", async () => {
 		const child = new FakeClaudeChild();
-		const { proc } = createProcess(child);
+		const { proc, exits } = createProcess(child);
 
 		const turn = proc.runTurn("hello", { onMessage: () => {} });
 		proc.terminate("test cleanup");
@@ -206,6 +278,7 @@ describe("ClaudeNativeProcess", () => {
 
 		await expect(turn).rejects.toThrow(/test cleanup/);
 		expect(child.kill).toHaveBeenCalledTimes(1);
+		expect(exits).toHaveLength(1);
 		expect(proc.isLive()).toBe(false);
 	});
 });

@@ -19,6 +19,11 @@ class FakeRuntime {
 		this.terminateReasons.push(reason);
 	}
 
+	emitExit(event: any) {
+		this.live = false;
+		this.config.onExit?.(event);
+	}
+
 	async runTurn() {}
 }
 
@@ -109,6 +114,31 @@ describe("ClaudeNativeProcessPool", () => {
 
 		expect(FakeRuntime.instances[0].terminateReasons).toEqual(["test reap"]);
 		expect(FakeRuntime.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
+	});
+
+	it("removes a safely exited runtime and resumes with the remembered Claude session", () => {
+		const pool = createPool();
+		const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.rememberClaudeSessionId(entry.key, "claude-a");
+
+		FakeRuntime.instances[0].emitExit({ code: "process_close", reason: "closed", unsafeSession: false });
+		pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+
+		expect(FakeRuntime.instances).toHaveLength(2);
+		expect(FakeRuntime.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
+	});
+
+	it("clears remembered Claude session after an unsafe in-flight exit", () => {
+		const pool = createPool();
+		const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.rememberClaudeSessionId(entry.key, "claude-a");
+
+		FakeRuntime.instances[0].emitExit({ code: "timeout", reason: "timed out", unsafeSession: true });
+		pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+
+		expect(FakeRuntime.instances).toHaveLength(2);
+		expect(FakeRuntime.instances[1].config.args).not.toContain("--resume");
+		expect(FakeRuntime.instances[1].config.args).not.toContain("claude-a");
 	});
 
 	it("reset kills processes and clears remembered sessions", () => {
