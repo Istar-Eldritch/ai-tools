@@ -146,7 +146,8 @@ export function streamClaudeNative(
 	stream.push({ type: "start", partial: output });
 
 	const prompt = lastUserText(context);
-	const { key, process: runtime } = processPool.getOrCreate(model, options);
+	const poolEntry = processPool.getOrCreate(model, options);
+	const { key, process: runtime } = poolEntry;
 
 	let stderr = "";
 	let sawText = false;
@@ -154,7 +155,13 @@ export function streamClaudeNative(
 	let finished = false;
 	let lastActivity = Date.now();
 
-	appendStatus(stream, output, "Claude Code process ready");
+	appendStatus(
+		stream,
+		output,
+		poolEntry.created
+			? `Claude Code process started (${poolEntry.resumedClaudeSession ? "resuming prior Claude session" : "fresh session"}; model=${key.modelAlias})`
+			: `Claude Code process reused (model=${key.modelAlias})`,
+	);
 	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS", 10_000) ?? 10_000;
 	const heartbeatHandle = heartbeatMs > 0 ? setInterval(() => {
 		if (finished) return;
@@ -251,6 +258,26 @@ function modelLabel(model: Model<Api> | undefined): string {
 	return model ? `${model.provider}/${model.id}` : "none";
 }
 
+function formatPoolStatus(): string {
+	const stats = processPool.stats();
+	const snapshots = processPool.snapshots();
+	const lines = [
+		`Claude native pool: ${stats.liveProcesses} live process(es), ${stats.rememberedSessions} remembered Claude session(s), ${stats.totalKeys} key(s).`,
+	];
+	if (!snapshots.length) {
+		lines.push("No Claude native process/session state is currently remembered.");
+		return lines.join("\n");
+	}
+	for (const snapshot of snapshots) {
+		lines.push(
+			`- model=${snapshot.key.modelAlias} live=${snapshot.live ? "yes" : "no"} `
+			+ `piSession=${snapshot.key.sessionIdentity} claudeSession=${snapshot.claudeSessionId ? "remembered" : "none"} `
+			+ `cwd=${snapshot.key.cwd}`,
+		);
+	}
+	return lines.join("\n");
+}
+
 function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
 	const hardInvalidate = (reason: string) => processPool.hardInvalidateAll(reason);
 	const retire = (reason: string) => processPool.retireAll(reason);
@@ -333,8 +360,18 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("claude-native-reset", {
 		description: "Reset Claude native process and remembered session state",
 		handler: async (_args, ctx) => {
-			processPool.reset("reset command");
-			ctx.ui.notify("Claude native process and session state reset", "info");
+			const before = processPool.reset("reset command");
+			ctx.ui.notify(
+				`Claude native process/session state reset: terminated ${before.liveProcesses} live process(es), cleared ${before.rememberedSessions} remembered Claude session(s).`,
+				"info",
+			);
+		},
+	});
+
+	pi.registerCommand("claude-native-status", {
+		description: "Show Claude native process pool diagnostics",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify(formatPoolStatus(), "info");
 		},
 	});
 

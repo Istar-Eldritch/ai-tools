@@ -368,7 +368,45 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
 		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual(["reset command"]);
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
-		expect(notify).toHaveBeenCalledWith("Claude native process and session state reset", "info");
+		expect(notify).toHaveBeenCalledWith(
+			"Claude native process/session state reset: terminated 1 live process(es), cleared 1 remembered Claude session(s).",
+			"info",
+		);
+	});
+
+	it("emits start and reuse status updates for process diagnostics", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "one" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "two" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		const firstEvents = await collectEvents(streamClaudeNative(createModel(), createContext("one")));
+		const secondEvents = await collectEvents(streamClaudeNative(createModel(), createContext("two")));
+
+		expect(firstEvents.some((event) => event.type === "thinking_delta" && event.delta.includes("process started"))).toBe(true);
+		expect(secondEvents.some((event) => event.type === "thinking_delta" && event.delta.includes("process reused"))).toBe(true);
+	});
+
+	it("status command reports pool counts without exposing raw Claude session ids", async () => {
+		MockClaudeNativeProcess.scenarios.push({
+			messages: [{ type: "result", subtype: "success", is_error: false, session_id: "raw-claude-session-secret", result: "ok" }],
+		});
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("status"), { sessionId: "pi-a" }));
+		const notify = vi.fn();
+		await pi.commands.get("claude-native-status").handler("", { ui: { notify } });
+
+		const message = notify.mock.calls[0][0] as string;
+		expect(message).toContain("1 live process(es)");
+		expect(message).toContain("1 remembered Claude session(s)");
+		expect(message).toContain("model=sonnet");
+		expect(message).toContain("piSession=pi-a");
+		expect(message).toContain("claudeSession=remembered");
+		expect(message).not.toContain("raw-claude-session-secret");
 	});
 
 	it("cleans up the active process on session shutdown", async () => {

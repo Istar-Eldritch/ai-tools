@@ -176,6 +176,28 @@ describe("ClaudeNativeProcess", () => {
 		expect(proc.isLive()).toBe(false);
 	});
 
+	it("logs idle reap diagnostics when enabled", async () => {
+		vi.useFakeTimers();
+		const child = new FakeClaudeChild();
+		const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const spawnFn = vi.fn(() => child as any);
+		const proc = new ClaudeNativeProcess({
+			bin: "claude",
+			args: ["-p"],
+			cwd: process.cwd(),
+			env: { ...process.env, CLAUDE_NATIVE_DEBUG: "1" },
+			idleTimeoutMs: 1_000,
+			spawnFn: spawnFn as any,
+		});
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+		vi.advanceTimersByTime(1_000);
+
+		expect(err.mock.calls.flat().join("\n")).toContain("process.idle_reap");
+	});
+
 	it("timeout terminates and rejects the active turn", async () => {
 		vi.useFakeTimers();
 		const child = new FakeClaudeChild();
@@ -336,5 +358,29 @@ describe("ClaudeNativeProcess", () => {
 		expect(child.kill).toHaveBeenCalledTimes(1);
 		expect(exits).toHaveLength(1);
 		expect(proc.isLive()).toBe(false);
+	});
+
+	it("logs process diagnostics with redacted resume args when enabled", async () => {
+		const child = new FakeClaudeChild();
+		const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const spawnFn = vi.fn(() => child as any);
+		const proc = new ClaudeNativeProcess({
+			bin: "claude",
+			args: ["-p", "--resume", "claude-secret-session"],
+			cwd: process.cwd(),
+			env: { ...process.env, CLAUDE_NATIVE_DEBUG: "1" },
+			idleTimeoutMs: 1_000,
+			spawnFn: spawnFn as any,
+		});
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+		proc.terminate("test cleanup");
+
+		const logs = err.mock.calls.flat().join("\n");
+		expect(logs).toContain("process.spawn");
+		expect(logs).toContain("process.terminate");
+		expect(logs).not.toContain("claude-secret-session");
 	});
 });

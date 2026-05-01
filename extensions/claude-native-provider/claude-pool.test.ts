@@ -165,4 +165,35 @@ describe("ClaudeNativeProcessPool", () => {
 		expect(FakeRuntime.instances[1].config.args).not.toContain("--resume");
 		expect(FakeRuntime.instances[1].config.args).not.toContain("claude-a");
 	});
+
+	it("reset returns counts for killed processes and cleared sessions", () => {
+		const pool = createPool();
+		const first = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.rememberClaudeSessionId(first.key, "claude-a");
+		const second = pool.getOrCreate(model, { sessionId: "pi-b" } as any);
+		pool.rememberClaudeSessionId(second.key, "claude-b");
+
+		const before = pool.reset("reset command");
+
+		expect(before).toEqual({ totalKeys: 2, liveProcesses: 2, rememberedSessions: 2 });
+		expect(FakeRuntime.instances[0].terminateReasons).toEqual(["reset command"]);
+		expect(FakeRuntime.instances[1].terminateReasons).toEqual(["reset command"]);
+		expect(pool.stats()).toEqual({ totalKeys: 0, liveProcesses: 0, rememberedSessions: 0 });
+	});
+
+	it("logs pool lifecycle diagnostics when enabled", () => {
+		process.env.CLAUDE_NATIVE_DEBUG = "1";
+		const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const pool = createPool();
+		const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.rememberClaudeSessionId(entry.key, "claude-secret-session");
+		pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.reset("reset command");
+
+		expect(err).toHaveBeenCalledWith(expect.stringContaining("pool.create_runtime"));
+		expect(err).toHaveBeenCalledWith(expect.stringContaining("pool.remember_session"));
+		expect(err).toHaveBeenCalledWith(expect.stringContaining("pool.reuse_runtime"));
+		expect(err).toHaveBeenCalledWith(expect.stringContaining("pool.reset"));
+		expect(err.mock.calls.flat().join("\n")).not.toContain("claude-secret-session");
+	});
 });

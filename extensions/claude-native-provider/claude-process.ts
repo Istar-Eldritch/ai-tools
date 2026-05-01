@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
+import { logClaudeNativeDiagnostic, redactClaudeArgs } from "./claude-diagnostics.ts";
 import { encodeUserInput, isClaudeResultEvent } from "./claude-protocol.ts";
 
 type SpawnFn = typeof spawn;
@@ -95,6 +96,11 @@ export class ClaudeNativeProcess {
 		if (this.closed) throw new ClaudeTurnError("Claude Code process is closed", "terminated", false);
 		this.clearIdleTimer();
 		const spawnFn = this.config.spawnFn ?? spawn;
+		logClaudeNativeDiagnostic("process.spawn", {
+			bin: this.config.bin,
+			args: redactClaudeArgs(this.config.args),
+			cwd: this.config.cwd,
+		}, this.config.env);
 		const child = spawnFn(this.config.bin, this.config.args, {
 			cwd: this.config.cwd,
 			stdio: ["pipe", "pipe", "pipe"],
@@ -215,6 +221,7 @@ export class ClaudeNativeProcess {
 	private terminateWithEvent(reason: string, code: ClaudeProcessExitEvent["code"]): void {
 		if (this.closed && !this.child && !this.inFlight && !this.rl) return;
 		const hadInFlight = !!this.inFlight;
+		logClaudeNativeDiagnostic("process.terminate", { reason, code, hadInFlight }, this.config.env);
 		this.closed = true;
 		this.clearIdleTimer();
 		this.cleanupInFlight(new ClaudeTurnError(`Claude Code process terminated: ${reason}`, "terminated", hadInFlight));
@@ -227,6 +234,11 @@ export class ClaudeNativeProcess {
 	private handleProcessFailure(error: Error, child: ChildProcessWithoutNullStreams, code: "process_error" | "process_close"): void {
 		if (child !== this.child) return;
 		const hadInFlight = !!this.inFlight;
+		logClaudeNativeDiagnostic("process.failure", {
+			code,
+			reason: error.message,
+			hadInFlight,
+		}, this.config.env);
 		this.closed = true;
 		this.clearIdleTimer();
 		this.cleanupInFlight(new ClaudeTurnError(error.message, code, hadInFlight));
@@ -239,6 +251,7 @@ export class ClaudeNativeProcess {
 		this.clearIdleTimer();
 		if (this.config.idleTimeoutMs <= 0) return;
 		this.idleHandle = setTimeout(() => {
+			logClaudeNativeDiagnostic("process.idle_reap", { idleTimeoutMs: this.config.idleTimeoutMs, cwd: this.config.cwd }, this.config.env);
 			this.terminateWithEvent(`idle timeout after ${this.config.idleTimeoutMs}ms`, "idle");
 		}, this.config.idleTimeoutMs);
 		this.idleHandle.unref?.();
