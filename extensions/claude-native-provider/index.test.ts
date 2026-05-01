@@ -6,6 +6,15 @@ interface Scenario {
 	statuses?: string[];
 	malformed?: string[];
 	reject?: string;
+	waitFor?: Promise<void>;
+}
+
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
 }
 
 class MockClaudeNativeProcess {
@@ -43,6 +52,7 @@ class MockClaudeNativeProcess {
 		};
 
 		if (scenario.reject) throw new Error(scenario.reject);
+		if (scenario.waitFor) await scenario.waitFor;
 		for (const status of scenario.statuses ?? []) handlers.onStatus?.(status);
 		for (const line of scenario.malformed ?? []) handlers.onMalformedJson?.(line);
 		for (const text of scenario.stderr ?? []) handlers.onStderr?.(text);
@@ -131,19 +141,86 @@ describe("claude native provider integration", () => {
 		expect(secondEvents.at(-1)).toMatchObject({ type: "done", reason: "stop" });
 	});
 
-	it("creates a new process when the model signature changes", async () => {
+	it("isolates remembered session ids across model changes", async () => {
 		MockClaudeNativeProcess.scenarios.push(
-			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "one" }] },
+			{
+				messages: [
+					{ type: "result", subtype: "success", is_error: false, session_id: "session-sonnet", result: "one" },
+				],
+			},
 			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "two" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "three" }] },
 		);
 
 		const { streamClaudeNative } = await loadModule();
 		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("one")));
 		await collectEvents(streamClaudeNative(createModel("haiku"), createContext("two")));
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("three")));
 
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
-		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual(["model or cwd changed"]);
-		expect(MockClaudeNativeProcess.instances[1].prompts).toEqual(["two"]);
+		expect(MockClaudeNativeProcess.instances[0].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(["one", "three"]);
+	});
+
+	it("isolates remembered session ids across cwd changes", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{
+				messages: [
+					{ type: "result", subtype: "success", is_error: false, session_id: "session-cwd-a", result: "one" },
+				],
+			},
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "two" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "three" }] },
+		);
+
+		let cwd = "/tmp/a";
+		vi.spyOn(process, "cwd").mockImplementation(() => cwd);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("one")));
+		cwd = "/tmp/b";
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("two")));
+		MockClaudeNativeProcess.instances[0].live = false;
+		cwd = "/tmp/a";
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("three")));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(3);
+		expect(MockClaudeNativeProcess.instances[0].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[2].config.args).toEqual(expect.arrayContaining(["--resume", "session-cwd-a"]));
+	});
++
+	it("does not terminate an in-flight turn when a different signature starts concurrently", async () => {
+		const firstTurn = deferred();
+		const secondTurn = deferred();
+		MockClaudeNativeProcess.scenarios.push(
+			{
+				waitFor: firstTurn.promise,
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "one" }],
+			},
+			{
+				waitFor: secondTurn.promise,
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "two" }],
+			},
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		const firstEventsPromise = collectEvents(streamClaudeNative(createModel("sonnet"), createContext("one")));
+		await Promise.resolve();
+		const secondEventsPromise = collectEvents(streamClaudeNative(createModel("haiku"), createContext("two")));
+		await Promise.resolve();
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual([]);
+		expect(MockClaudeNativeProcess.instances[1].terminateReasons).toEqual([]);
+
+		secondTurn.resolve();
+		firstTurn.resolve();
+
+		const [firstEvents, secondEvents] = await Promise.all([firstEventsPromise, secondEventsPromise]);
+		expect(firstEvents.at(-1)).toMatchObject({ type: "done", reason: "stop" });
+		expect(secondEvents.at(-1)).toMatchObject({ type: "done", reason: "stop" });
 	});
 
 	it("reset command terminates the process and clears the remembered session id", async () => {

@@ -30,39 +30,38 @@ import { buildClaudeArgs, modelAlias, numberFromEnv } from "./claude-protocol.ts
 const PROVIDER = "claude-native";
 const API = "claude-native-cli";
 
-let claudeSessionId: string | undefined;
-let activeProcess: ClaudeNativeProcess | undefined;
-let activeProcessSignature: string | undefined;
+const claudeSessionIds = new Map<string, string>();
+const activeProcesses = new Map<string, ClaudeNativeProcess>();
 
 function processSignature(model: Model<Api>): string {
 	return `${modelAlias(model.id)}\0${process.cwd()}`;
 }
 
-function getClaudeProcess(model: Model<Api>): ClaudeNativeProcess {
+function getClaudeProcess(model: Model<Api>): { signature: string; process: ClaudeNativeProcess } {
 	const signature = processSignature(model);
-	if (activeProcess && activeProcessSignature !== signature) {
-		activeProcess.terminate("model or cwd changed");
-		activeProcess = undefined;
+	let runtime = activeProcesses.get(signature);
+	if (runtime && !runtime.isLive()) {
+		activeProcesses.delete(signature);
+		runtime = undefined;
 	}
-	if (!activeProcess || !activeProcess.isLive()) {
+	if (!runtime) {
 		const bin = process.env.CLAUDE_NATIVE_BIN || "claude";
-		const args = buildClaudeArgs(model, claudeSessionId);
-		activeProcess = new ClaudeNativeProcess({
+		const args = buildClaudeArgs(model, claudeSessionIds.get(signature));
+		runtime = new ClaudeNativeProcess({
 			bin,
 			args,
 			cwd: process.cwd(),
 			env: process.env,
 			idleTimeoutMs: numberFromEnv("CLAUDE_NATIVE_IDLE_TIMEOUT_MS", 600_000) ?? 600_000,
 		});
-		activeProcessSignature = signature;
+		activeProcesses.set(signature, runtime);
 	}
-	return activeProcess;
+	return { signature, process: runtime };
 }
 
-function terminateActiveProcess(reason: string): void {
-	activeProcess?.terminate(reason);
-	activeProcess = undefined;
-	activeProcessSignature = undefined;
+function terminateAllProcesses(reason: string): void {
+	for (const runtime of activeProcesses.values()) runtime.terminate(reason);
+	activeProcesses.clear();
 }
 
 function lastUserText(context: Context): string {
@@ -158,7 +157,7 @@ export function streamClaudeNative(
 	stream.push({ type: "start", partial: output });
 
 	const prompt = lastUserText(context);
-	const runtime = getClaudeProcess(model);
+	const { signature, process: runtime } = getClaudeProcess(model);
 
 	let stderr = "";
 	let sawText = false;
@@ -206,7 +205,7 @@ export function streamClaudeNative(
 	runtime.runTurn(prompt, {
 		onMessage: (msg) => {
 			lastActivity = Date.now();
-			if (typeof msg.session_id === "string") claudeSessionId = msg.session_id;
+			if (typeof msg.session_id === "string") claudeSessionIds.set(signature, msg.session_id);
 			if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result") {
 				appendStatus(stream, output, `Claude Code event: ${msg.type}`);
 			}
@@ -293,13 +292,13 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("claude-native-reset", {
 		description: "Reset Claude native process and remembered session state",
 		handler: async (_args, ctx) => {
-			terminateActiveProcess("reset command");
-			claudeSessionId = undefined;
+			terminateAllProcesses("reset command");
+			claudeSessionIds.clear();
 			ctx.ui.notify("Claude native process and session state reset", "info");
 		},
 	});
 
 	pi.on("session_shutdown", async () => {
-		terminateActiveProcess("session shutdown");
+		terminateAllProcesses("session shutdown");
 	});
 }
