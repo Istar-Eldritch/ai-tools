@@ -3,7 +3,7 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	calculateCost,
-	createAssistantMessageEventStream,
+	AssistantMessageEventStream,
 	type Context,
 	type Model,
 	type SimpleStreamOptions,
@@ -154,7 +154,7 @@ export function streamClaudeNative(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
-	const stream = createAssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream();
 	const output = makeEmptyMessage(model);
 	stream.push({ type: "start", partial: output });
 
@@ -230,8 +230,10 @@ export function streamClaudeNative(
 					output.stopReason = "error";
 					output.errorMessage = Array.isArray(msg.errors) ? msg.errors.join("\n") : finalResult || "Claude Code returned an error";
 				}
-				if (msg.stop_reason === "max_tokens") output.stopReason = "length";
-				else if (msg.stop_reason === "tool_use") output.stopReason = "toolUse";
+				if (output.stopReason !== "error") {
+					if (msg.stop_reason === "max_tokens") output.stopReason = "length";
+					else if (msg.stop_reason === "tool_use") output.stopReason = "toolUse";
+				}
 				updateUsageFromResult(model, output, msg);
 			}
 		},
