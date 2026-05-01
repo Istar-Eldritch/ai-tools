@@ -375,7 +375,7 @@ export async function createAgentCommit(
 		cycle: context.cycle,
 		reviewFeedback: context.reviewFeedback,
 		diff,
-	}, agentConfig, cwd);
+	}, agentConfig as any, cwd);
 	
 	// Step 7: Create the commit
 	const commitResult = await execGit(cwd, ["commit", "-m", messageResult.message]);

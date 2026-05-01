@@ -6,7 +6,6 @@ import {
 	validateConfig,
 	formatValidationErrors,
 	DEFAULT_MODEL_CONFIGS,
-	DEFAULT_TIERED_CONFIGS,
 	DEFAULT_REVIEW_CYCLES,
 	discoverSpecTemplate,
 	discoverSpecConventions,
@@ -34,19 +33,9 @@ describe("validateConfig", () => {
 				models: {
 					planDrafter: { model: "gpt-5.5", thinking: "high" },
 					implementer: { model: "gpt-5.5", thinking: "high" },
-					planReviewer: {
-						cheap: { model: "gpt-5.4", thinking: "medium" },
-						expensive: { model: "gpt-5.5", thinking: "high" },
-					},
-					codeReviewer: {
-						cheap: { model: "gpt-5.4", thinking: "medium" },
-						expensive: { model: "gpt-5.5", thinking: "high" },
-					},
+					codeReviewer: { model: "gpt-5.4", thinking: "medium" },
 				},
-				reviewCycles: {
-					cheap: 2,
-					expensive: 2,
-				},
+				reviewCycles: 2,
 			};
 			expect(validateConfig(config)).toEqual([]);
 		});
@@ -58,22 +47,9 @@ describe("validateConfig", () => {
 			expect(validateConfig(config)).toEqual([]);
 		});
 
-		it("accepts per-reviewer review cycles format", () => {
+		it("accepts review cycle count", () => {
 			const config = {
-				reviewCycles: {
-					planReviewer: { cheap: 0, expensive: 0 },
-					codeReviewer: { cheap: 3, expensive: 2 },
-				},
-			};
-			expect(validateConfig(config)).toEqual([]);
-		});
-
-		it("accepts global review cycles format", () => {
-			const config = {
-				reviewCycles: {
-					cheap: 2,
-					expensive: 1,
-				},
+				reviewCycles: 3,
 			};
 			expect(validateConfig(config)).toEqual([]);
 		});
@@ -202,31 +178,9 @@ describe("default configurations", () => {
 		});
 	});
 
-	describe("DEFAULT_TIERED_CONFIGS", () => {
-		it("has planReviewer tiered config", () => {
-			const config = DEFAULT_TIERED_CONFIGS.planReviewer;
-			expect(config.cheap.model).toBe("gpt-5.4");
-			expect(config.expensive.model).toBe("gpt-5.5");
-		});
-
-		it("has codeReviewer tiered config", () => {
-			const config = DEFAULT_TIERED_CONFIGS.codeReviewer;
-			expect(config.cheap.model).toBe("gpt-5.4");
-			expect(config.expensive.model).toBe("gpt-5.5");
-		});
-	});
-
 	describe("DEFAULT_REVIEW_CYCLES", () => {
-		it("has cycles for all reviewers", () => {
-			expect(DEFAULT_REVIEW_CYCLES.planReviewer).toBeDefined();
-			expect(DEFAULT_REVIEW_CYCLES.codeReviewer).toBeDefined();
-		});
-
-		it("disables plan review and keeps code review enabled by default", () => {
-			expect(DEFAULT_REVIEW_CYCLES.planReviewer.cheap).toBe(0);
-			expect(DEFAULT_REVIEW_CYCLES.planReviewer.expensive).toBe(0);
-			expect(DEFAULT_REVIEW_CYCLES.codeReviewer.cheap).toBe(2);
-			expect(DEFAULT_REVIEW_CYCLES.codeReviewer.expensive).toBe(2);
+		it("defaults code review to 2 cycles", () => {
+			expect(DEFAULT_REVIEW_CYCLES).toBe(2);
 		});
 	});
 });

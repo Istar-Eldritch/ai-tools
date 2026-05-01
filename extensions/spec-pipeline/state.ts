@@ -220,11 +220,8 @@ export function loadImplState(cwd: string, id: string): ImplementationState | nu
 		if (state.checkpoints === undefined) {
 			state.checkpoints = [];
 		}
-		if (state.cheapCyclesCompleted === undefined) {
-			state.cheapCyclesCompleted = 0;
-		}
-		if (state.expensiveCyclesCompleted === undefined) {
-			state.expensiveCyclesCompleted = 0;
+		if (state.reviewCyclesCompleted === undefined) {
+			state.reviewCyclesCompleted = 0;
 		}
 
 		if (needsSave) {

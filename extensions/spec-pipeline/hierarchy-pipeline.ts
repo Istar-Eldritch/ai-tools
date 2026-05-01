@@ -79,7 +79,7 @@ export async function runHierarchyPipeline(
 		state.metrics = {
 			pipelineStartTime: new Date().toISOString(),
 			agentCalls: [],
-			specReviewCycles: { cheap: 0, expensive: 0 },
+			specReviewCycles: 0,
 			specIterations: state.docIteration,
 			discoverySkipped: state.discovery?.skipped ?? true,
 		};

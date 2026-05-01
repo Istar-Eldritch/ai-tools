@@ -281,17 +281,15 @@ The AI implements the spec (or discovery summary) with interleaved planning, cod
 
 **For each phase:**
 1. **Plan Drafting** - AI drafts implementation plan
-2. **Plan Review** - Tiered review (cheap → expensive tiers)
-3. **Implementation** - AI writes code
-4. **Code Review** - Tiered review (cheap → expensive tiers)
-5. **Testing** - Runs test command (auto-detected: npm test, cargo test, etc.)
-6. **Commit** - Automatic git commit with AI-generated message
+2. **Implementation** - AI writes code
+3. **Code Review** - Single configured reviewer model checks the implementation
+4. **Testing** - Runs test command (auto-detected: npm test, cargo test, etc.)
+5. **Commit** - Automatic git commit with AI-generated message
 
-**Tiered Review:**
-- **Cheap tier** (e.g., GPT-5.4) reviews first for N cycles
+**Code Review:**
+- `codeReviewer` reviews for up to `reviewCycles` cycles
 - If NEEDS_CHANGES, `addressReview` agent applies fixes automatically
-- **Expensive tier** (e.g., GPT-5.5) validates for M cycles as quality gate
-- Cycles configurable per reviewer (planReviewer, codeReviewer)
+- Set `reviewCycles` to `0` to skip code review
 
 **Error Recovery:**
 - Automatic git checkpoints before each agent operation
@@ -355,9 +353,7 @@ Create `.pi/spec-pipeline.json` in your project root:
   "models": {
     "implementer": { "model": "gpt-5.5", "thinking": "high" }
   },
-  "reviewCycles": {
-    "codeReviewer": { "cheap": 3, "expensive": 2 }
-  }
+  "reviewCycles": 3
 }
 ```
 
@@ -397,15 +393,8 @@ Configure models per-role to optimize cost and quality:
 {
   "models": {
     "planDrafter": { "model": "gpt-5.5", "thinking": "high" },
-    "planReviewer": {
-      "cheap": { "model": "gpt-5.4", "thinking": "medium" },
-      "expensive": { "model": "gpt-5.5", "thinking": "high" }
-    },
     "implementer": { "model": "gpt-5.5", "thinking": "high" },
-    "codeReviewer": {
-      "cheap": { "model": "gpt-5.4", "thinking": "medium" },
-      "expensive": { "model": "gpt-5.5", "thinking": "high" }
-    },
+    "codeReviewer": { "model": "gpt-5.4", "thinking": "medium" },
     "addressReview": { "model": "gpt-5.4", "thinking": "medium" }
   }
 }
@@ -422,12 +411,11 @@ Configure models per-role to optimize cost and quality:
 | `addressReview` | gpt-5.4 | medium | Apply fixes based on review feedback |
 | `agentCommitMessageWriter` | gpt-5.4-mini | off | Generate commit messages |
 
-**Tiered Review Roles (used in `/implement`):**
+**Review Roles (used in `/implement`):**
 
-| Role | Default Cheap | Default Expensive | Purpose |
-|------|---------------|-------------------|---------|
-| `planReviewer` | gpt-5.4/medium | gpt-5.5/high | Review implementation plans (tiered) |
-| `codeReviewer` | gpt-5.4/medium | gpt-5.5/high | Review code changes (tiered) |
+| Role | Default Model | Default Thinking | Purpose |
+|------|---------------|------------------|---------|
+| `codeReviewer` | gpt-5.4 | medium | Review code changes |
 
 #### Model Options
 
@@ -449,51 +437,25 @@ Any model supported by pi can be used (e.g., `gpt-5.1-codex`, `gemini-2.5-pro`, 
 
 ### Review Cycles Configuration
 
-Control tiered review cycles for plans and code during `/implement`:
+Control code review cycles during `/implement`:
 
 ```json
 {
-  "reviewCycles": {
-    "cheap": 2,      // All reviewers: 2 cheap cycles
-    "expensive": 2   // All reviewers: 2 expensive cycles
-  }
+  "reviewCycles": 2
 }
 ```
 
-Or configure per-reviewer:
+**How review works:**
 
-```json
-{
-  "reviewCycles": {
-    "planReviewer": { "cheap": 0, "expensive": 0 },
-    "codeReviewer": { "cheap": 3, "expensive": 2 }
-  }
-}
-```
-
-**How tiered review works:**
-
-1. **Cheap tier** runs first (e.g., GPT-5.4) for N cycles
-   - Reviews content, returns verdict: APPROVED or NEEDS_CHANGES
-   - If NEEDS_CHANGES, `addressReview` agent applies fixes
-   - Repeats until APPROVED or max cheap cycles reached
-
-2. **Expensive tier** runs for final QA (e.g., GPT-5.5) for M cycles
-   - Even if cheap tier approved, expensive tier validates
-   - If NEEDS_CHANGES, `addressReview` applies fixes
-   - Repeats until APPROVED or max expensive cycles reached
-
-3. **Cost optimization**
-   - Cheap tier catches most issues
-   - Expensive tier provides quality gate
-   - Setting cycles to 0 skips that tier entirely
+1. `codeReviewer` reviews the implementation and returns APPROVED or NEEDS_CHANGES.
+2. If NEEDS_CHANGES, `addressReview` applies fixes.
+3. The loop repeats until APPROVED or `reviewCycles` is reached.
+4. Setting `reviewCycles` to `0` skips code review entirely.
 
 **Setting cycles to 0:**
 ```json
 {
-  "reviewCycles": {
-    "planReviewer": { "cheap": 0, "expensive": 0 }  // Skip plan review entirely
-  }
+  "reviewCycles": 0
 }
 ```
 
@@ -729,7 +691,7 @@ The pipeline tracks detailed metrics for optimization:
     "specDraftingDurationMs": 1800000,
     "discoverySkipped": false,
     "specIterations": 2,
-    "specReviewCycles": { "cheap": 2, "expensive": 1 },
+    "specReviewCycles": 0,
     "agentCalls": [
       {
         "role": "planDrafter",
@@ -756,8 +718,7 @@ The pipeline tracks detailed metrics for optimization:
     "implementationDurationMs": 3000000,
     "skipPlanGeneration": false,
     "codeReviewFirstPassRate": 0.67,
-    "planReviewCycles": { "cheap": 1, "expensive": 1 },
-    "codeReviewCycles": { "cheap": 3, "expensive": 2 },
+    "codeReviewCycles": 3,
     "agentCalls": [ /* ... */ ]
   }
 }
@@ -817,7 +778,7 @@ npm test -- --coverage extensions/spec-pipeline/
 
 **Test coverage:**
 - Configuration validation and defaults
-- Tiered review logic
+- Code review loop logic
 - Git operations and scoped commits
 - Error handling and recovery
 - State management
@@ -831,7 +792,7 @@ npm test -- --coverage extensions/spec-pipeline/
 - **spec-pipeline.ts** - Main pipeline orchestration
 - **implement-pipeline.ts** - Implementation phase execution
 - **hierarchy-pipeline.ts** - Roadmap/epic workflow
-- **review.ts** - Tiered review system
+- **review.ts** - Code review loop
 - **git.ts** - Git operations and error recovery
 - **config.ts** - Configuration loading and validation
 - **state.ts** - State persistence and management

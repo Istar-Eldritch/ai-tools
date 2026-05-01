@@ -12,7 +12,6 @@ import type {
 	EpicState,
 	HierarchyState,
 	ModelConfig,
-	TieredModelConfig,
 	ProjectConfig,
 	WidgetUIContext,
 } from "./types.ts";
@@ -122,13 +121,6 @@ export function formatModelConfig(config: ModelConfig): string {
 }
 
 /**
- * Format tiered model config for display
- */
-export function formatTieredConfig(config: TieredModelConfig): string {
-	return `cheap=${config.cheap.model}/${config.cheap.thinking}, expensive=${config.expensive.model}/${config.expensive.thinking}`;
-}
-
-/**
  * Format effective configuration for display at startup (R5)
  */
 export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean): string {
@@ -142,21 +134,15 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 	// Model configurations
 	lines.push("  Model Configurations:");
 	lines.push(`    planDrafter       : ${formatModelConfig(config.models.planDrafter)}`);
-	lines.push(`    planReviewer      : ${formatTieredConfig(config.models.planReviewer)}`);
 	lines.push(`    implementer       : ${formatModelConfig(config.models.implementer)}`);
-	lines.push(`    codeReviewer      : ${formatTieredConfig(config.models.codeReviewer)}`);
+	lines.push(`    codeReviewer      : ${formatModelConfig(config.models.codeReviewer)}`);
 	lines.push(`    addressReview     : ${formatModelConfig(config.models.addressReview)}`);
 	lines.push(`    agentCommitMessageWriter: ${formatModelConfig(config.models.agentCommitMessageWriter)}`);
 	lines.push("");
 	
-	// Review cycles (per reviewer)
-	lines.push("  Review Cycles (cheap/expensive):");
-	const formatCycles = (cycles: { cheap: number; expensive: number }) => {
-		if (cycles.cheap === 0 && cycles.expensive === 0) return "skipped";
-		return `${cycles.cheap}/${cycles.expensive}`;
-	};
-	lines.push(`    planReviewer: ${formatCycles(config.reviewCycles.planReviewer)}`);
-	lines.push(`    codeReviewer: ${formatCycles(config.reviewCycles.codeReviewer)}`);
+	// Review cycles
+	lines.push("  Review Cycles:");
+	lines.push(`    codeReviewer: ${config.reviewCycles === 0 ? "skipped" : config.reviewCycles}`);
 	lines.push("");
 	
 	// Spec template & conventions
@@ -426,10 +412,8 @@ export function formatImplState(state: ImplementationState): string {
 		
 		if (state.stage === "implementation") {
 			lines.push(formatKeyValue("  Current Phase", `${state.currentPhaseIndex + 1}/${phases.length}`));
-			if (state.currentReviewTier) {
-				lines.push(formatKeyValue("  Review Tier", state.currentReviewTier));
-				lines.push(formatKeyValue("  Cheap Cycles", String(state.cheapCyclesCompleted || 0)));
-				lines.push(formatKeyValue("  Expensive Cycles", String(state.expensiveCyclesCompleted || 0)));
+			if (state.reviewCyclesCompleted !== undefined) {
+				lines.push(formatKeyValue("  Review Cycles", String(state.reviewCyclesCompleted || 0)));
 			} else {
 				lines.push(formatKeyValue("  Review Cycle", String(state.currentReviewCycle)));
 			}

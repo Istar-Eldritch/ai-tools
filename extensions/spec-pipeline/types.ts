@@ -27,21 +27,14 @@ export const ModelConfigSchema = Type.Object({
 	thinking: ThinkingLevelSchema,
 });
 
-// Tiered config for reviewer roles (cheap + expensive)
-export const TieredModelConfigSchema = Type.Object({
-	cheap: ModelConfigSchema,
-	expensive: ModelConfigSchema,
-});
-
 // Full models configuration schema
 // NOTE: commitMessageWriter is explicitly included as optional Type.Any() to allow
 // it in config but silently ignore it per R5a. Using Type.Any() means any value
 // is accepted but we never use it.
 export const ModelsConfigSchema = Type.Object({
 	planDrafter: Type.Optional(ModelConfigSchema),
-	planReviewer: Type.Optional(TieredModelConfigSchema),
 	implementer: Type.Optional(ModelConfigSchema),
-	codeReviewer: Type.Optional(TieredModelConfigSchema),
+	codeReviewer: Type.Optional(ModelConfigSchema),
 	addressReview: Type.Optional(ModelConfigSchema),
 	// agentCommitMessageWriter for commits after agent operations (R5)
 	agentCommitMessageWriter: Type.Optional(ModelConfigSchema),
@@ -49,25 +42,8 @@ export const ModelsConfigSchema = Type.Object({
 	commitMessageWriter: Type.Optional(Type.Any()),
 });
 
-// Single reviewer cycle configuration (allows 0 to skip)
-export const SingleReviewerCyclesSchema = Type.Object({
-	cheap: Type.Optional(Type.Number({ minimum: 0, maximum: 10 })),
-	expensive: Type.Optional(Type.Number({ minimum: 0, maximum: 10 })),
-});
-
-// Per-reviewer cycle configuration
-export const PerReviewerCyclesSchema = Type.Object({
-	planReviewer: Type.Optional(SingleReviewerCyclesSchema),
-	codeReviewer: Type.Optional(SingleReviewerCyclesSchema),
-});
-
-// Review cycles configuration schema - supports both global and per-reviewer formats
-// Global format: { "cheap": 2, "expensive": 2 } - applies to all reviewers
-// Per-reviewer format: { "specReviewer": { "cheap": 2 }, "planReviewer": { "cheap": 0 } }
-export const ReviewCyclesConfigSchema = Type.Union([
-	SingleReviewerCyclesSchema,
-	PerReviewerCyclesSchema,
-]);
+// Review cycles configuration (allows 0 to skip code review)
+export const ReviewCyclesConfigSchema = Type.Number({ minimum: 0, maximum: 10 });
 
 // Full pipeline configuration schema
 export const SpecPipelineConfigSchema = Type.Object({
@@ -91,18 +67,12 @@ export const SpecPipelineConfigSchema = Type.Object({
 // ============================================
 
 export type ModelConfig = Static<typeof ModelConfigSchema>;
-export type TieredModelConfig = Static<typeof TieredModelConfigSchema>;
 export type ModelsConfig = Static<typeof ModelsConfigSchema>;
 export type ThinkingLevel = Static<typeof ThinkingLevelSchema>;
-export type SingleReviewerCycles = Static<typeof SingleReviewerCyclesSchema>;
-export type PerReviewerCycles = Static<typeof PerReviewerCyclesSchema>;
 export type ReviewCyclesConfig = Static<typeof ReviewCyclesConfigSchema>;
 
-// Normalized per-reviewer cycles structure used internally
-export interface NormalizedReviewCycles {
-	planReviewer: { cheap: number; expensive: number };
-	codeReviewer: { cheap: number; expensive: number };
-}
+// Normalized review cycle count used internally
+export type NormalizedReviewCycles = number;
 
 // ============================================
 // Metrics Types
@@ -121,7 +91,6 @@ export interface AgentCallMetrics {
 	exitCode: number;
 	phase?: number;         // Phase index if applicable
 	cycle?: number;         // Review cycle if applicable
-	tier?: "cheap" | "expensive";  // Review tier if applicable
 }
 
 /**
@@ -134,7 +103,7 @@ export interface SpecMetrics {
 	discoveryDurationMs?: number;
 	specDraftingDurationMs?: number;
 	agentCalls: AgentCallMetrics[];
-	specReviewCycles: { cheap: number; expensive: number };
+	specReviewCycles: number;
 	specIterations: number;
 	discoverySkipped: boolean;
 }
@@ -149,8 +118,7 @@ export interface ImplementationMetrics {
 	planGenerationDurationMs?: number;
 	implementationDurationMs?: number;
 	agentCalls: AgentCallMetrics[];
-	planReviewCycles: { cheap: number; expensive: number };
-	codeReviewCycles: { cheap: number; expensive: number };
+	codeReviewCycles: number;
 	codeReviewFirstPassRate: number;
 	skipPlanGeneration: boolean;
 }
@@ -177,14 +145,12 @@ export interface ProjectConfig {
 	// Model configurations per role
 	models: {
 		planDrafter: ModelConfig;
-		planReviewer: TieredModelConfig;
 		implementer: ModelConfig;
-		codeReviewer: TieredModelConfig;
+		codeReviewer: ModelConfig;
 		addressReview: ModelConfig;
 		agentCommitMessageWriter: ModelConfig;
 	};
-	// Review cycle counts per reviewer
-	// Setting both cheap and expensive to 0 skips that review entirely
+	// Code review cycle count. Setting to 0 skips code review entirely.
 	reviewCycles: NormalizedReviewCycles;
 	// Experimental: skip plan generation (go directly from spec to implementation)
 	skipPlanGeneration: boolean;
@@ -198,7 +164,6 @@ export type ErrorType = "RATE_LIMIT" | "TIMEOUT" | "NETWORK" | "VALIDATION" | "U
 
 export type RoleName = 
 	| "planDrafter"
-	| "planReviewer"
 	| "implementer"
 	| "codeReviewer"
 	| "addressReview"
@@ -371,10 +336,8 @@ export interface ImplementationState {
 	currentReviewCycle: number;
 	previousReview: string;
 	
-	// Tiered review state
-	currentReviewTier?: "cheap" | "expensive";
-	cheapCyclesCompleted?: number;
-	expensiveCyclesCompleted?: number;
+	// Review state
+	reviewCyclesCompleted?: number;
 	
 	// Resume tracking
 	implementerCompletedForPhase?: boolean;
@@ -418,25 +381,21 @@ export interface AgentResult {
 export type ReviewVerdict = "APPROVED" | "NEEDS_CHANGES";
 
 /**
- * Result from a tiered review process
+ * Result from a review process
  */
-export interface TieredReviewResult {
+export interface ReviewResult {
 	/** Final verdict from the review process */
 	verdict: ReviewVerdict;
 	/** Output from the last review */
 	lastReviewOutput: string;
-	/** Which tier produced the final verdict */
-	finalTier: "cheap" | "expensive";
-	/** Number of cheap tier cycles completed */
-	cheapCyclesCompleted: number;
-	/** Number of expensive tier cycles completed */
-	expensiveCyclesCompleted: number;
+	/** Number of review cycles completed */
+	cyclesCompleted: number;
 	/** Whether the process was interrupted by an error */
 	hadError: boolean;
 }
 
-/** Reviewer role names that support tiered configuration */
-export type TieredReviewerRole = "planReviewer" | "codeReviewer";
+/** Reviewer role name */
+export type ReviewerRole = "codeReviewer";
 
 // ============================================
 // UI Context Types
@@ -475,7 +434,7 @@ export const PIPELINE_WIDGET_ID = "spec-pipeline-status";
 // Roles that need write/edit access to modify files
 export const WRITE_ROLES = new Set(["planDrafter", "implementer", "addressReview"]);
 // Roles that only need to read and analyze (no write/edit access)
-export const READ_ONLY_ROLES = new Set(["planReviewer", "codeReviewer", "commitMessageWriter"]);
+export const READ_ONLY_ROLES = new Set(["codeReviewer", "commitMessageWriter"]);
 
 
 

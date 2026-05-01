@@ -8,10 +8,8 @@ import { Value } from "@sinclair/typebox/value";
 import type { Static } from "@sinclair/typebox";
 import {
 	type ModelConfig,
-	type TieredModelConfig,
 	type ModelsConfig,
 	type ReviewCyclesConfig,
-	type PerReviewerCycles,
 	type NormalizedReviewCycles,
 	type ProjectConfig,
 	SpecPipelineConfigSchema,
@@ -29,37 +27,13 @@ import {
 export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 	planDrafter: { model: "gpt-5.5", thinking: "high" },              // Complex planning task
 	implementer: { model: "gpt-5.5", thinking: "high" },              // Complex code generation
+	codeReviewer: { model: "gpt-5.4", thinking: "medium" },           // Review code changes
 	addressReview: { model: "gpt-5.4", thinking: "medium" },          // Fix application — issues already identified by reviewer
 	agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" },  // Fast, cheap commit message generation (R5)
 } as const;
 
-/**
- * Default tiered configurations for reviewer roles (R14)
- */
-export const DEFAULT_TIERED_CONFIGS: Record<string, TieredModelConfig> = {
-	planReviewer: {
-		cheap: { model: "gpt-5.4", thinking: "medium" },
-		expensive: { model: "gpt-5.5", thinking: "high" },
-	},
-	codeReviewer: {
-		cheap: { model: "gpt-5.4", thinking: "medium" },
-		expensive: { model: "gpt-5.5", thinking: "high" },
-	},
-} as const;
-
-/**
- * Default review cycle counts per reviewer (R15)
- * Plan review is disabled by default; code review remains enabled.
- */
-export const DEFAULT_REVIEWER_CYCLES: { cheap: number; expensive: number } = {
-	cheap: 2,
-	expensive: 2,
-} as const;
-
-export const DEFAULT_REVIEW_CYCLES: NormalizedReviewCycles = {
-	planReviewer: { cheap: 0, expensive: 0 },
-	codeReviewer: { ...DEFAULT_REVIEWER_CYCLES },
-} as const;
+/** Default code review cycle count. Set to 0 to skip code review. */
+export const DEFAULT_REVIEW_CYCLES: NormalizedReviewCycles = 2;
 
 // ============================================
 // Validation
@@ -117,48 +91,8 @@ export function formatValidationErrors(errors: ConfigValidationError[]): string 
 // Configuration Normalization
 // ============================================
 
-/**
- * Check if the review cycles config is in per-reviewer format
- * Per-reviewer format has planReviewer or codeReviewer keys
- * Global format has cheap and expensive keys directly
- */
-function isPerReviewerFormat(config: ReviewCyclesConfig): config is PerReviewerCycles {
-	if (!config || typeof config !== "object") return false;
-	// If it has any of the reviewer keys, it's per-reviewer format
-	return "planReviewer" in config || "codeReviewer" in config;
-}
-
-/**
- * Normalize review cycles config to per-reviewer format
- * Handles both global format and per-reviewer format
- */
 function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined): NormalizedReviewCycles {
-	if (!userReviewCycles) {
-		// No config provided - use defaults
-		return { ...DEFAULT_REVIEW_CYCLES };
-	}
-	
-	if (isPerReviewerFormat(userReviewCycles)) {
-		// Per-reviewer format - merge each reviewer with defaults
-		return {
-			planReviewer: {
-				cheap: userReviewCycles.planReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
-				expensive: userReviewCycles.planReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
-			},
-			codeReviewer: {
-				cheap: userReviewCycles.codeReviewer?.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap,
-				expensive: userReviewCycles.codeReviewer?.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive,
-			},
-		};
-	}
-	
-	// Global format - apply to all reviewers
-	const globalCheap = userReviewCycles.cheap ?? DEFAULT_REVIEWER_CYCLES.cheap;
-	const globalExpensive = userReviewCycles.expensive ?? DEFAULT_REVIEWER_CYCLES.expensive;
-	return {
-		planReviewer: { cheap: globalCheap, expensive: globalExpensive },
-		codeReviewer: { cheap: globalCheap, expensive: globalExpensive },
-	};
+	return userReviewCycles ?? DEFAULT_REVIEW_CYCLES;
 }
 
 /**
@@ -177,9 +111,8 @@ function mergeWithDefaults(
 	// Note: commitMessageWriter from userModels is intentionally not used (R5a)
 	const models: ProjectConfig["models"] = {
 		planDrafter: userModels?.planDrafter ?? DEFAULT_MODEL_CONFIGS.planDrafter,
-		planReviewer: userModels?.planReviewer ?? DEFAULT_TIERED_CONFIGS.planReviewer,
 		implementer: userModels?.implementer ?? DEFAULT_MODEL_CONFIGS.implementer,
-		codeReviewer: userModels?.codeReviewer ?? DEFAULT_TIERED_CONFIGS.codeReviewer,
+		codeReviewer: userModels?.codeReviewer ?? DEFAULT_MODEL_CONFIGS.codeReviewer,
 		addressReview: userModels?.addressReview ?? DEFAULT_MODEL_CONFIGS.addressReview,
 		agentCommitMessageWriter: userModels?.agentCommitMessageWriter ?? DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
 	};

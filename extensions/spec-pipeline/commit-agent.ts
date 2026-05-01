@@ -160,10 +160,6 @@ function generateFallbackMessage(context: CommitMessageContext): string {
 			}
 			break;
 		
-		case "planReviewer":
-			subject = `docs(${scope}): revise plan after review`;
-			break;
-		
 		case "codeReviewer":
 			subject = `refactor(${scope}): apply code review changes`;
 			break;
@@ -209,9 +205,6 @@ function buildCommitPrompt(context: CommitMessageContext): string {
 			if (reviewFeedback) {
 				parts.push(`- Feedback: ${reviewFeedback.slice(0, 200)}${reviewFeedback.length > 200 ? '...' : ''}`);
 			}
-			break;
-		case "planReviewer":
-			parts.push(`- Role: Revising plan after review`);
 			break;
 		case "codeReviewer":
 			parts.push(`- Role: Applying code review suggestions`);
@@ -286,7 +279,7 @@ export async function generateCommitMessage(
 		const { createAgentSession, SessionManager, SettingsManager } = await import("@mariozechner/pi-coding-agent");
 		const { getModel } = await import("@mariozechner/pi-ai");
 		
-		const model = getModel(provider, configuredModel);
+		const model = getModel(provider as any, configuredModel);
 		if (!model) {
 			return { type: "fallback", message: generateFallbackMessage(context) };
 		}

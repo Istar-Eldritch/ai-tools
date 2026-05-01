@@ -23,9 +23,8 @@
  *   2. Discovery (if using description): Conversational — LLM proposes assumptions
  *   3. For each implementation phase (plan + implement interleaved):
  *      - Plan Drafting: GPT-5.5 drafts implementation plan
- *      - Plan Review: disabled by default (configurable tiered review: GPT-5.4 → GPT-5.5)
  *      - Implementation: GPT-5.5 implements according to plan
- *      - Code Review: Tiered review (GPT-5.4 → GPT-5.5)
+ *      - Code Review: GPT-5.4 reviews implementation
  *   3. User reviews the implementation
  *
  * Usage:
@@ -1560,10 +1559,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (flags.noReview) {
 					effectiveConfig = {
 						...projectConfig,
-						reviewCycles: {
-							planReviewer: { cheap: 0, expensive: 0 },
-							codeReviewer: { cheap: 0, expensive: 0 },
-						},
+						reviewCycles: 0,
 					};
 				}
 				
@@ -2160,8 +2156,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 
 				if (noReview) {
-					projectConfig.reviewCycles.planReviewer = { cheap: 0, expensive: 0 };
-					projectConfig.reviewCycles.codeReviewer = { cheap: 0, expensive: 0 };
+					projectConfig.reviewCycles = 0;
 				}
 
 				ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
@@ -2601,14 +2596,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			lines.push(formatDivider(70));
 			lines.push("");
 
-			lines.push("| ID | Plan Gen | Duration | Code Review (c/e) | First Pass |");
-			lines.push("|-----|----------|----------|-------------------|------------|");
+			lines.push("| ID | Plan Gen | Duration | Code Review Cycles | First Pass |");
+			lines.push("|-----|----------|----------|--------------------|------------|");
 
 			for (const state of statesToExport) {
 				const m = state.metrics!;
 				const durationMins = m.totalDurationMs ? Math.round(m.totalDurationMs / 60000) : "?";
 				const planGen = m.skipPlanGeneration ? "SKIP" : "YES";
-				const codeReview = `${m.codeReviewCycles.cheap}/${m.codeReviewCycles.expensive}`;
+				const codeReview = String(m.codeReviewCycles);
 				const firstPass = `${m.codeReviewFirstPassRate}%`;
 				
 				const stateId = state.id || "unknown";
@@ -2637,8 +2632,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				lines.push(formatKeyValue("    Agent Calls", String(m.agentCalls.length)));
 				lines.push("");
 				lines.push("  Review Cycles:");
-				lines.push(formatKeyValue("    Plan Review", `${m.planReviewCycles.cheap} cheap, ${m.planReviewCycles.expensive} expensive`));
-				lines.push(formatKeyValue("    Code Review", `${m.codeReviewCycles.cheap} cheap, ${m.codeReviewCycles.expensive} expensive`));
+				lines.push(formatKeyValue("    Code Review", String(m.codeReviewCycles)));
 				lines.push("");
 				lines.push("  Quality:");
 				lines.push(formatKeyValue("    First Pass Rate", `${m.codeReviewFirstPassRate}%`));

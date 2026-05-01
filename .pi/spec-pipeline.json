@@ -1,20 +1,10 @@
 {
   "models": {
     "planDrafter": { "model": "gpt-5.5", "thinking": "high" },
-    "planReviewer": {
-      "cheap": { "model": "gpt-5.4", "thinking": "medium" },
-      "expensive": { "model": "gpt-5.5", "thinking": "high" }
-    },
     "implementer": { "model": "gpt-5.5", "thinking": "high" },
-    "codeReviewer": {
-      "cheap": { "model": "gpt-5.4", "thinking": "medium" },
-      "expensive": { "model": "gpt-5.5", "thinking": "high" }
-    },
+    "codeReviewer": { "model": "gpt-5.4", "thinking": "medium" },
     "addressReview": { "model": "gpt-5.4", "thinking": "medium" },
     "agentCommitMessageWriter": { "model": "gpt-5.4-mini", "thinking": "off" }
   },
-  "reviewCycles": {
-    "planReviewer": { "cheap": 0, "expensive": 0 },
-    "codeReviewer": { "cheap": 2, "expensive": 2 }
-  }
+  "reviewCycles": 2
 }

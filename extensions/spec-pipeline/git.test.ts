@@ -89,18 +89,18 @@ Added support for Google and GitHub OAuth providers.`;
 	describe("multi-line commit messages", () => {
 		it("preserves body in conventional commit", () => {
 			const output = `\`\`\`
-feat(pipeline): add tiered review system
+feat(pipeline): add code review loop
 
-Implements a two-tier review process:
-- Cheap tier uses GPT-5.4 for initial review
-- Expensive tier uses GPT-5.5 for final QA
+Implements a single-model review process:
+- GPT-5.4 reviews implementation changes
+- addressReview applies fixes when needed
 
 Closes #123
 \`\`\``;
 			
 			const message = extractCommitMessage(output);
-			expect(message).toContain("feat(pipeline): add tiered review system");
-			expect(message).toContain("two-tier review process");
+			expect(message).toContain("feat(pipeline): add code review loop");
+			expect(message).toContain("single-model review process");
 			expect(message).toContain("Closes #123");
 		});
 	});

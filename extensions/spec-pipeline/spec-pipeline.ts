@@ -42,7 +42,7 @@ export async function runSpecPipeline(
 		state.metrics = {
 			pipelineStartTime: new Date().toISOString(),
 			agentCalls: [],
-			specReviewCycles: { cheap: 0, expensive: 0 },
+			specReviewCycles: 0,
 			specIterations: state.specIteration,
 			discoverySkipped: state.discovery?.skipped ?? true,
 		};

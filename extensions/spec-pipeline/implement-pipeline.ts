@@ -31,7 +31,7 @@ import {
 	formatKeyValue,
 } from "./formatting.ts";
 import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
-import { runTieredReview } from "./review.ts";
+import { runReview } from "./review.ts";
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 // ============================================
@@ -64,8 +64,7 @@ function initializeImplMetrics(skipPlanGeneration: boolean): ImplementationMetri
 	return {
 		pipelineStartTime: new Date().toISOString(),
 		agentCalls: [],
-		planReviewCycles: { cheap: 0, expensive: 0 },
-		codeReviewCycles: { cheap: 0, expensive: 0 },
+		codeReviewCycles: 0,
 		codeReviewFirstPassRate: 0,
 		skipPlanGeneration,
 	};
@@ -79,8 +78,7 @@ function recordAgentCall(
 	startTime: Date,
 	exitCode: number,
 	phase?: number,
-	cycle?: number,
-	tier?: "cheap" | "expensive"
+	cycle?: number
 ): void {
 	const endTime = new Date();
 	const call: AgentCallMetrics = {
@@ -93,7 +91,6 @@ function recordAgentCall(
 		exitCode,
 		phase,
 		cycle,
-		tier,
 	};
 	metrics.agentCalls.push(call);
 }
@@ -311,9 +308,7 @@ async function _runImplementPipelineInner(
 		const resumingMidPhase = state.implementerCompletedForPhase === true;
 		
 		if (!resumingMidPhase) {
-			state.currentReviewTier = undefined;
-			state.cheapCyclesCompleted = 0;
-			state.expensiveCyclesCompleted = 0;
+			state.reviewCyclesCompleted = 0;
 			state.implementerCompletedForPhase = false;
 		}
 		save();
@@ -410,8 +405,6 @@ Then create a detailed, executable plan and save it to the path above.`;
 				}
 			}
 
-			const planContent = fs.readFileSync(fullPhasePath, "utf-8");
-
 			// Create commit after plan drafting
 			const commitResult = await createAgentCommit(
 				cwd, state,
@@ -436,65 +429,6 @@ Then create a detailed, executable plan and save it to the path above.`;
 				}
 			}
 
-			// Review plan with tiered approach
-			ctx.ui.notify("📝 Running tiered plan review...", "info");
-			
-			// Create progress callback for plan review (R19, R20)
-			const planReviewPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length} Plan Review`;
-			const planReviewProgressCallback = createProgressCallback(
-				ctx,
-				state,
-				planReviewPhaseInfo,
-				true  // isImplPipeline
-			);
-
-			const planReviewResult = await runTieredReview(
-				{
-					cwd,
-					projectConfig,
-					systemPrompts: SYSTEM_PROMPTS,
-					state,
-					saveFn: save,
-					phaseIndex: phaseIdx + 1,
-					phaseName,
-					docName,
-					notify: ctx.ui.notify.bind(ctx.ui),
-					onOutput: planReviewProgressCallback,  // ← Add callback (R19, R20)
-				},
-				{
-					role: "planReviewer",
-					reviewTask: `Review this implementation plan:\n\n${planContent}`,
-					fixTask: (reviewOutput) => `Revise the implementation plan based on review feedback.
-
-Original spec: ${state.specPath}
-Current plan: ${fullPhasePath}
-
-Review feedback:
-${reviewOutput}
-
-Read the spec and current plan, revise to address the feedback, and write back to: ${fullPhasePath}`,
-				}
-			);
-			
-			if (planReviewResult.hadError) {
-				clearPipelineWidget(ctx);
-				return;
-			}
-			
-			metrics.planReviewCycles.cheap += planReviewResult.cheapCyclesCompleted;
-			metrics.planReviewCycles.expensive += planReviewResult.expensiveCyclesCompleted;
-			save();
-			
-			ctx.ui.notify(formatAgentSummary(
-				`planReviewer (${planReviewResult.finalTier})`,
-				planReviewResult.finalTier === "cheap" 
-					? projectConfig.models.planReviewer.cheap.model 
-					: projectConfig.models.planReviewer.expensive.model,
-				planReviewResult.lastReviewOutput,
-				planReviewResult.verdict === "APPROVED" ? "✅" : "🔄",
-				phaseIdx + 1,
-				`(cheap: ${planReviewResult.cheapCyclesCompleted}, expensive: ${planReviewResult.expensiveCyclesCompleted})`
-			), "info");
 
 			state.phasesGenerated[phaseIdx] = true;
 			save();
@@ -638,13 +572,13 @@ Address all issues raised in the review.`;
 		}
 
 		// ========================================
-		// STEP 4: Tiered Code Review
+		// STEP 4: Code Review
 		// ========================================
 		updateImplWidget(ctx, state, "Running code review...");
 		
 		ctx.ui.notify(formatStepBanner(
 			`Code Review - Phase ${phaseIdx + 1}`,
-			"Running tiered review (cheap → expensive)",
+			"Running code review",
 			"💻"
 		), "info");
 		
@@ -657,7 +591,7 @@ Address all issues raised in the review.`;
 			true  // isImplPipeline
 		);
 
-		const codeReviewResult = await runTieredReview(
+		const codeReviewResult = await runReview(
 			{
 				cwd,
 				projectConfig,
@@ -695,25 +629,20 @@ Make the necessary fixes.`,
 			return;
 		}
 		
-		metrics.codeReviewCycles.cheap += codeReviewResult.cheapCyclesCompleted;
-		metrics.codeReviewCycles.expensive += codeReviewResult.expensiveCyclesCompleted;
+		metrics.codeReviewCycles += codeReviewResult.cyclesCompleted;
 		save();
 		
 		ctx.ui.notify(formatAgentSummary(
-			`codeReviewer (${codeReviewResult.finalTier})`,
-			codeReviewResult.finalTier === "cheap" 
-				? projectConfig.models.codeReviewer.cheap.model 
-				: projectConfig.models.codeReviewer.expensive.model,
+			"codeReviewer",
+			projectConfig.models.codeReviewer.model,
 			codeReviewResult.lastReviewOutput,
 			codeReviewResult.verdict === "APPROVED" ? "✅" : "🔄",
 			phaseIdx + 1,
-			`(cheap: ${codeReviewResult.cheapCyclesCompleted}, expensive: ${codeReviewResult.expensiveCyclesCompleted})`
+			`(cycles: ${codeReviewResult.cyclesCompleted})`
 		), "info");
 		
 		state.previousReview = codeReviewResult.lastReviewOutput;
-		state.currentReviewTier = codeReviewResult.finalTier;
-		state.cheapCyclesCompleted = codeReviewResult.cheapCyclesCompleted;
-		state.expensiveCyclesCompleted = codeReviewResult.expensiveCyclesCompleted;
+		state.reviewCyclesCompleted = codeReviewResult.cyclesCompleted;
 		save();
 
 		// ========================================
@@ -741,9 +670,7 @@ Make the necessary fixes.`,
 		// Reset for next phase
 		state.currentReviewCycle = 1;
 		state.previousReview = "";
-		state.currentReviewTier = undefined;
-		state.cheapCyclesCompleted = 0;
-		state.expensiveCyclesCompleted = 0;
+		state.reviewCyclesCompleted = 0;
 		state.implementerCompletedForPhase = false;
 		save();
 
@@ -760,15 +687,12 @@ Make the necessary fixes.`,
 	
 	// Finalize metrics
 	let phasesApprovedFirstPass = 0;
-	const avgCheapPerPhase = state.phases.length > 0 
-		? metrics.codeReviewCycles.cheap / state.phases.length 
+	const avgReviewCyclesPerPhase = state.phases.length > 0 
+		? metrics.codeReviewCycles / state.phases.length 
 		: 0;
-	const avgExpensivePerPhase = state.phases.length > 0 
-		? metrics.codeReviewCycles.expensive / state.phases.length 
-		: 0;
-	if (avgCheapPerPhase <= 1.5 && avgExpensivePerPhase < 0.5) {
+	if (avgReviewCyclesPerPhase <= 1.5) {
 		phasesApprovedFirstPass = Math.round(state.phases.length * 0.8);
-	} else if (avgCheapPerPhase <= 2 && avgExpensivePerPhase <= 1) {
+	} else if (avgReviewCyclesPerPhase <= 2) {
 		phasesApprovedFirstPass = Math.round(state.phases.length * 0.5);
 	}
 	
@@ -798,7 +722,7 @@ Make the necessary fixes.`,
 	}
 	completionLines.push(formatKeyValue("  Agent Calls", String(metrics.agentCalls.length)));
 	completionLines.push(formatKeyValue("  Plan Generation", metrics.skipPlanGeneration ? "Skipped" : "Enabled"));
-	completionLines.push(formatKeyValue("  Code Review Cycles", `${metrics.codeReviewCycles.cheap}c/${metrics.codeReviewCycles.expensive}e`));
+	completionLines.push(formatKeyValue("  Code Review Cycles", String(metrics.codeReviewCycles)));
 	
 	completionLines.push("");
 	completionLines.push("  📋 Next Steps:");

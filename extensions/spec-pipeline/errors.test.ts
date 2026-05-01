@@ -342,8 +342,8 @@ describe("formatErrorBox", () => {
 	it("handles error without optional fields", () => {
 		const error: ErrorDetails = {
 			timestamp: "2026-02-06T12:00:00.000Z",
-			agent: "sonnet",
-			role: "planReviewer",
+			agent: "gpt-5.4",
+			role: "codeReviewer",
 			exitCode: 1,
 			errorType: "NETWORK",
 			agentTask: "review task",
@@ -352,7 +352,7 @@ describe("formatErrorBox", () => {
 		
 		expect(() => formatErrorBox(error, state)).not.toThrow();
 		const result = formatErrorBox(error, state);
-		expect(result).toContain("sonnet");
-		expect(result).toContain("planReviewer");
+		expect(result).toContain("gpt-5.4");
+		expect(result).toContain("codeReviewer");
 	});
 });

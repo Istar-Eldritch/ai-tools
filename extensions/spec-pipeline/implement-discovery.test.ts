@@ -231,10 +231,7 @@ Use bcrypt for password hashing...`;
 		it("clones config when applying --no-review flag", () => {
 			const projectConfig = {
 				specsDir: "specs",
-				reviewCycles: {
-					planReviewer: { cheap: 2, expensive: 1 },
-					codeReviewer: { cheap: 3, expensive: 2 },
-				},
+				reviewCycles: 3,
 			};
 			
 			const flags = { noPlan: false, noReview: true };
@@ -244,29 +241,21 @@ Use bcrypt for password hashing...`;
 			if (flags.noReview) {
 				effectiveConfig = {
 					...projectConfig,
-					reviewCycles: {
-						planReviewer: { cheap: 0, expensive: 0 },
-						codeReviewer: { cheap: 0, expensive: 0 },
-					},
+					reviewCycles: 0,
 				};
 			}
 			
 			// Original config should be unchanged
-			expect(projectConfig.reviewCycles.planReviewer.cheap).toBe(2);
-			expect(projectConfig.reviewCycles.codeReviewer.cheap).toBe(3);
+			expect(projectConfig.reviewCycles).toBe(3);
 			
 			// Effective config should have reviews disabled
-			expect(effectiveConfig.reviewCycles.planReviewer.cheap).toBe(0);
-			expect(effectiveConfig.reviewCycles.codeReviewer.cheap).toBe(0);
+			expect(effectiveConfig.reviewCycles).toBe(0);
 		});
 
 		it("does not clone config when --no-review not present", () => {
 			const projectConfig = {
 				specsDir: "specs",
-				reviewCycles: {
-					planReviewer: { cheap: 2, expensive: 1 },
-					codeReviewer: { cheap: 3, expensive: 2 },
-				},
+				reviewCycles: 3,
 			};
 			
 			const flags = { noPlan: true, noReview: false };
@@ -275,10 +264,7 @@ Use bcrypt for password hashing...`;
 			if (flags.noReview) {
 				effectiveConfig = {
 					...projectConfig,
-					reviewCycles: {
-						planReviewer: { cheap: 0, expensive: 0 },
-						codeReviewer: { cheap: 0, expensive: 0 },
-					},
+					reviewCycles: 0,
 				};
 			}
 			

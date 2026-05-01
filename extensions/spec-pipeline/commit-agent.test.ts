@@ -218,18 +218,6 @@ describe("generateCommitMessage (Haiku-based)", () => {
 			expect(result.message).toContain("fix(phase-1): address review feedback (cycle 3)");
 		});
 
-		it("generates planReviewer fallback", async () => {
-			mockShouldThrow = true;
-			const result = await generateCommitMessage({
-				role: "planReviewer",
-				modelConfig: { model: "sonnet", thinking: "medium" },
-				files: ["docs/plan.md"],
-				phase: 3,
-			});
-			expect(result.type).toBe("fallback");
-			expect(result.message).toContain("docs(phase-3): revise plan after review");
-		});
-
 		it("generates codeReviewer fallback", async () => {
 			mockShouldThrow = true;
 			const result = await generateCommitMessage({

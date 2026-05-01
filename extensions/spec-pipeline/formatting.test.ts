@@ -6,8 +6,7 @@ import {
 	formatSpecStage,
 	formatImplStage,
 	formatModelConfig,
-	formatTieredConfig,
-	summarizeAgentOutput,
+		summarizeAgentOutput,
 	formatSpecState,
 	formatImplState,
 	updateSpecWidget,
@@ -151,18 +150,6 @@ describe("formatModelConfig", () => {
 
 	it("formats gpt-5.4-mini with off thinking", () => {
 		expect(formatModelConfig({ model: "gpt-5.4-mini", thinking: "off" })).toBe("gpt-5.4-mini/off");
-	});
-});
-
-describe("formatTieredConfig", () => {
-	it("formats tiered config with cheap and expensive", () => {
-		const config = {
-			cheap: { model: "gpt-5.4", thinking: "medium" as const },
-			expensive: { model: "gpt-5.5", thinking: "high" as const },
-		};
-		expect(formatTieredConfig(config)).toBe(
-			"cheap=gpt-5.4/medium, expensive=gpt-5.5/high"
-		);
 	});
 });
 

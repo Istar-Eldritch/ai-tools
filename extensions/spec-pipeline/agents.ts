@@ -133,7 +133,8 @@ export function createProgressCallback(
 					updateSpecWidget(ctx, state as SpecState, contextualMessage);
 				}
 				
-				// Print to terminal for permanent history
+				// Notify UI and print to terminal for permanent history
+				ctx.ui.notify(contextualMessage, "info");
 				console.log(`  ${contextualMessage}`);
 			}
 		}
