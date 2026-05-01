@@ -172,7 +172,7 @@ describe("claude native provider integration", () => {
 		expect(secondEvents.at(-1)).toMatchObject({ type: "done", reason: "stop" });
 	});
 
-	it("isolates remembered session ids across model changes", async () => {
+	it("shares remembered session ids across model changes", async () => {
 		MockClaudeNativeProcess.scenarios.push(
 			{
 				messages: [
@@ -189,8 +189,8 @@ describe("claude native provider integration", () => {
 		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("three")));
 
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
-		expect(MockClaudeNativeProcess.instances[0].config.args).not.toContain("--resume");
-		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[0].config.args).toEqual(expect.arrayContaining(["--session-id"]));
+		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "session-sonnet"]));
 		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(["one", "three"]);
 	});
 
@@ -318,7 +318,7 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("claude-before");
 	});
 
-	it("retires live processes on model_select but preserves remembered Claude sessions", async () => {
+	it("keeps prior model processes warm on model_select and resumes the same Claude session for the selected model", async () => {
 		MockClaudeNativeProcess.scenarios.push(
 			{
 				messages: [
@@ -339,10 +339,10 @@ describe("claude native provider integration", () => {
 			previousModel: createModel("sonnet"),
 			source: "set",
 		});
-		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("after"), { sessionId: "pi-session" }));
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("haiku"), createContext("after"), { sessionId: "pi-session" }));
 
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
-		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("model_select");
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual([]);
 		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-sonnet"]));
 	});
 
@@ -386,6 +386,27 @@ describe("claude native provider integration", () => {
 
 		expect(firstEvents.some((event) => event.type === "thinking_delta" && event.delta.includes("process started"))).toBe(true);
 		expect(secondEvents.some((event) => event.type === "thinking_delta" && event.delta.includes("process reused"))).toBe(true);
+	});
+
+	it("effort command updates the process key for subsequent turns", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-effort", result: "low" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "high" }] },
+		);
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		const notify = vi.fn();
+		await pi.commands.get("claude-native-effort").handler(["low"], { ui: { notify } });
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("low"), { sessionId: "pi-a" }));
+		await pi.commands.get("claude-native-effort").handler(["high"], { ui: { notify } });
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("high"), { sessionId: "pi-a" }));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[0].config.args).toEqual(expect.arrayContaining(["--effort", "low"]));
+		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--effort", "high", "--resume", "claude-effort"]));
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("effort set to high"), "info");
 	});
 
 	it("status command reports pool counts without exposing raw Claude session ids", async () => {

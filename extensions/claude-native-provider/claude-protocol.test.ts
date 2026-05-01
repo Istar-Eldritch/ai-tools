@@ -34,6 +34,14 @@ describe("claude protocol helpers", () => {
 		expect(buildClaudeArgs(model, "session-1")).not.toContain("--resume");
 	});
 
+	it("passes explicit session ids and configured effort", () => {
+		process.env.CLAUDE_NATIVE_EFFORT = "high";
+		expect(buildClaudeArgs(model, { sessionId: "session-1", isFirstSessionUse: true })).toEqual(expect.arrayContaining(["--effort", "high", "--session-id", "session-1"]));
+		expect(buildClaudeArgs(model, { sessionId: "session-1", isFirstSessionUse: false })).toEqual(expect.arrayContaining(["--effort", "high", "--resume", "session-1"]));
+		process.env.CLAUDE_NATIVE_EFFORT = "invalid";
+		expect(buildClaudeArgs(model, undefined)).not.toContain("--effort");
+	});
+
 	it("passes configured tool and turn options", () => {
 		process.env.CLAUDE_NATIVE_ALLOWED_TOOLS = "read,write";
 		process.env.CLAUDE_NATIVE_MAX_TURNS = "2";

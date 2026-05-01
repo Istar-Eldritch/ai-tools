@@ -49,10 +49,10 @@ describe("ClaudeNativeProcessPool", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("builds stable keys from model alias, cwd, and session identity", () => {
+	it("builds stable keys from model alias, effort, cwd, and session identity", () => {
 		const key = buildClaudeProcessKey(model, { sessionId: "pi-session-a" } as any, "/repo");
-		expect(key).toEqual({ modelAlias: "sonnet", cwd: "/repo", sessionIdentity: "pi-session-a" });
-		expect(serializeClaudeProcessKey(key)).toBe(JSON.stringify(["sonnet", "/repo", "pi-session-a"]));
+		expect(key).toEqual({ modelAlias: "sonnet", effort: "none", cwd: "/repo", sessionIdentity: "pi-session-a" });
+		expect(serializeClaudeProcessKey(key)).toBe(JSON.stringify(["sonnet", "none", "/repo", "pi-session-a"]));
 	});
 
 	it("creates separate runtimes for different session identities", () => {
@@ -66,7 +66,21 @@ describe("ClaudeNativeProcessPool", () => {
 		expect(second.process).not.toBe(first.process);
 	});
 
-	it("resumes only the remembered Claude session for the same key", () => {
+	it("creates separate runtimes for different effort levels while sharing the Claude conversation", () => {
+		const pool = createPool();
+		process.env.CLAUDE_NATIVE_EFFORT = "low";
+		const low = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.rememberClaudeSessionId(low.key, "claude-a");
+		process.env.CLAUDE_NATIVE_EFFORT = "high";
+		const high = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+
+		expect(FakeRuntime.instances).toHaveLength(2);
+		expect(high.process).not.toBe(low.process);
+		expect(FakeRuntime.instances[0].config.args).toEqual(expect.arrayContaining(["--effort", "low"]));
+		expect(FakeRuntime.instances[1].config.args).toEqual(expect.arrayContaining(["--effort", "high", "--resume", "claude-a"]));
+	});
+
+	it("resumes the remembered Claude session for the same Pi conversation", () => {
 		const pool = createPool();
 
 		const first = pool.getOrCreate(model, { sessionId: "pi-a" } as any);

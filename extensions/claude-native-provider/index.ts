@@ -9,7 +9,7 @@ import {
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { ClaudeNativeProcessPool } from "./claude-pool.ts";
-import { numberFromEnv } from "./claude-protocol.ts";
+import { effortFromEnv, numberFromEnv } from "./claude-protocol.ts";
 
 /**
  * Pi provider that delegates inference + tool execution to the official Claude Code CLI.
@@ -23,6 +23,7 @@ import { numberFromEnv } from "./claude-protocol.ts";
  * - CLAUDE_NATIVE_PERMISSION_MODE: auto | default | acceptEdits | dontAsk | plan | bypassPermissions | none (default: auto)
  * - CLAUDE_NATIVE_MAX_TURNS: passed to --max-turns (default unset)
  * - CLAUDE_NATIVE_NO_RESUME=1: do not reuse the Claude Code session id between turns
+ * - CLAUDE_NATIVE_EFFORT: low | medium | high | xhigh | max (passed to --effort)
  * - CLAUDE_NATIVE_TIMEOUT_MS: terminate an active request after this many ms (default: no timeout)
  * - CLAUDE_NATIVE_IDLE_TIMEOUT_MS: terminate idle long-lived process after this many ms (default: 600000)
  */
@@ -258,8 +259,10 @@ export function streamClaudeNative(
 	return stream;
 }
 
-function modelLabel(model: Model<Api> | undefined): string {
-	return model ? `${model.provider}/${model.id}` : "none";
+function firstCommandArg(args: unknown): string | undefined {
+	if (Array.isArray(args)) return args.length ? String(args[0]) : undefined;
+	if (typeof args === "string") return args.trim().split(/\s+/).filter(Boolean)[0];
+	return undefined;
 }
 
 function formatPoolStatus(): string {
@@ -274,7 +277,7 @@ function formatPoolStatus(): string {
 	}
 	for (const snapshot of snapshots) {
 		lines.push(
-			`- model=${snapshot.key.modelAlias} live=${snapshot.live ? "yes" : "no"} `
+			`- model=${snapshot.key.modelAlias} effort=${snapshot.key.effort} live=${snapshot.live ? "yes" : "no"} `
 			+ `piSession=${snapshot.key.sessionIdentity} claudeSession=${snapshot.claudeSessionId ? "remembered" : "none"} `
 			+ `cwd=${snapshot.key.cwd}`,
 		);
@@ -284,7 +287,6 @@ function formatPoolStatus(): string {
 
 function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
 	const hardInvalidate = (reason: string) => processPool.hardInvalidateAll(reason);
-	const retire = (reason: string) => processPool.retireAll(reason);
 
 	pi.on("session_before_tree", async (event) => {
 		hardInvalidate(`session_before_tree target=${event.preparation.targetId}`);
@@ -315,7 +317,10 @@ function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
 	});
 
 	pi.on("model_select", async (event) => {
-		retire(`model_select ${modelLabel(event.previousModel)} -> ${modelLabel(event.model)}`);
+		// Model is part of the process key, not the Claude conversation key.
+		// Keep existing model processes warm; the next turn on the selected model
+		// will create/reuse its own process while resuming the same Claude session.
+		void event;
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -376,6 +381,30 @@ export default function (pi: ExtensionAPI) {
 		description: "Show Claude native process pool diagnostics",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify(formatPoolStatus(), "info");
+		},
+	});
+
+	pi.registerCommand("claude-native-effort", {
+		description: "Set Claude native thinking effort: low, medium, high, xhigh, max, or none",
+		handler: async (args, ctx) => {
+			const value = firstCommandArg(args)?.toLowerCase();
+			if (!value) {
+				ctx.ui.notify(`Claude native effort: ${effortFromEnv() ?? "none"}`, "info");
+				return;
+			}
+			if (value === "none" || value === "off" || value === "default") {
+				delete process.env.CLAUDE_NATIVE_EFFORT;
+				ctx.ui.notify("Claude native effort cleared; existing warm processes remain until idle/reset.", "info");
+				return;
+			}
+			process.env.CLAUDE_NATIVE_EFFORT = value;
+			const effort = effortFromEnv();
+			if (!effort) {
+				delete process.env.CLAUDE_NATIVE_EFFORT;
+				ctx.ui.notify("Invalid Claude native effort. Use: low, medium, high, xhigh, max, or none.", "error");
+				return;
+			}
+			ctx.ui.notify(`Claude native effort set to ${effort}; next turn will use/resume a matching process.`, "info");
 		},
 	});
 

@@ -6,14 +6,33 @@ export function modelAlias(id: string): string {
 	return "sonnet";
 }
 
-export function numberFromEnv(name: string, fallback?: number): number | undefined {
-	const raw = process.env[name];
+export function numberFromEnv(name: string, fallback?: number, env: NodeJS.ProcessEnv = process.env): number | undefined {
+	const raw = env[name];
 	if (!raw) return fallback;
 	const value = Number(raw);
 	return Number.isFinite(value) ? value : fallback;
 }
 
-export function buildClaudeArgs(model: Model<Api>, sessionId?: string): string[] {
+export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+const CLAUDE_EFFORTS = new Set<ClaudeEffort>(["low", "medium", "high", "xhigh", "max"]);
+
+export function effortFromEnv(env: NodeJS.ProcessEnv = process.env): ClaudeEffort | undefined {
+	const raw = env.CLAUDE_NATIVE_EFFORT?.trim().toLowerCase();
+	return raw && CLAUDE_EFFORTS.has(raw as ClaudeEffort) ? raw as ClaudeEffort : undefined;
+}
+
+export interface ClaudeArgsOptions {
+	sessionId?: string;
+	isFirstSessionUse?: boolean;
+	env?: NodeJS.ProcessEnv;
+}
+
+export function buildClaudeArgs(model: Model<Api>, sessionIdOrOptions?: string | ClaudeArgsOptions): string[] {
+	const options: ClaudeArgsOptions = typeof sessionIdOrOptions === "string"
+		? { sessionId: sessionIdOrOptions, isFirstSessionUse: false }
+		: sessionIdOrOptions ?? {};
+	const env = options.env ?? process.env;
 	const args = [
 		"-p",
 		"--input-format",
@@ -25,17 +44,20 @@ export function buildClaudeArgs(model: Model<Api>, sessionId?: string): string[]
 		modelAlias(model.id),
 	];
 
-	if (sessionId && process.env.CLAUDE_NATIVE_NO_RESUME !== "1") {
-		args.push("--resume", sessionId);
+	const effort = effortFromEnv(env);
+	if (effort) args.push("--effort", effort);
+
+	if (options.sessionId && env.CLAUDE_NATIVE_NO_RESUME !== "1") {
+		args.push(options.isFirstSessionUse ? "--session-id" : "--resume", options.sessionId);
 	}
 
-	const permissionMode = process.env.CLAUDE_NATIVE_PERMISSION_MODE ?? "auto";
+	const permissionMode = env.CLAUDE_NATIVE_PERMISSION_MODE ?? "auto";
 	if (permissionMode && permissionMode !== "none") args.push("--permission-mode", permissionMode);
 
-	const allowedTools = process.env.CLAUDE_NATIVE_ALLOWED_TOOLS;
+	const allowedTools = env.CLAUDE_NATIVE_ALLOWED_TOOLS;
 	if (allowedTools) args.push("--allowedTools", allowedTools);
 
-	const maxTurns = process.env.CLAUDE_NATIVE_MAX_TURNS;
+	const maxTurns = env.CLAUDE_NATIVE_MAX_TURNS;
 	if (maxTurns) args.push("--max-turns", maxTurns);
 
 	return args;
