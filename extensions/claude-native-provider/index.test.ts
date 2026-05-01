@@ -191,6 +191,36 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances[2].config.args).toEqual(expect.arrayContaining(["--resume", "session-cwd-a"]));
 	});
 
+	it("isolates processes and remembered Claude session ids across Pi session identities", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{
+				messages: [
+					{ type: "result", subtype: "success", is_error: false, session_id: "claude-a", result: "one" },
+				],
+			},
+			{
+				messages: [
+					{ type: "result", subtype: "success", is_error: false, session_id: "claude-b", result: "two" },
+				],
+			},
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "three" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("one"), { sessionId: "pi-a" }));
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("two"), { sessionId: "pi-b" }));
+		MockClaudeNativeProcess.instances[0].live = false;
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("three"), { sessionId: "pi-a" }));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(3);
+		expect(MockClaudeNativeProcess.instances[0].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[2].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
+		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(["one"]);
+		expect(MockClaudeNativeProcess.instances[1].prompts).toEqual(["two"]);
+		expect(MockClaudeNativeProcess.instances[2].prompts).toEqual(["three"]);
+	});
+
 	it("does not terminate an in-flight turn when a different signature starts concurrently", async () => {
 		const firstTurn = deferred();
 		const secondTurn = deferred();
