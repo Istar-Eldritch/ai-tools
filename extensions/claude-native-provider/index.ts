@@ -219,6 +219,51 @@ export function streamClaudeNative(
 	return stream;
 }
 
+function modelLabel(model: Model<Api> | undefined): string {
+	return model ? `${model.provider}/${model.id}` : "none";
+}
+
+function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
+	const hardInvalidate = (reason: string) => processPool.hardInvalidateAll(reason);
+	const retire = (reason: string) => processPool.retireAll(reason);
+
+	pi.on("session_before_tree", async (event) => {
+		hardInvalidate(`session_before_tree target=${event.preparation.targetId}`);
+	});
+	pi.on("session_tree", async (event) => {
+		hardInvalidate(`session_tree ${event.oldLeafId ?? "root"} -> ${event.newLeafId ?? "root"}`);
+	});
+
+	pi.on("session_before_fork", async (event) => {
+		hardInvalidate(`session_before_fork entry=${event.entryId}`);
+	});
+	pi.on("session_fork", async () => {
+		hardInvalidate("session_fork");
+	});
+
+	pi.on("session_before_switch", async (event) => {
+		hardInvalidate(`session_before_switch reason=${event.reason}`);
+	});
+	pi.on("session_switch", async (event) => {
+		hardInvalidate(`session_switch reason=${event.reason}`);
+	});
+
+	pi.on("session_before_compact", async () => {
+		hardInvalidate("session_before_compact");
+	});
+	pi.on("session_compact", async () => {
+		hardInvalidate("session_compact");
+	});
+
+	pi.on("model_select", async (event) => {
+		retire(`model_select ${modelLabel(event.previousModel)} -> ${modelLabel(event.model)}`);
+	});
+
+	pi.on("session_shutdown", async () => {
+		hardInvalidate("session_shutdown");
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	(pi as any).registerProvider(PROVIDER, {
 		name: "Claude Native (claude -p)",
@@ -265,7 +310,5 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("session_shutdown", async () => {
-		processPool.terminateAll("session shutdown");
-	});
+	registerLifecycleInvalidationHandlers(pi);
 }

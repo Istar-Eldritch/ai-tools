@@ -77,6 +77,28 @@ describe("ClaudeNativeProcessPool", () => {
 		expect(FakeRuntime.instances[2].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
 	});
 
+	it("retires live processes when cwd changes but preserves remembered sessions", () => {
+		let cwd = "/repo-a";
+		const pool = new ClaudeNativeProcessPool({
+			getCwd: () => cwd,
+			createProcess: (config) => new FakeRuntime(config) as any,
+		});
+
+		const first = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.rememberClaudeSessionId(first.key, "claude-a");
+
+		cwd = "/repo-b";
+		pool.getOrCreate(model, { sessionId: "pi-b" } as any);
+
+		expect(FakeRuntime.instances[0].terminateReasons).toEqual([expect.stringContaining("cwd changed")]);
+
+		cwd = "/repo-a";
+		pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+
+		expect(FakeRuntime.instances).toHaveLength(3);
+		expect(FakeRuntime.instances[2].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
+	});
+
 	it("terminateAll kills live processes but preserves remembered sessions", () => {
 		const pool = createPool();
 		const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);

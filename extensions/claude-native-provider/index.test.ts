@@ -96,6 +96,22 @@ function createPi() {
 	};
 }
 
+function eventFor(name: string): any {
+	const signal = new AbortController().signal;
+	const events: Record<string, any> = {
+		session_before_tree: { type: "session_before_tree", preparation: { targetId: "target", oldLeafId: "old" }, signal },
+		session_tree: { type: "session_tree", oldLeafId: "old", newLeafId: "new" },
+		session_before_fork: { type: "session_before_fork", entryId: "entry-1" },
+		session_fork: { type: "session_fork", previousSessionFile: "/tmp/old.jsonl" },
+		session_before_switch: { type: "session_before_switch", reason: "resume", targetSessionFile: "/tmp/new.jsonl" },
+		session_switch: { type: "session_switch", reason: "resume", previousSessionFile: "/tmp/old.jsonl" },
+		session_before_compact: { type: "session_before_compact", preparation: {}, branchEntries: [], signal },
+		session_compact: { type: "session_compact", compactionEntry: {}, fromExtension: false },
+		session_shutdown: { type: "session_shutdown" },
+	};
+	return events[name];
+}
+
 describe("claude native provider integration", () => {
 	const originalEnv = process.env;
 
@@ -253,6 +269,68 @@ describe("claude native provider integration", () => {
 		expect(secondEvents.at(-1)).toMatchObject({ type: "done", reason: "stop" });
 	});
 
+	it.each([
+		"session_before_tree",
+		"session_tree",
+		"session_before_fork",
+		"session_fork",
+		"session_before_switch",
+		"session_switch",
+		"session_before_compact",
+		"session_compact",
+		"session_shutdown",
+	])("hard-invalidates Claude session state on %s", async (eventName) => {
+		MockClaudeNativeProcess.scenarios.push(
+			{
+				messages: [
+					{ type: "result", subtype: "success", is_error: false, session_id: "claude-before", result: "before" },
+				],
+			},
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("before"), { sessionId: "pi-session" }));
+		await pi.handlers.get(eventName)(eventFor(eventName));
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("after"), { sessionId: "pi-session" }));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain(eventName);
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("claude-before");
+	});
+
+	it("retires live processes on model_select but preserves remembered Claude sessions", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{
+				messages: [
+					{ type: "result", subtype: "success", is_error: false, session_id: "claude-sonnet", result: "before" },
+				],
+			},
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("before"), { sessionId: "pi-session" }));
+		await pi.handlers.get("model_select")({
+			type: "model_select",
+			model: createModel("haiku"),
+			previousModel: createModel("sonnet"),
+			source: "set",
+		});
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("after"), { sessionId: "pi-session" }));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("model_select");
+		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-sonnet"]));
+	});
+
 	it("reset command terminates the process and clears the remembered session id", async () => {
 		MockClaudeNativeProcess.scenarios.push(
 			{
@@ -293,7 +371,7 @@ describe("claude native provider integration", () => {
 		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("after shutdown")));
 
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
-		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual(["session shutdown"]);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual(["session_shutdown"]);
 	});
 
 	it("emits an error event when Claude returns a failed result even with a stop_reason", async () => {

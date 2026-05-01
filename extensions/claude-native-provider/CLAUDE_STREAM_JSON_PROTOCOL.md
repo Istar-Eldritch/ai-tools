@@ -83,3 +83,14 @@ NODE
 cd - >/dev/null
 rm -rf "$tmp"
 ```
+
+## Manual Pi Lifecycle Validation
+
+With `claude-native` selected, validate lifecycle invalidation manually:
+
+1. Send a prompt and observe a Claude Code process start.
+2. Send a second prompt in the same Pi session and observe process reuse.
+3. Change models with Pi's model selection command; the old Claude process should be terminated, and the next Claude-native request should start a safe process.
+4. Navigate the session tree (`/tree`) or fork a prior user message; the Claude native process/session mapping should be hard-invalidated, so the next request starts without `--resume` from the abandoned branch.
+5. Trigger context compaction; after compaction completes, the next request should not reuse the pre-compaction Claude process/session mapping.
+6. Run `/claude-native-reset`; all live Claude native processes should terminate and the next request should start fresh.

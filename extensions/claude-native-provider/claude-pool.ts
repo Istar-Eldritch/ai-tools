@@ -49,11 +49,13 @@ export function serializeClaudeProcessKey(key: ClaudeProcessKey): string {
 export class ClaudeNativeProcessPool {
 	private readonly processes = new Map<string, ClaudeProcessRuntime>();
 	private readonly claudeSessionIds = new Map<string, string>();
+	private lastObservedCwd?: string;
 
 	constructor(private readonly config: ClaudeNativeProcessPoolConfig = {}) {}
 
 	getOrCreate(model: Model<Api>, options?: SimpleStreamOptions): ClaudeProcessPoolEntry {
 		const cwd = this.config.getCwd?.() ?? process.cwd();
+		this.observeCwd(cwd);
 		const env = this.config.env ?? process.env;
 		const key = buildClaudeProcessKey(model, options, cwd);
 		const keyId = serializeClaudeProcessKey(key);
@@ -89,8 +91,24 @@ export class ClaudeNativeProcessPool {
 		if (options.clearSessions) this.claudeSessionIds.clear();
 	}
 
-	reset(reason: string): void {
+	retireAll(reason: string): void {
+		this.terminateAll(reason, { clearSessions: false });
+	}
+
+	hardInvalidateAll(reason: string): void {
 		this.terminateAll(reason, { clearSessions: true });
+	}
+
+	reset(reason: string): void {
+		this.hardInvalidateAll(reason);
+		this.lastObservedCwd = undefined;
+	}
+
+	private observeCwd(cwd: string): void {
+		if (this.lastObservedCwd && this.lastObservedCwd !== cwd) {
+			this.retireAll(`cwd changed from ${this.lastObservedCwd} to ${cwd}`);
+		}
+		this.lastObservedCwd = cwd;
 	}
 
 	invalidateKey(key: ClaudeProcessKey, reason: string, options: { clearSession?: boolean } = {}): void {
