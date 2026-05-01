@@ -190,7 +190,7 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
 		expect(MockClaudeNativeProcess.instances[2].config.args).toEqual(expect.arrayContaining(["--resume", "session-cwd-a"]));
 	});
-+
+
 	it("does not terminate an in-flight turn when a different signature starts concurrently", async () => {
 		const firstTurn = deferred();
 		const secondTurn = deferred();
