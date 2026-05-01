@@ -128,6 +128,18 @@ describe("ClaudeNativeProcessPool", () => {
 		expect(FakeRuntime.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
 	});
 
+	it("preserves remembered Claude session after idle reaping", () => {
+		const pool = createPool();
+		const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		pool.rememberClaudeSessionId(entry.key, "claude-a");
+
+		FakeRuntime.instances[0].emitExit({ code: "idle", reason: "idle timeout", unsafeSession: false });
+		pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+
+		expect(FakeRuntime.instances).toHaveLength(2);
+		expect(FakeRuntime.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
+	});
+
 	it("clears remembered Claude session after an unsafe in-flight exit", () => {
 		const pool = createPool();
 		const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);

@@ -161,6 +161,21 @@ describe("ClaudeNativeProcess", () => {
 		expect(proc.isLive()).toBe(false);
 	});
 
+	it("reports idle exit as safe for session resume", async () => {
+		vi.useFakeTimers();
+		const child = new FakeClaudeChild();
+		const { proc, exits } = createProcess(child, 1_000);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+
+		vi.advanceTimersByTime(1_000);
+
+		expect(exits).toEqual([expect.objectContaining({ code: "idle", unsafeSession: false })]);
+		expect(proc.isLive()).toBe(false);
+	});
+
 	it("timeout terminates and rejects the active turn", async () => {
 		vi.useFakeTimers();
 		const child = new FakeClaudeChild();

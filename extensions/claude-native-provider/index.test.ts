@@ -78,6 +78,10 @@ async function collectEvents(stream: AsyncIterable<any>) {
 	return events;
 }
 
+function terminalEvents(events: any[]) {
+	return events.filter((event) => event.type === "done" || event.type === "error");
+}
+
 function createModel(id = "sonnet") {
 	return {
 		id,
@@ -437,6 +441,23 @@ describe("claude native provider integration", () => {
 		const events = await collectEvents(streamClaudeNative(createModel(), createContext("tools")));
 
 		expect(events.some((event) => event.type === "text_delta" && event.delta.includes("Read package.json"))).toBe(true);
+	});
+
+	it("surfaces malformed Claude output compatibly and still emits exactly one terminal Pi event", async () => {
+		MockClaudeNativeProcess.scenarios.push({
+			malformed: ["{not valid json"],
+			messages: [
+				{ type: "streamlined_text", text: "Recovered reply" },
+				{ type: "result", subtype: "success", is_error: false, result: "done" },
+			],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const events = await collectEvents(streamClaudeNative(createModel(), createContext("malformed")));
+
+		expect(events.some((event) => event.type === "thinking_delta" && event.delta.includes("malformed JSON: {not valid json"))).toBe(true);
+		expect(events.some((event) => event.type === "text_delta" && event.delta === "Recovered reply")).toBe(true);
+		expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "done", reason: "stop" })]);
 	});
 
 	it("emits aborted Pi error events and clears unsafe session state", async () => {
