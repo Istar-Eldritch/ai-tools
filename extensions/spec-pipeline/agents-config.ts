@@ -5,9 +5,9 @@
  */
 
 export const DEFAULT_MODELS = {
-	opus: "claude-opus-4-6",
-	sonnet: "claude-sonnet-4-5",
-	haiku: "claude-haiku-4-5",
+	opus: "gpt-5.5",
+	sonnet: "gpt-5.4",
+	haiku: "gpt-5.4-mini",
 } as const;
 
 /**

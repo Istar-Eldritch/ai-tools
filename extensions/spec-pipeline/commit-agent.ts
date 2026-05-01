@@ -262,9 +262,9 @@ function buildCommitPrompt(context: CommitMessageContext): string {
 }
 
 /**
- * Generate a commit message using Haiku via the pi SDK.
+ * Generate a commit message using the configured commit-message model via the pi SDK.
  * Uses a minimal session with NO tools for fast text-only generation.
- * Falls back to template-based message if Haiku fails.
+ * Falls back to template-based message if model generation fails.
  * 
  * @param context - Context about the agent work and changes
  * @param _agentConfig - Unused, retained for backward compatibility
@@ -273,18 +273,20 @@ function buildCommitPrompt(context: CommitMessageContext): string {
  */
 export async function generateCommitMessage(
 	context: CommitMessageContext,
-	_agentConfig?: ModelConfig,
+	agentConfig?: ModelConfig,
 	_cwd?: string
 ): Promise<CommitMessageResult> {
 	try {
 		const prompt = buildCommitPrompt(context);
+		const configuredModel = agentConfig?.model ?? context.modelConfig.model;
+		const configuredThinking = agentConfig?.thinking ?? context.modelConfig.thinking;
+		const provider = configuredModel.startsWith("gpt-") ? "openai" : "anthropic";
 		
 		// Dynamically import the SDK to avoid circular dependencies
 		const { createAgentSession, SessionManager, SettingsManager } = await import("@mariozechner/pi-coding-agent");
 		const { getModel } = await import("@mariozechner/pi-ai");
 		
-		// Get Haiku model
-		const model = getModel("anthropic", "claude-haiku-4-5");
+		const model = getModel(provider, configuredModel);
 		if (!model) {
 			return { type: "fallback", message: generateFallbackMessage(context) };
 		}
@@ -292,7 +294,7 @@ export async function generateCommitMessage(
 		// Create session with no tools and in-memory storage
 		const { session } = await createAgentSession({
 			model,
-			thinkingLevel: "off",
+			thinkingLevel: configuredThinking,
 			tools: [],              // NO tools — just text generation
 			sessionManager: SessionManager.inMemory(),
 			settingsManager: SettingsManager.inMemory({

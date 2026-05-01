@@ -142,26 +142,26 @@ describe("formatImplStage", () => {
 
 describe("formatModelConfig", () => {
 	it("formats model with thinking level", () => {
-		expect(formatModelConfig({ model: "claude-opus-4-6", thinking: "high" })).toBe("claude-opus-4-6/high");
+		expect(formatModelConfig({ model: "gpt-5.5", thinking: "high" })).toBe("gpt-5.5/high");
 	});
 
 	it("formats sonnet with medium thinking", () => {
-		expect(formatModelConfig({ model: "claude-sonnet-4-5", thinking: "medium" })).toBe("claude-sonnet-4-5/medium");
+		expect(formatModelConfig({ model: "gpt-5.4", thinking: "medium" })).toBe("gpt-5.4/medium");
 	});
 
 	it("formats haiku with off thinking", () => {
-		expect(formatModelConfig({ model: "claude-haiku-4-5", thinking: "off" })).toBe("claude-haiku-4-5/off");
+		expect(formatModelConfig({ model: "gpt-5.4-mini", thinking: "off" })).toBe("gpt-5.4-mini/off");
 	});
 });
 
 describe("formatTieredConfig", () => {
 	it("formats tiered config with cheap and expensive", () => {
 		const config = {
-			cheap: { model: "claude-sonnet-4-5", thinking: "medium" as const },
-			expensive: { model: "claude-opus-4-6", thinking: "high" as const },
+			cheap: { model: "gpt-5.4", thinking: "medium" as const },
+			expensive: { model: "gpt-5.5", thinking: "high" as const },
 		};
 		expect(formatTieredConfig(config)).toBe(
-			"cheap=claude-sonnet-4-5/medium, expensive=claude-opus-4-6/high"
+			"cheap=gpt-5.4/medium, expensive=gpt-5.5/high"
 		);
 	});
 });

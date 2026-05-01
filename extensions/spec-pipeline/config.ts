@@ -27,10 +27,10 @@ import {
  * Model values are actual model identifiers passed directly to the pi CLI.
  */
 export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
-	planDrafter: { model: "claude-opus-4-6", thinking: "high" },         // Complex planning task
-	implementer: { model: "claude-opus-4-6", thinking: "high" },         // Complex code generation
-	addressReview: { model: "claude-sonnet-4-5", thinking: "medium" },    // Fix application — issues already identified by reviewer
-	agentCommitMessageWriter: { model: "claude-haiku-4-5", thinking: "off" },  // Fast, cheap commit message generation (R5)
+	planDrafter: { model: "gpt-5.5", thinking: "high" },              // Complex planning task
+	implementer: { model: "gpt-5.5", thinking: "high" },              // Complex code generation
+	addressReview: { model: "gpt-5.4", thinking: "medium" },          // Fix application — issues already identified by reviewer
+	agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" },  // Fast, cheap commit message generation (R5)
 } as const;
 
 /**
@@ -38,18 +38,18 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
  */
 export const DEFAULT_TIERED_CONFIGS: Record<string, TieredModelConfig> = {
 	planReviewer: {
-		cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
-		expensive: { model: "claude-opus-4-6", thinking: "high" },
+		cheap: { model: "gpt-5.4", thinking: "medium" },
+		expensive: { model: "gpt-5.5", thinking: "high" },
 	},
 	codeReviewer: {
-		cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
-		expensive: { model: "claude-opus-4-6", thinking: "high" },
+		cheap: { model: "gpt-5.4", thinking: "medium" },
+		expensive: { model: "gpt-5.5", thinking: "high" },
 	},
 } as const;
 
 /**
  * Default review cycle counts per reviewer (R15)
- * Each reviewer gets the same defaults, but can be configured independently
+ * Plan review is disabled by default; code review remains enabled.
  */
 export const DEFAULT_REVIEWER_CYCLES: { cheap: number; expensive: number } = {
 	cheap: 2,
@@ -57,7 +57,7 @@ export const DEFAULT_REVIEWER_CYCLES: { cheap: number; expensive: number } = {
 } as const;
 
 export const DEFAULT_REVIEW_CYCLES: NormalizedReviewCycles = {
-	planReviewer: { ...DEFAULT_REVIEWER_CYCLES },
+	planReviewer: { cheap: 0, expensive: 0 },
 	codeReviewer: { ...DEFAULT_REVIEWER_CYCLES },
 } as const;
 

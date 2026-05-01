@@ -32,15 +32,15 @@ describe("validateConfig", () => {
 				testCommand: "npm test",
 				contextFiles: ["README.md", "CONTRIBUTING.md"],
 				models: {
-					planDrafter: { model: "claude-opus-4-6", thinking: "high" },
-					implementer: { model: "claude-opus-4-6", thinking: "high" },
+					planDrafter: { model: "gpt-5.5", thinking: "high" },
+					implementer: { model: "gpt-5.5", thinking: "high" },
 					planReviewer: {
-						cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
-						expensive: { model: "claude-opus-4-6", thinking: "high" },
+						cheap: { model: "gpt-5.4", thinking: "medium" },
+						expensive: { model: "gpt-5.5", thinking: "high" },
 					},
 					codeReviewer: {
-						cheap: { model: "claude-sonnet-4-5", thinking: "medium" },
-						expensive: { model: "claude-opus-4-6", thinking: "high" },
+						cheap: { model: "gpt-5.4", thinking: "medium" },
+						expensive: { model: "gpt-5.5", thinking: "high" },
 					},
 				},
 				reviewCycles: {
@@ -81,7 +81,7 @@ describe("validateConfig", () => {
 		it("accepts commitMessageWriter in config (silently ignored)", () => {
 			const config = {
 				models: {
-					commitMessageWriter: { model: "claude-haiku-4-5", thinking: "off" },
+					commitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" },
 				},
 			};
 			expect(validateConfig(config)).toEqual([]);
@@ -183,36 +183,36 @@ describe("default configurations", () => {
 	describe("DEFAULT_MODEL_CONFIGS", () => {
 		it("has planDrafter config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.planDrafter).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.planDrafter.model).toBe("claude-opus-4-6");
+			expect(DEFAULT_MODEL_CONFIGS.planDrafter.model).toBe("gpt-5.5");
 		});
 
 		it("has implementer config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.implementer).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.implementer.model).toBe("claude-opus-4-6");
+			expect(DEFAULT_MODEL_CONFIGS.implementer.model).toBe("gpt-5.5");
 		});
 
 		it("has addressReview config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.addressReview).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.addressReview.model).toBe("claude-sonnet-4-5");
+			expect(DEFAULT_MODEL_CONFIGS.addressReview.model).toBe("gpt-5.4");
 		});
 
 		it("has agentCommitMessageWriter config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe("claude-haiku-4-5");
+			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe("gpt-5.4-mini");
 		});
 	});
 
 	describe("DEFAULT_TIERED_CONFIGS", () => {
 		it("has planReviewer tiered config", () => {
 			const config = DEFAULT_TIERED_CONFIGS.planReviewer;
-			expect(config.cheap.model).toBe("claude-sonnet-4-5");
-			expect(config.expensive.model).toBe("claude-opus-4-6");
+			expect(config.cheap.model).toBe("gpt-5.4");
+			expect(config.expensive.model).toBe("gpt-5.5");
 		});
 
 		it("has codeReviewer tiered config", () => {
 			const config = DEFAULT_TIERED_CONFIGS.codeReviewer;
-			expect(config.cheap.model).toBe("claude-sonnet-4-5");
-			expect(config.expensive.model).toBe("claude-opus-4-6");
+			expect(config.cheap.model).toBe("gpt-5.4");
+			expect(config.expensive.model).toBe("gpt-5.5");
 		});
 	});
 
@@ -222,15 +222,11 @@ describe("default configurations", () => {
 			expect(DEFAULT_REVIEW_CYCLES.codeReviewer).toBeDefined();
 		});
 
-		it("has cheap and expensive cycles for each reviewer", () => {
-			expect(DEFAULT_REVIEW_CYCLES.planReviewer.cheap).toBe(2);
-			expect(DEFAULT_REVIEW_CYCLES.planReviewer.expensive).toBe(2);
+		it("disables plan review and keeps code review enabled by default", () => {
+			expect(DEFAULT_REVIEW_CYCLES.planReviewer.cheap).toBe(0);
+			expect(DEFAULT_REVIEW_CYCLES.planReviewer.expensive).toBe(0);
 			expect(DEFAULT_REVIEW_CYCLES.codeReviewer.cheap).toBe(2);
 			expect(DEFAULT_REVIEW_CYCLES.codeReviewer.expensive).toBe(2);
-		});
-
-		it("all reviewers have same default cycles", () => {
-			expect(DEFAULT_REVIEW_CYCLES.planReviewer).toEqual(DEFAULT_REVIEW_CYCLES.codeReviewer);
 		});
 	});
 });
