@@ -1,0 +1,211 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { ClaudeNativeProcess } from "./claude-process.ts";
+
+class FakeClaudeChild extends EventEmitter {
+	stdin = new PassThrough();
+	stdout = new PassThrough();
+	stderr = new PassThrough();
+	killed = false;
+	writes: string[] = [];
+	kill = vi.fn((_signal?: NodeJS.Signals) => {
+		if (this.killed) return true;
+		this.killed = true;
+		this.emit("close", 143);
+		return true;
+	});
+
+	constructor() {
+		super();
+		this.stdin.on("data", (chunk) => this.writes.push(chunk.toString()));
+	}
+}
+
+function createProcess(child: FakeClaudeChild, idleTimeoutMs = 1_000) {
+	const spawnFn = vi.fn(() => child as any);
+	const proc = new ClaudeNativeProcess({
+		bin: "claude",
+		args: ["-p", "--input-format", "stream-json", "--output-format", "stream-json"],
+		cwd: process.cwd(),
+		env: process.env,
+		idleTimeoutMs,
+		spawnFn: spawnFn as any,
+	});
+	return { proc, spawnFn };
+}
+
+function writeJson(child: FakeClaudeChild, message: any) {
+	child.stdout.write(JSON.stringify(message) + "\n");
+}
+
+afterEach(() => {
+	vi.useRealTimers();
+	vi.restoreAllMocks();
+});
+
+describe("ClaudeNativeProcess", () => {
+	it("starts lazily on first turn", () => {
+		const child = new FakeClaudeChild();
+		const { proc, spawnFn } = createProcess(child);
+
+		expect(spawnFn).not.toHaveBeenCalled();
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		turn.catch(() => undefined);
+
+		expect(spawnFn).toHaveBeenCalledTimes(1);
+		expect(proc.isLive()).toBe(true);
+		proc.terminate("test cleanup");
+	});
+
+	it("keeps stdin open and resolves a turn on result", async () => {
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+		const messages: any[] = [];
+
+		const turn = proc.runTurn("hello", { onMessage: (msg) => messages.push(msg) });
+		expect(child.writes).toHaveLength(1);
+		expect(JSON.parse(child.writes[0]).message.content[0].text).toBe("hello");
+		expect(child.stdin.writableEnded).toBe(false);
+
+		writeJson(child, { type: "assistant", message: { content: [] } });
+		writeJson(child, { type: "result", subtype: "success", is_error: false });
+		await expect(turn).resolves.toBeUndefined();
+		expect(proc.isLive()).toBe(true);
+		expect(messages.map((m) => m.type)).toEqual(["assistant", "result"]);
+	});
+
+	it("accepts a second turn on the same child process", async () => {
+		const child = new FakeClaudeChild();
+		const { proc, spawnFn } = createProcess(child);
+
+		const first = proc.runTurn("one", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await first;
+
+		const second = proc.runTurn("two", { onMessage: () => {} });
+		await Promise.resolve();
+		expect(spawnFn).toHaveBeenCalledTimes(1);
+		expect(child.writes).toHaveLength(2);
+		expect(JSON.parse(child.writes[1]).message.content[0].text).toBe("two");
+		writeJson(child, { type: "result", subtype: "success" });
+		await expect(second).resolves.toBeUndefined();
+	});
+
+	it("queues concurrent turns for the same process", async () => {
+		const child = new FakeClaudeChild();
+		const { proc, spawnFn } = createProcess(child);
+
+		const first = proc.runTurn("one", { onMessage: () => {} });
+		const second = proc.runTurn("two", { onMessage: () => {} });
+
+		expect(child.writes).toHaveLength(1);
+		writeJson(child, { type: "result", subtype: "success" });
+		await first;
+		await Promise.resolve();
+
+		expect(spawnFn).toHaveBeenCalledTimes(1);
+		expect(child.writes).toHaveLength(2);
+		expect(JSON.parse(child.writes[1]).message.content[0].text).toBe("two");
+		writeJson(child, { type: "result", subtype: "success" });
+		await expect(second).resolves.toBeUndefined();
+	});
+
+	it("calls onMalformedJson for bad JSON and continues", async () => {
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+		const malformed: string[] = [];
+		const messages: any[] = [];
+
+		const turn = proc.runTurn("hello", {
+			onMessage: (msg) => messages.push(msg),
+			onMalformedJson: (line) => malformed.push(line),
+		});
+
+		child.stdout.write("not json\n");
+		writeJson(child, { type: "result", subtype: "success" });
+		await expect(turn).resolves.toBeUndefined();
+		expect(malformed).toEqual(["not json"]);
+		expect(messages.map((m) => m.type)).toEqual(["result"]);
+	});
+
+	it("forwards stderr to onStderr", async () => {
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+		const stderr: string[] = [];
+
+		const turn = proc.runTurn("hello", { onMessage: () => {}, onStderr: (text) => stderr.push(text) });
+		child.stderr.write("warning\n");
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+
+		expect(stderr).toEqual(["warning\n"]);
+	});
+
+	it("idle timer terminates the process after configured milliseconds", async () => {
+		vi.useFakeTimers();
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child, 1_000);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+
+		expect(child.killed).toBe(false);
+		vi.advanceTimersByTime(999);
+		expect(child.killed).toBe(false);
+		vi.advanceTimersByTime(1);
+		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("timeout terminates and rejects the active turn", async () => {
+		vi.useFakeTimers();
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} }, { timeoutMs: 100 });
+		vi.advanceTimersByTime(100);
+
+		await expect(turn).rejects.toThrow(/timed out/);
+		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("abort signal terminates and rejects", async () => {
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+		const controller = new AbortController();
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} }, { signal: controller.signal });
+		controller.abort();
+
+		await expect(turn).rejects.toThrow(/aborted/);
+		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("unexpected child close rejects the active turn and does not hang", async () => {
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		child.emit("close", 1);
+
+		await expect(turn).rejects.toThrow(/exited with code 1/);
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("terminate rejects in-flight work and sends SIGTERM once", async () => {
+		const child = new FakeClaudeChild();
+		const { proc } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		proc.terminate("test cleanup");
+		proc.terminate("test cleanup again");
+
+		await expect(turn).rejects.toThrow(/test cleanup/);
+		expect(child.kill).toHaveBeenCalledTimes(1);
+		expect(proc.isLive()).toBe(false);
+	});
+});

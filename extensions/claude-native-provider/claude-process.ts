@@ -1,0 +1,203 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import readline from "node:readline";
+import { encodeUserInput, isClaudeResultEvent } from "./claude-protocol.ts";
+
+type SpawnFn = typeof spawn;
+
+export interface ClaudeProcessEventHandlers {
+	onMessage(message: any): void;
+	onMalformedJson?(line: string): void;
+	onStderr?(text: string): void;
+	onStatus?(status: string): void;
+}
+
+export interface ClaudeTurnOptions {
+	signal?: AbortSignal;
+	timeoutMs?: number;
+}
+
+export interface ClaudeProcessConfig {
+	bin: string;
+	args: string[];
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+	idleTimeoutMs: number;
+	spawnFn?: SpawnFn;
+}
+
+interface InFlightTurn {
+	handlers: ClaudeProcessEventHandlers;
+	resolve(): void;
+	reject(error: Error): void;
+	timeoutHandle?: ReturnType<typeof setTimeout>;
+	abortHandler?: () => void;
+	signal?: AbortSignal;
+}
+
+export class ClaudeNativeProcess {
+	private child?: ChildProcessWithoutNullStreams;
+	private rl?: readline.Interface;
+	private inFlight?: InFlightTurn;
+	private queue?: Promise<void>;
+	private idleHandle?: ReturnType<typeof setTimeout>;
+	private closed = false;
+
+	constructor(private readonly config: ClaudeProcessConfig) {}
+
+	isLive(): boolean {
+		return !!this.child && !this.closed && !this.child.killed;
+	}
+
+	runTurn(prompt: string, handlers: ClaudeProcessEventHandlers, options: ClaudeTurnOptions = {}): Promise<void> {
+		const run = () => this.runTurnNow(prompt, handlers, options);
+		const scheduled = this.queue ? this.queue.then(run, run) : run();
+		const tail = scheduled.catch(() => undefined);
+		this.queue = tail;
+		tail.finally(() => {
+			if (this.queue === tail) this.queue = undefined;
+		});
+		return scheduled;
+	}
+
+	terminate(reason: string): void {
+		this.closed = true;
+		this.clearIdleTimer();
+		this.cleanupInFlight(new Error(`Claude Code process terminated: ${reason}`));
+		this.rl?.close();
+		this.rl = undefined;
+		const child = this.child;
+		this.child = undefined;
+		if (child && !child.killed) {
+			try {
+				child.kill("SIGTERM");
+			} catch {
+				// ignore
+			}
+		}
+	}
+
+	private start(): void {
+		if (this.isLive()) return;
+		this.clearIdleTimer();
+		this.closed = false;
+		const spawnFn = this.config.spawnFn ?? spawn;
+		const child = spawnFn(this.config.bin, this.config.args, {
+			cwd: this.config.cwd,
+			stdio: ["pipe", "pipe", "pipe"],
+			env: this.config.env,
+		}) as ChildProcessWithoutNullStreams;
+		this.child = child;
+		this.rl = readline.createInterface({ input: child.stdout });
+		this.rl.on("line", (line) => this.handleStdoutLine(line));
+		child.stderr.on("data", (chunk) => this.inFlight?.handlers.onStderr?.(chunk.toString()));
+		child.on("error", (err) => this.handleProcessFailure(err, child));
+		child.on("close", (code) => this.handleProcessFailure(new Error(`Claude Code exited with code ${code}`), child));
+	}
+
+	private runTurnNow(prompt: string, handlers: ClaudeProcessEventHandlers, options: ClaudeTurnOptions): Promise<void> {
+		this.clearIdleTimer();
+		try {
+			this.start();
+		} catch (err) {
+			return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+		}
+		if (!this.child) return Promise.reject(new Error("Claude Code process is not available"));
+
+		return new Promise((resolve, reject) => {
+			this.inFlight = { handlers, resolve, reject, signal: options.signal };
+
+			if (options.timeoutMs && options.timeoutMs > 0) {
+				this.inFlight.timeoutHandle = setTimeout(() => {
+					this.failInFlight(new Error(`Claude Code timed out after ${options.timeoutMs}ms`));
+				}, options.timeoutMs);
+				this.inFlight.timeoutHandle.unref?.();
+			}
+
+			if (options.signal) {
+				this.inFlight.abortHandler = () => this.failInFlight(new Error("Claude Code request aborted"));
+				if (options.signal.aborted) {
+					this.inFlight.abortHandler();
+					return;
+				}
+				options.signal.addEventListener("abort", this.inFlight.abortHandler, { once: true });
+			}
+
+			this.child!.stdin.write(encodeUserInput(prompt), (err) => {
+				if (err) this.failInFlight(err);
+			});
+		});
+	}
+
+	private handleStdoutLine(line: string): void {
+		if (!line.trim()) return;
+		let message: any;
+		try {
+			message = JSON.parse(line);
+		} catch {
+			this.inFlight?.handlers.onMalformedJson?.(line);
+			return;
+		}
+		this.inFlight?.handlers.onMessage(message);
+		if (isClaudeResultEvent(message)) this.resolveInFlight();
+	}
+
+	private resolveInFlight(): void {
+		const turn = this.inFlight;
+		if (!turn) return;
+		this.cleanupInFlight();
+		turn.resolve();
+		this.armIdleTimer();
+	}
+
+	private failInFlight(error: Error): void {
+		if (!this.inFlight) return;
+		this.closed = true;
+		this.clearIdleTimer();
+		this.cleanupInFlight(error);
+		this.rl?.close();
+		this.rl = undefined;
+		const child = this.child;
+		this.child = undefined;
+		if (child && !child.killed) {
+			try {
+				child.kill("SIGTERM");
+			} catch {
+				// ignore
+			}
+		}
+	}
+
+	private cleanupInFlight(error?: Error): void {
+		const turn = this.inFlight;
+		if (!turn) return;
+		this.inFlight = undefined;
+		if (turn.timeoutHandle) clearTimeout(turn.timeoutHandle);
+		if (turn.signal && turn.abortHandler) turn.signal.removeEventListener("abort", turn.abortHandler);
+		if (error) turn.reject(error);
+	}
+
+	private handleProcessFailure(error: Error, child: ChildProcessWithoutNullStreams): void {
+		if (child !== this.child) return;
+		this.closed = true;
+		this.clearIdleTimer();
+		this.cleanupInFlight(error);
+		this.rl?.close();
+		this.rl = undefined;
+		this.child = undefined;
+	}
+
+	private armIdleTimer(): void {
+		this.clearIdleTimer();
+		if (this.config.idleTimeoutMs <= 0) return;
+		this.idleHandle = setTimeout(() => {
+			this.terminate(`idle timeout after ${this.config.idleTimeoutMs}ms`);
+		}, this.config.idleTimeoutMs);
+		this.idleHandle.unref?.();
+	}
+
+	private clearIdleTimer(): void {
+		if (!this.idleHandle) return;
+		clearTimeout(this.idleHandle);
+		this.idleHandle = undefined;
+	}
+}

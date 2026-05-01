@@ -9,8 +9,8 @@ import {
 	type SimpleStreamOptions,
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { spawn } from "node:child_process";
-import readline from "node:readline";
+import { ClaudeNativeProcess } from "./claude-process.ts";
+import { buildClaudeArgs, modelAlias, numberFromEnv } from "./claude-protocol.ts";
 
 /**
  * Pi provider that delegates inference + tool execution to the official Claude Code CLI.
@@ -24,13 +24,47 @@ import readline from "node:readline";
  * - CLAUDE_NATIVE_PERMISSION_MODE: auto | default | acceptEdits | dontAsk | plan | bypassPermissions | none (default: auto)
  * - CLAUDE_NATIVE_MAX_TURNS: passed to --max-turns (default unset)
  * - CLAUDE_NATIVE_NO_RESUME=1: do not reuse the Claude Code session id between turns
- * - CLAUDE_NATIVE_TIMEOUT_MS: kill subprocess after this many ms (default: no timeout)
+ * - CLAUDE_NATIVE_TIMEOUT_MS: terminate an active request after this many ms (default: no timeout)
+ * - CLAUDE_NATIVE_IDLE_TIMEOUT_MS: terminate idle long-lived process after this many ms (default: 600000)
  */
 
 const PROVIDER = "claude-native";
 const API = "claude-native-cli";
 
 let claudeSessionId: string | undefined;
+let activeProcess: ClaudeNativeProcess | undefined;
+let activeProcessSignature: string | undefined;
+
+function processSignature(model: Model<Api>): string {
+	return `${modelAlias(model.id)}\0${process.cwd()}`;
+}
+
+function getClaudeProcess(model: Model<Api>): ClaudeNativeProcess {
+	const signature = processSignature(model);
+	if (activeProcess && activeProcessSignature !== signature) {
+		activeProcess.terminate("model or cwd changed");
+		activeProcess = undefined;
+	}
+	if (!activeProcess || !activeProcess.isLive()) {
+		const bin = process.env.CLAUDE_NATIVE_BIN || "claude";
+		const args = buildClaudeArgs(model, claudeSessionId);
+		activeProcess = new ClaudeNativeProcess({
+			bin,
+			args,
+			cwd: process.cwd(),
+			env: process.env,
+			idleTimeoutMs: numberFromEnv("CLAUDE_NATIVE_IDLE_TIMEOUT_MS", 600_000) ?? 600_000,
+		});
+		activeProcessSignature = signature;
+	}
+	return activeProcess;
+}
+
+function terminateActiveProcess(reason: string): void {
+	activeProcess?.terminate(reason);
+	activeProcess = undefined;
+	activeProcessSignature = undefined;
+}
 
 function lastUserText(context: Context): string {
 	for (let i = context.messages.length - 1; i >= 0; i--) {
@@ -115,31 +149,6 @@ function updateUsageFromResult(model: Model<Api>, output: AssistantMessage, mess
 	calculateCost(model, output.usage);
 }
 
-function modelAlias(id: string): string {
-	if (id.includes("opus")) return "opus";
-	if (id.includes("haiku")) return "haiku";
-	return "sonnet";
-}
-
-function buildArgs(model: Model<Api>): string[] {
-	const args = ["-p", "--output-format", "stream-json", "--verbose", "--model", modelAlias(model.id)];
-
-	if (claudeSessionId && process.env.CLAUDE_NATIVE_NO_RESUME !== "1") {
-		args.push("--resume", claudeSessionId);
-	}
-
-	const permissionMode = process.env.CLAUDE_NATIVE_PERMISSION_MODE ?? "auto";
-	if (permissionMode && permissionMode !== "none") args.push("--permission-mode", permissionMode);
-
-	const allowedTools = process.env.CLAUDE_NATIVE_ALLOWED_TOOLS;
-	if (allowedTools) args.push("--allowedTools", allowedTools);
-
-	const maxTurns = process.env.CLAUDE_NATIVE_MAX_TURNS;
-	if (maxTurns) args.push("--max-turns", maxTurns);
-
-	return args;
-}
-
 export function streamClaudeNative(
 	model: Model<Api>,
 	context: Context,
@@ -150,14 +159,7 @@ export function streamClaudeNative(
 	stream.push({ type: "start", partial: output });
 
 	const prompt = lastUserText(context);
-	const bin = process.env.CLAUDE_NATIVE_BIN || "claude";
-	const args = buildArgs(model);
-
-	const child = spawn(bin, args, {
-		cwd: process.cwd(),
-		stdio: ["pipe", "pipe", "pipe"],
-		env: process.env,
-	});
+	const runtime = getClaudeProcess(model);
 
 	let stderr = "";
 	let sawText = false;
@@ -165,18 +167,8 @@ export function streamClaudeNative(
 	let finished = false;
 	let lastActivity = Date.now();
 
-	const timeoutMs = process.env.CLAUDE_NATIVE_TIMEOUT_MS ? Number(process.env.CLAUDE_NATIVE_TIMEOUT_MS) : undefined;
-	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-	if (timeoutMs && timeoutMs > 0) {
-		timeoutHandle = setTimeout(() => {
-			try { child.kill("SIGTERM"); } catch { /* ignore */ }
-			finishError(`Claude Code timed out after ${timeoutMs}ms`);
-		}, timeoutMs);
-		timeoutHandle.unref?.();
-	}
-
-	appendStatus(stream, output, `Claude Code started (${bin} ${args.join(" ")})`);
-	const heartbeatMs = process.env.CLAUDE_NATIVE_HEARTBEAT_MS ? Number(process.env.CLAUDE_NATIVE_HEARTBEAT_MS) : 10_000;
+	appendStatus(stream, output, "Claude Code process ready");
+	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS", 10_000) ?? 10_000;
 	const heartbeatHandle = heartbeatMs > 0 ? setInterval(() => {
 		if (finished) return;
 		const idleSeconds = Math.max(1, Math.round((Date.now() - lastActivity) / 1000));
@@ -184,8 +176,22 @@ export function streamClaudeNative(
 	}, heartbeatMs) : undefined;
 	heartbeatHandle?.unref?.();
 
+	const finishDone = () => {
+		if (heartbeatHandle) clearInterval(heartbeatHandle);
+		if (finished) return;
+		finished = true;
+		if (output.stopReason === "error") {
+			if (!output.errorMessage) output.errorMessage = stderr.trim() || "Claude Code returned an error";
+			stream.push({ type: "error", reason: "error", error: output });
+			stream.end();
+			return;
+		}
+		if (!sawText && finalResult) appendText(stream, output, finalResult);
+		stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
+		stream.end();
+	};
+
 	const finishError = (errorMessage: string) => {
-		if (timeoutHandle) clearTimeout(timeoutHandle);
 		if (heartbeatHandle) clearInterval(heartbeatHandle);
 		if (finished) return;
 		finished = true;
@@ -195,84 +201,53 @@ export function streamClaudeNative(
 		stream.end();
 	};
 
-	options?.signal?.addEventListener("abort", () => {
-		try {
-			child.kill("SIGINT");
-			setTimeout(() => child.kill("SIGTERM"), 1500).unref?.();
-		} catch {
-			// ignore
-		}
-	});
+	const configuredTimeoutMs = numberFromEnv("CLAUDE_NATIVE_TIMEOUT_MS");
+	const timeoutMs = configuredTimeoutMs && configuredTimeoutMs > 0 ? configuredTimeoutMs : undefined;
 
-	child.on("error", (err) => finishError(`Failed to spawn ${bin}: ${err.message}`));
+	runtime.runTurn(prompt, {
+		onMessage: (msg) => {
+			lastActivity = Date.now();
+			if (typeof msg.session_id === "string") claudeSessionId = msg.session_id;
+			if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result") {
+				appendStatus(stream, output, `Claude Code event: ${msg.type}`);
+			}
 
-	child.stderr.on("data", (chunk) => {
-		lastActivity = Date.now();
-		const text = chunk.toString();
-		stderr += text;
-		const lines = text.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
-		for (const line of lines) appendStatus(stream, output, `Claude Code stderr: ${line}`);
-	});
-
-	const rl = readline.createInterface({ input: child.stdout });
-	rl.on("line", (line) => {
-		if (!line.trim()) return;
-		lastActivity = Date.now();
-		let msg: any;
-		try {
-			msg = JSON.parse(line);
-		} catch {
-			return;
-		}
-
-		if (typeof msg.session_id === "string") claudeSessionId = msg.session_id;
-		if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result") {
-			appendStatus(stream, output, `Claude Code event: ${msg.type}`);
-		}
-
-		if (msg.type === "assistant") {
-			const text = extractAssistantText(msg);
-			if (text) {
+			if (msg.type === "assistant") {
+				const text = extractAssistantText(msg);
+				if (text) {
+					sawText = true;
+					appendText(stream, output, text);
+				}
+			} else if (msg.type === "streamlined_text" && typeof msg.text === "string") {
 				sawText = true;
-				appendText(stream, output, text);
+				appendText(stream, output, msg.text);
+			} else if (msg.type === "streamlined_tool_use_summary" && typeof msg.tool_summary === "string") {
+				// Surface tool activity as lightweight text for now. Later this can become a custom renderer/status update.
+				appendText(stream, output, `\n[Claude Code: ${msg.tool_summary}]\n`);
+			} else if (msg.type === "result") {
+				if (typeof msg.result === "string") finalResult = msg.result;
+				if (msg.is_error || msg.subtype !== "success") {
+					output.stopReason = "error";
+					output.errorMessage = Array.isArray(msg.errors) ? msg.errors.join("\n") : finalResult || "Claude Code returned an error";
+				}
+				if (msg.stop_reason === "max_tokens") output.stopReason = "length";
+				else if (msg.stop_reason === "tool_use") output.stopReason = "toolUse";
+				updateUsageFromResult(model, output, msg);
 			}
-		} else if (msg.type === "streamlined_text" && typeof msg.text === "string") {
-			sawText = true;
-			appendText(stream, output, msg.text);
-		} else if (msg.type === "streamlined_tool_use_summary" && typeof msg.tool_summary === "string") {
-			// Surface tool activity as lightweight text for now. Later this can become a custom renderer/status update.
-			appendText(stream, output, `\n[Claude Code: ${msg.tool_summary}]\n`);
-		} else if (msg.type === "result") {
-			if (typeof msg.result === "string") finalResult = msg.result;
-			if (msg.is_error || msg.subtype !== "success") {
-				output.stopReason = "error";
-				output.errorMessage = Array.isArray(msg.errors) ? msg.errors.join("\n") : finalResult || "Claude Code returned an error";
-			}
-			if (msg.stop_reason === "max_tokens") output.stopReason = "length";
-			else if (msg.stop_reason === "tool_use") output.stopReason = "toolUse";
-			updateUsageFromResult(model, output, msg);
-		}
-	});
+		},
+		onMalformedJson: (line) => appendStatus(stream, output, `Claude Code malformed JSON: ${line.slice(0, 200)}`),
+		onStderr: (text) => {
+			lastActivity = Date.now();
+			stderr += text;
+			const lines = text.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
+			for (const line of lines) appendStatus(stream, output, `Claude Code stderr: ${line}`);
+		},
+		onStatus: (status) => appendStatus(stream, output, status),
+	}, {
+		signal: options?.signal,
+		timeoutMs,
+	}).then(finishDone, (err) => finishError(err instanceof Error ? err.message : String(err)));
 
-	child.on("close", (code) => {
-		if (timeoutHandle) clearTimeout(timeoutHandle);
-		if (heartbeatHandle) clearInterval(heartbeatHandle);
-		if (finished) return;
-		finished = true;
-
-		if (output.stopReason === "error" || code !== 0) {
-			if (!output.errorMessage) output.errorMessage = stderr.trim() || `Claude Code exited with code ${code}`;
-			stream.push({ type: "error", reason: output.stopReason === "aborted" ? "aborted" : "error", error: output });
-			stream.end();
-			return;
-		}
-
-		if (!sawText && finalResult) appendText(stream, output, finalResult);
-		stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
-		stream.end();
-	});
-
-	child.stdin.end(prompt);
 	return stream;
 }
 
@@ -315,10 +290,15 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("claude-native-reset", {
-		description: "Forget the remembered Claude Code --resume session id",
+		description: "Reset Claude native process and remembered session state",
 		handler: async (_args, ctx) => {
+			terminateActiveProcess("reset command");
 			claudeSessionId = undefined;
-			ctx.ui.notify("Claude native session id cleared", "info");
+			ctx.ui.notify("Claude native process and session state reset", "info");
 		},
+	});
+
+	pi.on("session_shutdown", async () => {
+		terminateActiveProcess("session shutdown");
 	});
 }
