@@ -202,7 +202,11 @@ export function streamClaudeNative(
 		onMessage: (msg) => {
 			lastActivity = Date.now();
 			if (typeof msg.session_id === "string") processPool.rememberClaudeSessionId(key, msg.session_id);
-			if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result") {
+			if (msg.type === "rate_limit_event") {
+				const resumeAt = msg.rate_limit_resets_at ?? msg.retry_after_ms ?? msg.retry_after;
+				const detail = resumeAt ? ` (resets at ${resumeAt})` : "";
+				appendStatus(stream, output, `Claude Code rate limited${detail}`);
+			} else if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result" && msg.type !== "system" && msg.type !== "init" && msg.type !== "user") {
 				appendStatus(stream, output, `Claude Code event: ${msg.type}`);
 			}
 

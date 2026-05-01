@@ -26,6 +26,7 @@ Treat an output event with `type: "result"` as the end of the current user turn.
 ## Observed Output Events
 
 - `system` / `init`: includes `session_id`, cwd, tools, model, etc.
+- `user`: echo of the user turn sent to the CLI.
 - `rate_limit_event`: includes rate limit info and `session_id`.
 - `assistant`: includes `message.content` blocks and usage details.
 - `result`: includes `subtype`, `is_error`, `stop_reason`, `session_id`, `usage`, and cost.
