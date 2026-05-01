@@ -231,6 +231,47 @@ describe("ClaudeNativeProcess", () => {
 		expect(exits).toHaveLength(1);
 	});
 
+	it("stdin write failures reject with stdin_error and clear unsafe session state", async () => {
+		const child = new FakeClaudeChild();
+		vi.spyOn(child.stdin, "write").mockImplementation(((chunk: any, cb?: any) => {
+			if (typeof cb === "function") cb(new Error("stdin exploded"));
+			return true;
+		}) as any);
+		const { proc, exits } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+
+		await expect(turn).rejects.toMatchObject({ code: "stdin_error", unsafeSession: true, message: "stdin exploded" });
+		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(exits).toEqual([expect.objectContaining({ code: "stdin_error", unsafeSession: true, reason: "stdin exploded" })]);
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("child error rejects the active turn with process_error and marks session unsafe", async () => {
+		const child = new FakeClaudeChild();
+		const { proc, exits } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		child.emit("error", new Error("spawn exploded"));
+
+		await expect(turn).rejects.toMatchObject({ code: "process_error", unsafeSession: true, message: "spawn exploded" });
+		expect(exits).toEqual([expect.objectContaining({ code: "process_error", unsafeSession: true, reason: "spawn exploded" })]);
+		expect(proc.isLive()).toBe(false);
+	});
+
+	it("between-turn child error is reported as safe for session resume", async () => {
+		const child = new FakeClaudeChild();
+		const { proc, exits } = createProcess(child);
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+
+		child.emit("error", new Error("background crash"));
+		expect(exits.at(-1)).toEqual(expect.objectContaining({ code: "process_error", unsafeSession: false, reason: "background crash" }));
+		expect(proc.isLive()).toBe(false);
+	});
+
 	it("unexpected child close rejects the active turn and does not hang", async () => {
 		const child = new FakeClaudeChild();
 		const { proc, exits } = createProcess(child);

@@ -474,7 +474,7 @@ describe("claude native provider integration", () => {
 		const abortedEvents = await collectEvents(streamClaudeNative(createModel(), createContext("abort"), { sessionId: "pi-a", signal: controller.signal } as any));
 		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
 
-		expect(abortedEvents.at(-1)).toMatchObject({ type: "error", reason: "aborted" });
+		expect(terminalEvents(abortedEvents)).toEqual([expect.objectContaining({ type: "error", reason: "aborted" })]);
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
 		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("request failed");
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
@@ -495,8 +495,46 @@ describe("claude native provider integration", () => {
 		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
 
 		expect(MockClaudeNativeProcess.instances[0].turnOptions[1].timeoutMs).toBe(50);
-		expect(timeoutEvents.at(-1)).toMatchObject({ type: "error", reason: "error" });
+		expect(terminalEvents(timeoutEvents)).toEqual([expect.objectContaining({ type: "error", reason: "error" })]);
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+	});
+
+	it("emits stdin write failures as a single Pi error event and clears unsafe session state", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-before", result: "before" }] },
+			{ reject: { message: "stdin exploded", code: "stdin_error", unsafeSession: true } },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel(), createContext("before"), { sessionId: "pi-a" }));
+		const stdinErrorEvents = await collectEvents(streamClaudeNative(createModel(), createContext("stdin fail"), { sessionId: "pi-a" }));
+		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
+
+		expect(terminalEvents(stdinErrorEvents)).toEqual([expect.objectContaining({ type: "error", reason: "error" })]);
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("request failed: stdin exploded");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("claude-before");
+	});
+
+	it("emits process errors as a single Pi error event and clears unsafe session state", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-before", result: "before" }] },
+			{ reject: { message: "spawn exploded", code: "process_error", unsafeSession: true } },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel(), createContext("before"), { sessionId: "pi-a" }));
+		const processErrorEvents = await collectEvents(streamClaudeNative(createModel(), createContext("process fail"), { sessionId: "pi-a" }));
+		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
+
+		expect(terminalEvents(processErrorEvents)).toEqual([expect.objectContaining({ type: "error", reason: "error" })]);
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("request failed: spawn exploded");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("claude-before");
 	});
 
 	it("restarts after a safe between-turn crash and resumes the remembered Claude session", async () => {
@@ -511,7 +549,7 @@ describe("claude native provider integration", () => {
 		const failedEvents = await collectEvents(streamClaudeNative(createModel(), createContext("failed"), { sessionId: "pi-a" }));
 		await collectEvents(streamClaudeNative(createModel(), createContext("after"), { sessionId: "pi-a" }));
 
-		expect(failedEvents.at(-1)).toMatchObject({ type: "error", reason: "error" });
+		expect(terminalEvents(failedEvents)).toEqual([expect.objectContaining({ type: "error", reason: "error" })]);
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
 		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-safe"]));
 	});
