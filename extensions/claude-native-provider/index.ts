@@ -3,12 +3,12 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	calculateCost,
-	AssistantMessageEventStream,
 	type Context,
 	type Model,
 	type SimpleStreamOptions,
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { AssistantMessageEventStream as AssistantMessageEventStreamImpl } from "@mariozechner/pi-ai/dist/utils/event-stream.js";
 import { ClaudeNativeProcess } from "./claude-process.ts";
 import { buildClaudeArgs, modelAlias, numberFromEnv } from "./claude-protocol.ts";
 
@@ -154,7 +154,7 @@ export function streamClaudeNative(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStreamImpl();
 	const output = makeEmptyMessage(model);
 	stream.push({ type: "start", partial: output });
 
@@ -254,7 +254,7 @@ export function streamClaudeNative(
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.registerProvider(PROVIDER, {
+	(pi as any).registerProvider(PROVIDER, {
 		name: "Claude Native (claude -p)",
 		baseUrl: "process:claude",
 		apiKey: "unused",
