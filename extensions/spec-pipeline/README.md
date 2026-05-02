@@ -392,11 +392,13 @@ Configure models per-role to optimize cost and quality:
 ```json
 {
   "models": {
-    "planDrafter": { "model": "gpt-5.5", "thinking": "high" },
-    "implementer": { "model": "gpt-5.5", "thinking": "high" },
-    "codeReviewer": { "model": "gpt-5.4", "thinking": "medium" },
-    "addressReview": { "model": "gpt-5.4", "thinking": "medium" }
-  }
+    "planDrafter": { "model": "claude-native/opus", "thinking": "low" },
+    "implementer": { "model": "claude-native/opus", "thinking": "low" },
+    "codeReviewer": { "model": "claude-native/opus", "thinking": "low" },
+    "addressReview": { "model": "openai-codex/gpt-5.5", "thinking": "low" },
+    "agentCommitMessageWriter": { "model": "claude-native/opus", "thinking": "low" }
+  },
+  "reviewCycles": 5
 }
 ```
 

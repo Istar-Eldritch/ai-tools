@@ -6,7 +6,7 @@ import {
 	type ClaudeProcessExitEvent,
 } from "./claude-process.ts";
 import { logClaudeNativeDiagnostic, redactSessionId } from "./claude-diagnostics.ts";
-import { buildClaudeArgs, effortFromEnv, modelAlias, numberFromEnv } from "./claude-protocol.ts";
+import { buildClaudeArgs, type ClaudeEffort, effortFromEnv, modelAlias, numberFromEnv } from "./claude-protocol.ts";
 
 export const DEFAULT_SESSION_IDENTITY = "default";
 
@@ -62,10 +62,11 @@ export function buildClaudeProcessKey(
 	options?: SimpleStreamOptions,
 	cwd = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
+	effort?: ClaudeEffort,
 ): ClaudeProcessKey {
 	return {
 		modelAlias: modelAlias(model.id),
-		effort: effortFromEnv(env) ?? "none",
+		effort: (effort ?? effortFromEnv(env)) ?? "none",
 		cwd,
 		sessionIdentity: options?.sessionId || DEFAULT_SESSION_IDENTITY,
 	};
@@ -96,15 +97,32 @@ function conversationKeyFromProcessKey(key: ClaudeProcessKey): ClaudeConversatio
 export class ClaudeNativeProcessPool {
 	private readonly processes = new Map<string, ClaudeProcessRuntime>();
 	private readonly claudeSessions = new Map<string, RememberedClaudeSession>();
+	private readonly sessionEffortOverrides = new Map<string, ClaudeEffort>();
 	private lastObservedCwd?: string;
 
 	constructor(private readonly config: ClaudeNativeProcessPoolConfig = {}) {}
+
+	setSessionEffort(sessionIdentity: string, effort: ClaudeEffort | undefined): void {
+		const id = sessionIdentity || DEFAULT_SESSION_IDENTITY;
+		if (effort) this.sessionEffortOverrides.set(id, effort);
+		else this.sessionEffortOverrides.delete(id);
+	}
+
+	getSessionEffort(sessionIdentity: string): ClaudeEffort | undefined {
+		return this.sessionEffortOverrides.get(sessionIdentity || DEFAULT_SESSION_IDENTITY);
+	}
+
+	resolveEffort(sessionIdentity: string, env: NodeJS.ProcessEnv = this.config.env ?? process.env): ClaudeEffort | undefined {
+		return this.getSessionEffort(sessionIdentity) ?? effortFromEnv(env);
+	}
 
 	getOrCreate(model: Model<Api>, options?: SimpleStreamOptions): ClaudeProcessPoolEntry {
 		const cwd = this.config.getCwd?.() ?? process.cwd();
 		this.observeCwd(cwd);
 		const env = this.config.env ?? process.env;
-		const key = buildClaudeProcessKey(model, options, cwd, env);
+		const sessionIdentity = options?.sessionId || DEFAULT_SESSION_IDENTITY;
+		const effort = this.resolveEffort(sessionIdentity, env);
+		const key = buildClaudeProcessKey(model, options, cwd, env, effort);
 		const keyId = serializeClaudeProcessKey(key);
 		const conversationKeyId = serializeClaudeConversationKey(conversationKeyFromProcessKey(key));
 
@@ -134,14 +152,14 @@ export class ClaudeNativeProcessPool {
 				isFirstSessionUse = !rememberedSession.initialized;
 				rememberedSession.initialized = true;
 			}
-			const args = buildClaudeArgs(model, { sessionId, isFirstSessionUse, env });
+			const args = buildClaudeArgs(model, { sessionId, isFirstSessionUse, env, effort });
 			resumedClaudeSession = args.includes("--resume");
 			const processConfig: ClaudeProcessConfig = {
 				bin: env.CLAUDE_NATIVE_BIN || "claude",
 				args,
 				cwd,
 				env,
-				idleTimeoutMs: numberFromEnv("CLAUDE_NATIVE_IDLE_TIMEOUT_MS", 600_000, env) ?? 600_000,
+				idleTimeoutMs: numberFromEnv("CLAUDE_NATIVE_IDLE_TIMEOUT_MS", 600_000, env),
 				onExit: (event) => this.handleProcessExit(key, keyId, createdRuntime, event),
 			};
 			logClaudeNativeDiagnostic("pool.create_runtime", {
@@ -254,16 +272,15 @@ export class ClaudeNativeProcessPool {
 
 	stats(): ClaudeProcessPoolStats {
 		const ids = new Set(this.processes.keys());
-		for (const conversationKeyId of this.claudeSessions.keys()) {
-			const hasProcessForConversation = [...this.processes.keys()].some((processKeyId) => {
-				const [, , cwd, sessionIdentity] = JSON.parse(processKeyId) as [string, string, string, string];
-				return serializeClaudeConversationKey({ cwd, sessionIdentity }) === conversationKeyId;
-			});
-			if (!hasProcessForConversation) ids.add(conversationKeyId);
-		}
+		const conversationIdsFromProcesses = new Set<string>();
 		let liveProcesses = 0;
-		for (const runtime of this.processes.values()) {
+		for (const [processKeyId, runtime] of this.processes.entries()) {
+			const [, , cwd, sessionIdentity] = JSON.parse(processKeyId) as [string, string, string, string];
+			conversationIdsFromProcesses.add(serializeClaudeConversationKey({ cwd, sessionIdentity }));
 			if (runtime.isLive()) liveProcesses++;
+		}
+		for (const conversationKeyId of this.claudeSessions.keys()) {
+			if (!conversationIdsFromProcesses.has(conversationKeyId)) ids.add(conversationKeyId);
 		}
 		return {
 			totalKeys: ids.size,

@@ -55,6 +55,18 @@ describe("claude protocol helpers", () => {
 		expect(JSON.parse(line).message.content[0].text).toBe("hello");
 	});
 
+	it("encodes mixed text and image content blocks", () => {
+		const line = encodeUserInput([
+			{ type: "text", text: "look" },
+			{ type: "image", source: { type: "base64", media_type: "image/png", data: "DATA" } },
+		]);
+		const parsed = JSON.parse(line);
+		expect(parsed.message.content).toEqual([
+			{ type: "text", text: "look" },
+			{ type: "image", source: { type: "base64", media_type: "image/png", data: "DATA" } },
+		]);
+	});
+
 	it("maps model ids to aliases", () => {
 		expect(modelAlias("claude-opus-4")).toBe("opus");
 		expect(modelAlias("claude-3-5-haiku")).toBe("haiku");

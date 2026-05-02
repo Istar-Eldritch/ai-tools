@@ -8,8 +8,9 @@ import {
 	type SimpleStreamOptions,
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { ClaudeNativeProcessPool } from "./claude-pool.ts";
-import { effortFromEnv, numberFromEnv } from "./claude-protocol.ts";
+import { ClaudeTurnError } from "./claude-process.ts";
+import { ClaudeNativeProcessPool, DEFAULT_SESSION_IDENTITY } from "./claude-pool.ts";
+import { type ClaudeUserBlock, effortFromEnv, numberFromEnv, parseEffort } from "./claude-protocol.ts";
 
 /**
  * Pi provider that delegates inference + tool execution to the official Claude Code CLI.
@@ -23,9 +24,13 @@ import { effortFromEnv, numberFromEnv } from "./claude-protocol.ts";
  * - CLAUDE_NATIVE_PERMISSION_MODE: auto | default | acceptEdits | dontAsk | plan | bypassPermissions | none (default: auto)
  * - CLAUDE_NATIVE_MAX_TURNS: passed to --max-turns (default unset)
  * - CLAUDE_NATIVE_NO_RESUME=1: do not reuse the Claude Code session id between turns
- * - CLAUDE_NATIVE_EFFORT: low | medium | high | xhigh | max (passed to --effort)
+ * - CLAUDE_NATIVE_EFFORT: low | medium | high | xhigh | max (default --effort, overridden per pi session by /claude-native-effort)
  * - CLAUDE_NATIVE_TIMEOUT_MS: terminate an active request after this many ms (default: no timeout)
  * - CLAUDE_NATIVE_IDLE_TIMEOUT_MS: terminate idle long-lived process after this many ms (default: 600000)
+ * - CLAUDE_NATIVE_HEARTBEAT_MS: emit "still running" thinking ticks while the CLI is silent (default: 0/off)
+ * - CLAUDE_NATIVE_HOST_COMPACTION=1: re-enable pi's host-side compaction while on a claude-native
+ *   model (disabled by default because the Claude CLI manages its own session context, so pi's
+ *   summary is never sent to Claude and only burns tokens)
  */
 
 const PROVIDER = "claude-native";
@@ -33,21 +38,27 @@ const API = "claude-native-cli";
 
 const processPool = new ClaudeNativeProcessPool();
 
-function lastUserText(context: Context): string {
+function lastUserContent(context: Context): ClaudeUserBlock[] {
 	for (let i = context.messages.length - 1; i >= 0; i--) {
 		const msg = context.messages[i];
 		if (msg.role !== "user") continue;
-		if (typeof msg.content === "string") return msg.content;
-		return msg.content
-			.map((part) => {
-				if (part.type === "text") return part.text;
-				if (part.type === "image") return "[image omitted: claude-native provider currently supports text input only]";
-				return "";
-			})
-			.filter(Boolean)
-			.join("\n");
+		if (typeof msg.content === "string") {
+			return msg.content ? [{ type: "text", text: msg.content }] : [];
+		}
+		const blocks: ClaudeUserBlock[] = [];
+		for (const part of msg.content) {
+			if (part.type === "text" && part.text) {
+				blocks.push({ type: "text", text: part.text });
+			} else if (part.type === "image" && part.data && part.mimeType) {
+				blocks.push({
+					type: "image",
+					source: { type: "base64", media_type: part.mimeType, data: part.data },
+				});
+			}
+		}
+		return blocks;
 	}
-	return "";
+	return [];
 }
 
 function makeEmptyMessage(model: Model<Api>): AssistantMessage {
@@ -80,28 +91,57 @@ function appendText(stream: AssistantMessageEventStream, output: AssistantMessag
 	stream.push({ type: "text_end", contentIndex, content: text, partial: output });
 }
 
-function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string) {
-	if (!status || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
+function appendThinking(stream: AssistantMessageEventStream, output: AssistantMessage, thinking: string) {
+	if (!thinking) return;
 	const contentIndex = output.content.length;
 	output.content.push({ type: "thinking", thinking: "" });
 	stream.push({ type: "thinking_start", contentIndex, partial: output });
-	(output.content[contentIndex] as { type: "thinking"; thinking: string }).thinking += status;
-	stream.push({ type: "thinking_delta", contentIndex, delta: status, partial: output });
-	stream.push({ type: "thinking_end", contentIndex, content: status, partial: output });
+	(output.content[contentIndex] as { type: "thinking"; thinking: string }).thinking += thinking;
+	stream.push({ type: "thinking_delta", contentIndex, delta: thinking, partial: output });
+	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
 }
 
-function extractAssistantText(message: any): string {
+function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string) {
+	if (!status || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
+	appendThinking(stream, output, status);
+}
+
+function formatToolUse(block: any): string {
+	const name = typeof block.name === "string" ? block.name : "tool";
+	const input = block.input;
+	if (input && typeof input === "object" && !Array.isArray(input)) {
+		const keys = Object.keys(input);
+		if (keys.length === 0) return name;
+		const preview = keys.slice(0, 2).map((key) => {
+			const raw = input[key];
+			const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+			const value = str ?? "";
+			const truncated = value.length > 80 ? `${value.slice(0, 77)}...` : value;
+			return `${key}=${truncated}`;
+		}).join(", ");
+		const suffix = keys.length > 2 ? `, +${keys.length - 2} more` : "";
+		return `${name}(${preview}${suffix})`;
+	}
+	return name;
+}
+
+function appendAssistantBlocks(stream: AssistantMessageEventStream, output: AssistantMessage, message: any): boolean {
 	const content = message?.message?.content;
-	if (!Array.isArray(content)) return "";
-	const texts: string[] = [];
+	if (!Array.isArray(content)) return false;
+	let saw = false;
 	for (const block of content) {
-		if (block?.type === "text" && typeof block.text === "string") texts.push(block.text);
-		if (block?.type === "thinking" && typeof block.thinking === "string") {
-			// Pi can render thinking, but native stream-json usually emits final assistant
-			// messages only. Keep thinking out of normal transcript for now.
+		if (block?.type === "text" && typeof block.text === "string" && block.text) {
+			appendText(stream, output, block.text);
+			saw = true;
+		} else if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking) {
+			appendThinking(stream, output, block.thinking);
+			saw = true;
+		} else if (block?.type === "tool_use") {
+			appendText(stream, output, `\n[Claude Code: ${formatToolUse(block)}]\n`);
+			saw = true;
 		}
 	}
-	return texts.join("\n");
+	return saw;
 }
 
 function updateUsageFromResult(model: Model<Api>, output: AssistantMessage, message: any) {
@@ -117,24 +157,15 @@ function updateUsageFromResult(model: Model<Api>, output: AssistantMessage, mess
 }
 
 function turnErrorCode(err: unknown): string | undefined {
-	return typeof err === "object" && err !== null && "code" in err ? String((err as any).code) : undefined;
+	return err instanceof ClaudeTurnError ? err.code : undefined;
 }
 
 function turnErrorUnsafeSession(err: unknown): boolean {
-	return typeof err === "object" && err !== null && "unsafeSession" in err && Boolean((err as any).unsafeSession);
+	return err instanceof ClaudeTurnError && err.unsafeSession;
 }
 
 function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
-}
-
-function shouldClearSessionAfterFailure(err: unknown, signal?: AbortSignal): boolean {
-	const code = turnErrorCode(err);
-	return turnErrorUnsafeSession(err)
-		|| signal?.aborted === true
-		|| code === "aborted"
-		|| code === "timeout"
-		|| code === "stdin_error";
 }
 
 export function streamClaudeNative(
@@ -146,9 +177,19 @@ export function streamClaudeNative(
 	const output = makeEmptyMessage(model);
 	stream.push({ type: "start", partial: output });
 
-	const prompt = lastUserText(context);
+	const userContent = lastUserContent(context);
 	const poolEntry = processPool.getOrCreate(model, options);
-	const { key, process: runtime } = poolEntry;
+	const { key, process: runtime, created, resumedClaudeSession } = poolEntry;
+
+	// On a brand-new Claude session (not a --resume), prepend the pi system prompt to the
+	// first user message so that mode-specific instructions (e.g. discovery mode injected
+	// by spec-pipeline via before_agent_start) actually reach Claude Code.  The Claude CLI
+	// manages its own session history, so once the instructions appear in turn 1 they
+	// persist for the entire session — re-injection on later turns is not needed.
+	const prompt =
+		created && !resumedClaudeSession && context.systemPrompt?.trim()
+			? [{ type: "text" as const, text: context.systemPrompt.trim() + "\n\n" }, ...userContent]
+			: userContent;
 
 	let stderr = "";
 	let sawText = false;
@@ -163,16 +204,38 @@ export function streamClaudeNative(
 			? `Claude Code process started (${poolEntry.resumedClaudeSession ? "resuming prior Claude session" : "fresh session"}; model=${key.modelAlias})`
 			: `Claude Code process reused (model=${key.modelAlias})`,
 	);
-	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS", 10_000) ?? 10_000;
-	const heartbeatHandle = heartbeatMs > 0 ? setInterval(() => {
+	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS", 0);
+	let heartbeatIndex: number | undefined;
+	let heartbeatText = "";
+	const tickHeartbeat = () => {
 		if (finished) return;
+		if (process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
 		const idleSeconds = Math.max(1, Math.round((Date.now() - lastActivity) / 1000));
-		appendStatus(stream, output, `Claude Code still running (${idleSeconds}s since last CLI event)`);
-	}, heartbeatMs) : undefined;
+		if (heartbeatIndex === undefined) {
+			heartbeatText = `Claude Code still running (${idleSeconds}s since last CLI event)`;
+			heartbeatIndex = output.content.length;
+			output.content.push({ type: "thinking", thinking: "" });
+			stream.push({ type: "thinking_start", contentIndex: heartbeatIndex, partial: output });
+			(output.content[heartbeatIndex] as { type: "thinking"; thinking: string }).thinking = heartbeatText;
+			stream.push({ type: "thinking_delta", contentIndex: heartbeatIndex, delta: heartbeatText, partial: output });
+			return;
+		}
+		const delta = ` · ${idleSeconds}s`;
+		(output.content[heartbeatIndex] as { type: "thinking"; thinking: string }).thinking += delta;
+		heartbeatText += delta;
+		stream.push({ type: "thinking_delta", contentIndex: heartbeatIndex, delta, partial: output });
+	};
+	const closeHeartbeat = () => {
+		if (heartbeatIndex === undefined) return;
+		stream.push({ type: "thinking_end", contentIndex: heartbeatIndex, content: heartbeatText, partial: output });
+		heartbeatIndex = undefined;
+	};
+	const heartbeatHandle = heartbeatMs > 0 ? setInterval(tickHeartbeat, heartbeatMs) : undefined;
 	heartbeatHandle?.unref?.();
 
 	const finishDone = () => {
 		if (heartbeatHandle) clearInterval(heartbeatHandle);
+		closeHeartbeat();
 		if (finished) return;
 		finished = true;
 		if (output.stopReason === "error") {
@@ -188,6 +251,7 @@ export function streamClaudeNative(
 
 	const finishError = (message: string, reason: "aborted" | "error" = "error") => {
 		if (heartbeatHandle) clearInterval(heartbeatHandle);
+		closeHeartbeat();
 		if (finished) return;
 		finished = true;
 		output.stopReason = reason;
@@ -212,11 +276,7 @@ export function streamClaudeNative(
 			}
 
 			if (msg.type === "assistant") {
-				const text = extractAssistantText(msg);
-				if (text) {
-					sawText = true;
-					appendText(stream, output, text);
-				}
+				if (appendAssistantBlocks(stream, output, msg)) sawText = true;
 			} else if (msg.type === "streamlined_text" && typeof msg.text === "string") {
 				sawText = true;
 				appendText(stream, output, msg.text);
@@ -249,10 +309,8 @@ export function streamClaudeNative(
 		timeoutMs,
 	}).then(finishDone, (err) => {
 		const message = errorMessage(err);
-		const clearSession = shouldClearSessionAfterFailure(err, options?.signal);
-		processPool.invalidateKey(key, `request failed: ${message}`, { clearSession });
-		const code = turnErrorCode(err);
-		const reason = options?.signal?.aborted || code === "aborted" ? "aborted" : "error";
+		processPool.invalidateKey(key, `request failed: ${message}`, { clearSession: turnErrorUnsafeSession(err) });
+		const reason = options?.signal?.aborted || turnErrorCode(err) === "aborted" ? "aborted" : "error";
 		finishError(message, reason);
 	});
 
@@ -309,7 +367,10 @@ function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
 		hardInvalidate(`session_switch reason=${event.reason}`);
 	});
 
-	pi.on("session_before_compact", async () => {
+	pi.on("session_before_compact", async (_event, ctx) => {
+		if (ctx?.model?.provider === PROVIDER && process.env.CLAUDE_NATIVE_HOST_COMPACTION !== "1") {
+			return { cancel: true };
+		}
 		hardInvalidate("session_before_compact");
 	});
 	pi.on("session_compact", async () => {
@@ -339,7 +400,7 @@ export default function (pi: ExtensionAPI) {
 				id: "haiku",
 				name: "Claude Native Haiku",
 				reasoning: false,
-				input: ["text"],
+				input: ["text", "image"],
 				cost: { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
 				contextWindow: 200_000,
 				maxTokens: 8_192,
@@ -348,7 +409,7 @@ export default function (pi: ExtensionAPI) {
 				id: "sonnet",
 				name: "Claude Native Sonnet",
 				reasoning: true,
-				input: ["text"],
+				input: ["text", "image"],
 				cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
 				contextWindow: 200_000,
 				maxTokens: 16_384,
@@ -357,7 +418,7 @@ export default function (pi: ExtensionAPI) {
 				id: "opus",
 				name: "Claude Native Opus",
 				reasoning: true,
-				input: ["text"],
+				input: ["text", "image"],
 				cost: { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
 				contextWindow: 200_000,
 				maxTokens: 32_000,
@@ -385,26 +446,27 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("claude-native-effort", {
-		description: "Set Claude native thinking effort: low, medium, high, xhigh, max, or none",
+		description: "Set Claude native thinking effort for this session: low, medium, high, xhigh, max, or none",
 		handler: async (args, ctx) => {
 			const value = firstCommandArg(args)?.toLowerCase();
+			const sessionIdentity = (ctx as any)?.sessionManager?.getSessionId?.() || DEFAULT_SESSION_IDENTITY;
 			if (!value) {
-				ctx.ui.notify(`Claude native effort: ${effortFromEnv() ?? "none"}`, "info");
+				const current = processPool.getSessionEffort(sessionIdentity) ?? effortFromEnv() ?? "none";
+				ctx.ui.notify(`Claude native effort: ${current}`, "info");
 				return;
 			}
 			if (value === "none" || value === "off" || value === "default") {
-				delete process.env.CLAUDE_NATIVE_EFFORT;
-				ctx.ui.notify("Claude native effort cleared; existing warm processes remain until idle/reset.", "info");
+				processPool.setSessionEffort(sessionIdentity, undefined);
+				ctx.ui.notify("Claude native effort cleared for this session; existing warm processes remain until idle/reset.", "info");
 				return;
 			}
-			process.env.CLAUDE_NATIVE_EFFORT = value;
-			const effort = effortFromEnv();
+			const effort = parseEffort(value);
 			if (!effort) {
-				delete process.env.CLAUDE_NATIVE_EFFORT;
 				ctx.ui.notify("Invalid Claude native effort. Use: low, medium, high, xhigh, max, or none.", "error");
 				return;
 			}
-			ctx.ui.notify(`Claude native effort set to ${effort}; next turn will use/resume a matching process.`, "info");
+			processPool.setSessionEffort(sessionIdentity, effort);
+			ctx.ui.notify(`Claude native effort set to ${effort} for this session; next turn will use/resume a matching process.`, "info");
 		},
 	});
 

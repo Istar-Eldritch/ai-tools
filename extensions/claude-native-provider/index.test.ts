@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ClaudeTurnError } from "./claude-process.ts";
 
 interface Scenario {
 	messages?: any[];
@@ -26,7 +27,7 @@ class MockClaudeNativeProcess {
 		MockClaudeNativeProcess.scenarios = [];
 	}
 
-	readonly prompts: string[] = [];
+	readonly prompts: any[] = [];
 	readonly turnOptions: any[] = [];
 	readonly terminateReasons: string[] = [];
 	live = true;
@@ -44,7 +45,7 @@ class MockClaudeNativeProcess {
 		this.terminateReasons.push(reason);
 	}
 
-	async runTurn(prompt: string, handlers: any, options: any = {}) {
+	async runTurn(prompt: any, handlers: any, options: any = {}) {
 		this.prompts.push(prompt);
 		this.turnOptions.push(options);
 		const scenario = MockClaudeNativeProcess.scenarios.shift() ?? {
@@ -53,10 +54,11 @@ class MockClaudeNativeProcess {
 
 		if (scenario.reject) {
 			if (typeof scenario.reject === "string" || scenario.reject instanceof Error) throw scenario.reject;
-			const err = new Error(scenario.reject.message) as Error & { code?: string; unsafeSession?: boolean };
-			err.code = scenario.reject.code;
-			err.unsafeSession = scenario.reject.unsafeSession;
-			throw err;
+			throw new ClaudeTurnError(
+				scenario.reject.message,
+				(scenario.reject.code ?? "terminated") as any,
+				scenario.reject.unsafeSession ?? false,
+			);
 		}
 		if (scenario.waitFor) await scenario.waitFor;
 		for (const status of scenario.statuses ?? []) handlers.onStatus?.(status);
@@ -68,7 +70,7 @@ class MockClaudeNativeProcess {
 
 async function loadModule() {
 	vi.resetModules();
-	vi.doMock("./claude-process.ts", () => ({ ClaudeNativeProcess: MockClaudeNativeProcess }));
+	vi.doMock("./claude-process.ts", () => ({ ClaudeNativeProcess: MockClaudeNativeProcess, ClaudeTurnError }));
 	return import("./index.ts");
 }
 
@@ -93,6 +95,10 @@ function createModel(id = "sonnet") {
 
 function createContext(text = "hello from user") {
 	return { messages: [{ role: "user", content: text }] } as any;
+}
+
+function textBlocks(...texts: string[]) {
+	return texts.map((text) => [{ type: "text", text }]);
 }
 
 function createPi() {
@@ -163,7 +169,7 @@ describe("claude native provider integration", () => {
 		const secondEvents = await collectEvents(streamClaudeNative(createModel("claude-sonnet-4"), createContext("second prompt")));
 
 		expect(MockClaudeNativeProcess.instances).toHaveLength(1);
-		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(["first prompt", "second prompt"]);
+		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(textBlocks("first prompt", "second prompt"));
 		expect(firstEvents[0].type).toBe("start");
 		expect(firstEvents.some((event) => event.type === "text_delta" && event.delta === "First reply")).toBe(true);
 		expect(firstEvents.at(-1)).toMatchObject({ type: "done", reason: "toolUse" });
@@ -191,7 +197,7 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
 		expect(MockClaudeNativeProcess.instances[0].config.args).toEqual(expect.arrayContaining(["--session-id"]));
 		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "session-sonnet"]));
-		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(["one", "three"]);
+		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(textBlocks("one", "three"));
 	});
 
 	it("isolates remembered session ids across cwd changes", async () => {
@@ -247,9 +253,9 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances[0].config.args).not.toContain("--resume");
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
 		expect(MockClaudeNativeProcess.instances[2].config.args).toEqual(expect.arrayContaining(["--resume", "claude-a"]));
-		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(["one"]);
-		expect(MockClaudeNativeProcess.instances[1].prompts).toEqual(["two"]);
-		expect(MockClaudeNativeProcess.instances[2].prompts).toEqual(["three"]);
+		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(textBlocks("one"));
+		expect(MockClaudeNativeProcess.instances[1].prompts).toEqual(textBlocks("two"));
+		expect(MockClaudeNativeProcess.instances[2].prompts).toEqual(textBlocks("three"));
 	});
 
 	it("does not terminate an in-flight turn when a different signature starts concurrently", async () => {
@@ -316,6 +322,66 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain(eventName);
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("claude-before");
+	});
+
+	it("cancels host compaction when the active model is claude-native", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-keep", result: "before" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("before"), { sessionId: "pi-session" }));
+		const result = await pi.handlers.get("session_before_compact")(eventFor("session_before_compact"), { model: createModel("sonnet") });
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("after"), { sessionId: "pi-session" }));
+
+		expect(result).toEqual({ cancel: true });
+		expect(MockClaudeNativeProcess.instances).toHaveLength(1);
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons).toEqual([]);
+		expect(MockClaudeNativeProcess.instances[0].prompts).toEqual(textBlocks("before", "after"));
+	});
+
+	it("does not cancel host compaction when the active model is from another provider", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-keep", result: "before" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("before"), { sessionId: "pi-session" }));
+		const otherModel = { ...createModel("gpt-5"), provider: "openai" };
+		const result = await pi.handlers.get("session_before_compact")(eventFor("session_before_compact"), { model: otherModel });
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("after"), { sessionId: "pi-session" }));
+
+		expect(result).toBeUndefined();
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("session_before_compact");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+	});
+
+	it("respects CLAUDE_NATIVE_HOST_COMPACTION=1 to allow host compaction on claude-native", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-keep", result: "before" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "after" }] },
+		);
+		process.env.CLAUDE_NATIVE_HOST_COMPACTION = "1";
+
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("before"), { sessionId: "pi-session" }));
+		const result = await pi.handlers.get("session_before_compact")(eventFor("session_before_compact"), { model: createModel("sonnet") });
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("after"), { sessionId: "pi-session" }));
+
+		expect(result).toBeUndefined();
+		expect(MockClaudeNativeProcess.instances[0].terminateReasons[0]).toContain("session_before_compact");
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
 	});
 
 	it("keeps prior model processes warm on model_select and resumes the same Claude session for the selected model", async () => {
@@ -388,6 +454,40 @@ describe("claude native provider integration", () => {
 		expect(secondEvents.some((event) => event.type === "thinking_delta" && event.delta.includes("process reused"))).toBe(true);
 	});
 
+	it("coalesces heartbeat ticks into a single thinking block", async () => {
+		vi.useFakeTimers();
+		try {
+			process.env.CLAUDE_NATIVE_HEARTBEAT_MS = "100";
+			const turn = deferred();
+			MockClaudeNativeProcess.scenarios.push({
+				waitFor: turn.promise,
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+			});
+
+			const { streamClaudeNative } = await loadModule();
+			const eventsPromise = collectEvents(streamClaudeNative(createModel("sonnet"), createContext("hb")));
+
+			await vi.advanceTimersByTimeAsync(100);
+			await vi.advanceTimersByTimeAsync(100);
+			await vi.advanceTimersByTimeAsync(100);
+
+			turn.resolve();
+			const events = await eventsPromise;
+			const done = events.at(-1);
+
+			const heartbeatBlocks = (done.message.content as any[]).filter(
+				(b) => b.type === "thinking" && typeof b.thinking === "string" && b.thinking.includes("still running"),
+			);
+			expect(heartbeatBlocks).toHaveLength(1);
+			expect(heartbeatBlocks[0].thinking).toMatch(/still running.*·.*·/);
+
+			const heartbeatStarts = events.filter((e) => e.type === "thinking_start" && (e.partial.content[e.contentIndex]?.thinking ?? "").includes("still running"));
+			expect(heartbeatStarts).toHaveLength(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("effort command updates the process key for subsequent turns", async () => {
 		MockClaudeNativeProcess.scenarios.push(
 			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-effort", result: "low" }] },
@@ -398,15 +498,61 @@ describe("claude native provider integration", () => {
 		mod.default(pi.api as any);
 
 		const notify = vi.fn();
-		await pi.commands.get("claude-native-effort").handler(["low"], { ui: { notify } });
+		const ctxFor = (sessionId: string) => ({ ui: { notify }, sessionManager: { getSessionId: () => sessionId } });
+		await pi.commands.get("claude-native-effort").handler(["low"], ctxFor("pi-a"));
 		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("low"), { sessionId: "pi-a" }));
-		await pi.commands.get("claude-native-effort").handler(["high"], { ui: { notify } });
+		await pi.commands.get("claude-native-effort").handler(["high"], ctxFor("pi-a"));
 		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("high"), { sessionId: "pi-a" }));
 
 		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
 		expect(MockClaudeNativeProcess.instances[0].config.args).toEqual(expect.arrayContaining(["--effort", "low"]));
 		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--effort", "high", "--resume", "claude-effort"]));
 		expect(notify).toHaveBeenCalledWith(expect.stringContaining("effort set to high"), "info");
+	});
+
+	it("scopes effort overrides per pi session and does not mutate process.env", async () => {
+		const previousEnvEffort = process.env.CLAUDE_NATIVE_EFFORT;
+		delete process.env.CLAUDE_NATIVE_EFFORT;
+		try {
+			MockClaudeNativeProcess.scenarios.push(
+				{ messages: [{ type: "result", subtype: "success", is_error: false, result: "a-low" }] },
+				{ messages: [{ type: "result", subtype: "success", is_error: false, result: "b-default" }] },
+				{ messages: [{ type: "result", subtype: "success", is_error: false, result: "b-high" }] },
+				{ messages: [{ type: "result", subtype: "success", is_error: false, result: "a-low-still" }] },
+			);
+
+			const mod = await loadModule();
+			const pi = createPi();
+			mod.default(pi.api as any);
+
+			const notify = vi.fn();
+			const ctxFor = (sessionId: string) => ({ ui: { notify }, sessionManager: { getSessionId: () => sessionId } });
+
+			await pi.commands.get("claude-native-effort").handler(["low"], ctxFor("pi-a"));
+			expect(process.env.CLAUDE_NATIVE_EFFORT).toBeUndefined();
+
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("a1"), { sessionId: "pi-a" }));
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("b1"), { sessionId: "pi-b" }));
+
+			await pi.commands.get("claude-native-effort").handler(["high"], ctxFor("pi-b"));
+			expect(process.env.CLAUDE_NATIVE_EFFORT).toBeUndefined();
+
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("b2"), { sessionId: "pi-b" }));
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("a2"), { sessionId: "pi-a" }));
+
+			expect(MockClaudeNativeProcess.instances).toHaveLength(3);
+			// pi-a always uses --effort low, never bleeds into pi-b
+			expect(MockClaudeNativeProcess.instances[0].config.args).toEqual(expect.arrayContaining(["--effort", "low"]));
+			// pi-b's first turn ran before its effort override → no --effort
+			expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--effort");
+			// After /claude-native-effort high in pi-b, a new process spawns with high
+			expect(MockClaudeNativeProcess.instances[2].config.args).toEqual(expect.arrayContaining(["--effort", "high"]));
+			// pi-a still resumes its low-effort process for the next turn
+			expect(MockClaudeNativeProcess.instances[0].prompts).toHaveLength(2);
+		} finally {
+			if (previousEnvEffort === undefined) delete process.env.CLAUDE_NATIVE_EFFORT;
+			else process.env.CLAUDE_NATIVE_EFFORT = previousEnvEffort;
+		}
 	});
 
 	it("status command reports pool counts without exposing raw Claude session ids", async () => {
@@ -500,6 +646,131 @@ describe("claude native provider integration", () => {
 		const events = await collectEvents(streamClaudeNative(createModel(), createContext("tools")));
 
 		expect(events.some((event) => event.type === "text_delta" && event.delta.includes("Read package.json"))).toBe(true);
+	});
+
+	it("surfaces assistant thinking and tool_use blocks alongside text", async () => {
+		MockClaudeNativeProcess.scenarios.push({
+			messages: [
+				{
+					type: "assistant",
+					message: {
+						content: [
+							{ type: "thinking", thinking: "weighing options" },
+							{ type: "text", text: "Reading the file." },
+							{ type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "package.json" } },
+						],
+					},
+				},
+				{ type: "result", subtype: "success", is_error: false, result: "done" },
+			],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const events = await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("show me")));
+
+		expect(events.some((event) => event.type === "thinking_delta" && event.delta === "weighing options")).toBe(true);
+		expect(events.some((event) => event.type === "text_delta" && event.delta === "Reading the file.")).toBe(true);
+		expect(events.some((event) => event.type === "text_delta" && event.delta.includes("Read(file_path=package.json)"))).toBe(true);
+	});
+
+	it("forwards image content blocks from the latest user message to Claude Code", async () => {
+		MockClaudeNativeProcess.scenarios.push({
+			messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const context = {
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "what is in this image?" },
+						{ type: "image", data: "BASE64DATA", mimeType: "image/png" },
+					],
+				},
+			],
+		} as any;
+		await collectEvents(streamClaudeNative(createModel("sonnet"), context));
+
+		expect(MockClaudeNativeProcess.instances[0].prompts[0]).toEqual([
+			{ type: "text", text: "what is in this image?" },
+			{ type: "image", source: { type: "base64", media_type: "image/png", data: "BASE64DATA" } },
+		]);
+	});
+
+	it("prepends context.systemPrompt to the first user message on a fresh session", async () => {
+		MockClaudeNativeProcess.scenarios.push({
+			messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const context = {
+			systemPrompt: "You are in DISCOVERY MODE. Ask one question at a time.",
+			messages: [{ role: "user", content: "implement auth" }],
+		} as any;
+		await collectEvents(streamClaudeNative(createModel("sonnet"), context));
+
+		expect(MockClaudeNativeProcess.instances[0].prompts[0]).toEqual([
+			{ type: "text", text: "You are in DISCOVERY MODE. Ask one question at a time.\n\n" },
+			{ type: "text", text: "implement auth" },
+		]);
+	});
+
+	it("does not inject systemPrompt on subsequent turns when the process is reused", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "first" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "second" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		const ctx = (text: string) => ({
+			systemPrompt: "You are in DISCOVERY MODE.",
+			messages: [{ role: "user", content: text }],
+		} as any);
+		await collectEvents(streamClaudeNative(createModel("sonnet"), ctx("first")));
+		await collectEvents(streamClaudeNative(createModel("sonnet"), ctx("second")));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(1);
+		// First prompt includes systemPrompt preamble; second does NOT (process reused)
+		expect(MockClaudeNativeProcess.instances[0].prompts[0]).toEqual([
+			{ type: "text", text: "You are in DISCOVERY MODE.\n\n" },
+			{ type: "text", text: "first" },
+		]);
+		expect(MockClaudeNativeProcess.instances[0].prompts[1]).toEqual([{ type: "text", text: "second" }]);
+	});
+
+	it("does not inject systemPrompt when resuming an existing Claude session", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-1", result: "first" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "second" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		const ctx = (text: string) => ({
+			systemPrompt: "You are in DISCOVERY MODE.",
+			messages: [{ role: "user", content: text }],
+		} as any);
+		// First call — creates process + session
+		await collectEvents(streamClaudeNative(createModel("sonnet"), ctx("first"), { sessionId: "pi-a" }));
+		// Kill the process so a new one is spawned that will --resume the Claude session
+		MockClaudeNativeProcess.instances[0].live = false;
+		// Second call — new process but --resume (resumedClaudeSession = true), no injection
+		await collectEvents(streamClaudeNative(createModel("sonnet"), ctx("second"), { sessionId: "pi-a" }));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-1"]));
+		expect(MockClaudeNativeProcess.instances[1].prompts[0]).toEqual([{ type: "text", text: "second" }]);
+	});
+
+	it("advertises image input support on every claude-native model", async () => {
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		const provider = pi.providers.get("claude-native");
+		for (const model of provider.models) {
+			expect(model.input).toEqual(["text", "image"]);
+		}
 	});
 
 	it("surfaces malformed Claude output compatibly and still emits exactly one terminal Pi event", async () => {

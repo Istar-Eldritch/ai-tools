@@ -6,6 +6,8 @@ export function modelAlias(id: string): string {
 	return "sonnet";
 }
 
+export function numberFromEnv(name: string, fallback: number, env?: NodeJS.ProcessEnv): number;
+export function numberFromEnv(name: string, fallback?: undefined, env?: NodeJS.ProcessEnv): number | undefined;
 export function numberFromEnv(name: string, fallback?: number, env: NodeJS.ProcessEnv = process.env): number | undefined {
 	const raw = env[name];
 	if (!raw) return fallback;
@@ -17,15 +19,20 @@ export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 const CLAUDE_EFFORTS = new Set<ClaudeEffort>(["low", "medium", "high", "xhigh", "max"]);
 
-export function effortFromEnv(env: NodeJS.ProcessEnv = process.env): ClaudeEffort | undefined {
-	const raw = env.CLAUDE_NATIVE_EFFORT?.trim().toLowerCase();
+export function parseEffort(value: string | undefined | null): ClaudeEffort | undefined {
+	const raw = value?.trim().toLowerCase();
 	return raw && CLAUDE_EFFORTS.has(raw as ClaudeEffort) ? raw as ClaudeEffort : undefined;
+}
+
+export function effortFromEnv(env: NodeJS.ProcessEnv = process.env): ClaudeEffort | undefined {
+	return parseEffort(env.CLAUDE_NATIVE_EFFORT);
 }
 
 export interface ClaudeArgsOptions {
 	sessionId?: string;
 	isFirstSessionUse?: boolean;
 	env?: NodeJS.ProcessEnv;
+	effort?: ClaudeEffort;
 }
 
 export function buildClaudeArgs(model: Model<Api>, sessionIdOrOptions?: string | ClaudeArgsOptions): string[] {
@@ -44,7 +51,7 @@ export function buildClaudeArgs(model: Model<Api>, sessionIdOrOptions?: string |
 		modelAlias(model.id),
 	];
 
-	const effort = effortFromEnv(env);
+	const effort = options.effort ?? effortFromEnv(env);
 	if (effort) args.push("--effort", effort);
 
 	if (options.sessionId && env.CLAUDE_NATIVE_NO_RESUME !== "1") {
@@ -63,12 +70,21 @@ export function buildClaudeArgs(model: Model<Api>, sessionIdOrOptions?: string |
 	return args;
 }
 
-export function encodeUserInput(text: string): string {
+export type ClaudeUserBlock =
+	| { type: "text"; text: string }
+	| { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+export type ClaudeUserContent = string | ClaudeUserBlock[];
+
+export function encodeUserInput(content: ClaudeUserContent): string {
+	const blocks: ClaudeUserBlock[] = typeof content === "string"
+		? [{ type: "text", text: content }]
+		: content;
 	return JSON.stringify({
 		type: "user",
 		message: {
 			role: "user",
-			content: [{ type: "text", text }],
+			content: blocks,
 		},
 	}) + "\n";
 }

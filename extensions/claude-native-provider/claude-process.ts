@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import { logClaudeNativeDiagnostic, redactClaudeArgs } from "./claude-diagnostics.ts";
-import { encodeUserInput, isClaudeResultEvent } from "./claude-protocol.ts";
+import { type ClaudeUserContent, encodeUserInput, isClaudeResultEvent } from "./claude-protocol.ts";
 
 type SpawnFn = typeof spawn;
 
@@ -76,7 +76,7 @@ export class ClaudeNativeProcess {
 		return !!this.child && !this.closed && !this.child.killed;
 	}
 
-	runTurn(prompt: string, handlers: ClaudeProcessEventHandlers, options: ClaudeTurnOptions = {}): Promise<void> {
+	runTurn(prompt: ClaudeUserContent, handlers: ClaudeProcessEventHandlers, options: ClaudeTurnOptions = {}): Promise<void> {
 		const run = () => this.runTurnNow(prompt, handlers, options);
 		const scheduled = this.queue ? this.queue.then(run, run) : run();
 		const tail = scheduled.catch(() => undefined);
@@ -114,7 +114,7 @@ export class ClaudeNativeProcess {
 		child.on("close", (code) => this.handleProcessFailure(new Error(`Claude Code exited with code ${code}`), child, "process_close"));
 	}
 
-	private runTurnNow(prompt: string, handlers: ClaudeProcessEventHandlers, options: ClaudeTurnOptions): Promise<void> {
+	private runTurnNow(prompt: ClaudeUserContent, handlers: ClaudeProcessEventHandlers, options: ClaudeTurnOptions): Promise<void> {
 		this.clearIdleTimer();
 		try {
 			this.start();
