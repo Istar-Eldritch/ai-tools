@@ -33,30 +33,65 @@ Usage: sf <method> <path> [body-json]
        sf meal-types
        sf foods <searchTerm> [page] [pageSize]
        sf food <foodId>
+       sf variants <foodId>                  # list all variants for a food
+       sf add-variant <foodId> <body-json>   # POST a new variant (e.g. add a 100 g variant)
        sf entries <YYYY-MM-DD>
        sf templates                         # meal-plan templates
        sf weekly-plan [YYYY-MM-DD]          # active weekly plan for date
+       sf providers                          # list external food/exercise data providers
+       sf mealie-search <query> [page]       # search Mealie recipes via SF
+       sf mealie-details <slug>              # fetch one Mealie recipe mapped to SF food shape
+       sf mealie-import <slug>               # create local SF food from a Mealie recipe
 
 Examples:
   sf goals 2026-04-27
   sf foods oat 1 5
   sf POST /api/food-entries '{"food_id":"...","variant_id":"...","meal_type":"breakfast","quantity":50,"unit":"g","entry_date":"2026-04-27"}'
+  sf mealie-import salmon-cream-pasta-with-peas
+
+Mealie integration:
+  Mealie endpoints require an x-provider-id header. The wrapper auto-discovers
+  the Mealie provider UUID from /api/external-providers (provider_type=mealie).
+  Override with SPARKYFITNESS_MEALIE_PROVIDER_ID env var if you have multiple
+  Mealie providers configured.
 EOF
 }
 
 req() {
   local method="$1" path="$2" body="${3:-}"
   local url="${SPARKYFITNESS_BASE_URL}${path}"
+  local extra_headers=()
+  if [[ -n "${SF_EXTRA_HEADER:-}" ]]; then
+    extra_headers+=(-H "$SF_EXTRA_HEADER")
+  fi
   if [[ -n "$body" ]]; then
     curl "${CURL_OPTS[@]}" -sS --fail-with-body \
       -H "Authorization: Bearer $SPARKYFITNESS_API_KEY" \
       -H "Content-Type: application/json" \
+      "${extra_headers[@]}" \
       -X "$method" -d "$body" "$url"
   else
     curl "${CURL_OPTS[@]}" -sS --fail-with-body \
       -H "Authorization: Bearer $SPARKYFITNESS_API_KEY" \
+      "${extra_headers[@]}" \
       -X "$method" "$url"
   fi
+}
+
+# Resolve the Mealie provider UUID. Override via SPARKYFITNESS_MEALIE_PROVIDER_ID.
+mealie_provider_id() {
+  if [[ -n "${SPARKYFITNESS_MEALIE_PROVIDER_ID:-}" ]]; then
+    printf '%s' "$SPARKYFITNESS_MEALIE_PROVIDER_ID"
+    return
+  fi
+  local id
+  id=$(req GET "/api/external-providers" \
+    | jq -r 'map(select(.provider_type=="mealie")) | .[0].id // empty')
+  if [[ -z "$id" ]]; then
+    echo "sf: no Mealie provider configured (set SPARKYFITNESS_MEALIE_PROVIDER_ID to override)" >&2
+    return 1
+  fi
+  printf '%s' "$id"
 }
 
 pretty() {
@@ -108,5 +143,32 @@ case "$cmd" in
   weekly-plan)
     d="${1:-$(today)}"
     req GET "/api/weekly-goal-plans/active?date=$d" | pretty;;
+  variants)
+    [[ $# -eq 1 ]] || { echo "sf variants <foodId>" >&2; exit 1; }
+    req GET "/api/foods/food-variants?food_id=$1" | pretty;;
+  add-variant)
+    [[ $# -eq 2 ]] || { echo "sf add-variant <foodId> <body-json>" >&2; exit 1; }
+    body=$(jq -c --arg fid "$1" '. + {food_id: $fid}' <<<"$2")
+    req POST "/api/foods/food-variants" "$body" | pretty;;
+  providers)
+    req GET "/api/external-providers" | pretty;;
+  mealie-search)
+    [[ $# -ge 1 ]] || { echo "sf mealie-search <query> [page]" >&2; exit 1; }
+    enc=$(printf %s "$1" | jq -sRr @uri)
+    qpath="/api/foods/mealie/search?query=$enc"
+    [[ $# -ge 2 ]] && qpath="$qpath&page=$2"
+    SF_EXTRA_HEADER="x-provider-id: $(mealie_provider_id)" \
+      req GET "$qpath" | pretty;;
+  mealie-details)
+    [[ $# -eq 1 ]] || { echo "sf mealie-details <slug>" >&2; exit 1; }
+    SF_EXTRA_HEADER="x-provider-id: $(mealie_provider_id)" \
+      req GET "/api/foods/mealie/details?slug=$1" | pretty;;
+  mealie-import)
+    [[ $# -eq 1 ]] || { echo "sf mealie-import <slug>" >&2; exit 1; }
+    # Fetch the SF-mapped {food, variant} shape, then flatten and POST /api/foods.
+    details=$(SF_EXTRA_HEADER="x-provider-id: $(mealie_provider_id)" \
+      req GET "/api/foods/mealie/details?slug=$1")
+    body=$(jq -c '.food + .variant' <<<"$details")
+    req POST "/api/foods" "$body" | pretty;;
   *) echo "sf: unknown command '$cmd'" >&2; usage >&2; exit 1;;
 esac

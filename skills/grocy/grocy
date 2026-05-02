@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+# Thin auth-adding curl wrapper for the Grocy API.
+# Reads GROCY_BASE_URL and GROCY_API_KEY from
+# ~/.config/grocy/credentials (or accepts them from the environment).
+
+set -euo pipefail
+
+CRED="${GROCY_CRED_FILE:-$HOME/.config/grocy/credentials}"
+if [[ -z "${GROCY_BASE_URL:-}" || -z "${GROCY_API_KEY:-}" ]]; then
+  if [[ -r "$CRED" ]]; then
+    # shellcheck disable=SC1090
+    . "$CRED"
+  fi
+fi
+: "${GROCY_BASE_URL:?missing — set in $CRED or env}"
+: "${GROCY_API_KEY:?missing — set in $CRED or env}"
+
+CURL_OPTS=()
+if [[ -n "${GROCY_CA_BUNDLE:-}" ]]; then
+  CURL_OPTS+=(--cacert "$GROCY_CA_BUNDLE")
+elif [[ "${GROCY_INSECURE:-0}" == "1" ]]; then
+  CURL_OPTS+=(-k)
+fi
+
+usage() {
+  cat <<'EOF'
+Usage: grocy <method> <path> [body-json]
+       grocy raw <method> <path> [body-json]      # raw body, no jq
+
+Read:
+  grocy self                                       # current user
+  grocy info                                       # /system/info (version, db)
+  grocy products [search]                          # all products, optional name filter
+  grocy product <id>                               # /stock/products/{id} (joined)
+  grocy stock                                      # currently-in-stock items
+  grocy stock-volatile                             # missing/overdue/soon-expiring
+  grocy stock-entries <productId>                  # individual lots for a product
+  grocy units [search]                             # quantity_units
+  grocy locations                                  # locations
+  grocy product-groups                             # product_groups
+  grocy recipes                                    # all recipes (master rows)
+  grocy recipe <id>                                # recipe + its ingredients (recipes_pos)
+  grocy recipe-fulfillment [id]                    # can I cook recipe(s) from current stock?
+  grocy mealplans [start] [end]                    # default: today only
+  grocy shopping-lists
+  grocy shopping-list <listId>                     # items in list
+  grocy users
+  grocy fields <entity> [objectId]                 # userfields for entity (or row)
+
+Write — stock:
+  grocy stock-add <productId> <amount> [bestBefore] [price]
+                                                  # purchase, transaction_type=purchase
+  grocy stock-consume <productId> <amount>         # consume
+  grocy stock-inventory <productId> <newAmount>    # adjust to absolute count
+  grocy stock-open <productId> <amount>            # mark as opened
+  grocy stock-transfer <productId> <amount> <toLocId>
+
+Write — recipes:
+  grocy recipe-create <name> [servings]
+  grocy recipe-pos-add <recipeId> <productId> <amount> <quId> [note]
+                                                  # add ingredient row
+  grocy recipe-consume <recipeId>                  # cook it (consumes ingredients)
+  grocy recipe-copy <recipeId>
+  grocy recipe-fill-shopping <recipeId> [listId]   # add not-fulfilled to shopping list
+
+Write — meal plan:
+  grocy mealplan-add <date> <recipeId> [servings] [section_id]
+  grocy mealplan-note <date> <note>
+  grocy mealplan-delete <id>
+
+Write — shopping:
+  grocy shopping-list-create <name>
+  grocy shopping-list-delete <id>
+  grocy shopping-list-clear [listId]               # default 1
+  grocy shopping-add <productId> <amount> [listId] [quId]
+  grocy shopping-remove <productId> [listId]
+  grocy shopping-add-missing [listId]              # adds below-min-stock items
+
+Generic CRUD over /objects/{entity}:
+  grocy list <entity> [search-field] [search-value]
+  grocy get <entity> <objectId>
+  grocy create <entity> <bodyJson>
+  grocy update <entity> <objectId> <bodyJson>
+  grocy delete <entity> <objectId>
+
+Auth: header GROCY-API-KEY (set in ~/.config/grocy/credentials or env).
+EOF
+}
+
+req() {
+  local method="$1" path="$2" body="${3:-}"
+  local url="${GROCY_BASE_URL%/}${path}"
+  if [[ -n "$body" ]]; then
+    curl "${CURL_OPTS[@]}" -sS --fail-with-body \
+      -H "GROCY-API-KEY: $GROCY_API_KEY" \
+      -H "Content-Type: application/json" \
+      -X "$method" -d "$body" "$url"
+  else
+    curl "${CURL_OPTS[@]}" -sS --fail-with-body \
+      -H "GROCY-API-KEY: $GROCY_API_KEY" \
+      -X "$method" "$url"
+  fi
+}
+
+pretty() {
+  if command -v jq >/dev/null 2>&1; then jq .; else python3 -m json.tool; fi
+}
+
+uri() { printf %s "$1" | jq -sRr @uri; }
+today() { date -u +%F; }
+
+# /objects/{entity} list with optional ?query[]=field=value or ?query[]=name~*search*
+list_objects() {
+  local entity="$1" field="${2:-}" value="${3:-}"
+  if [[ -z "$field" || -z "$value" ]]; then
+    req GET "/api/objects/$entity"
+  else
+    # use SQL LIKE via ~ with % wildcards for fuzzy on string fields, = for exact
+    local op="="
+    [[ "$field" == "name" ]] && op="~" && value="%${value}%"
+    req GET "/api/objects/$entity?query%5B%5D=$(uri "${field}${op}${value}")"
+  fi
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  ""|-h|--help|help) usage; exit 0;;
+
+  raw)
+    [[ $# -ge 2 ]] || { echo "grocy raw <method> <path> [body]" >&2; exit 1; }
+    req "$1" "$2" "${3:-}"; echo;;
+  GET|POST|PUT|PATCH|DELETE)
+    [[ $# -ge 1 ]] || { echo "grocy $cmd <path> [body]" >&2; exit 1; }
+    req "$cmd" "$1" "${2:-}" | pretty;;
+
+  self)        req GET "/api/user" | pretty;;
+  info)        req GET "/api/system/info" | pretty;;
+  users)       req GET "/api/users" | pretty;;
+
+  products)    list_objects products name "${1:-}" | pretty;;
+  product)
+    [[ $# -eq 1 ]] || { echo "grocy product <id>" >&2; exit 1; }
+    req GET "/api/stock/products/$1" | pretty;;
+  stock)            req GET "/api/stock" | pretty;;
+  stock-volatile)   req GET "/api/stock/volatile" | pretty;;
+  stock-entries)
+    [[ $# -eq 1 ]] || { echo "grocy stock-entries <productId>" >&2; exit 1; }
+    req GET "/api/stock/products/$1/entries" | pretty;;
+  units)            list_objects quantity_units name "${1:-}" | pretty;;
+  locations)        req GET "/api/objects/locations" | pretty;;
+  product-groups)   req GET "/api/objects/product_groups" | pretty;;
+
+  recipes)          req GET "/api/objects/recipes" | pretty;;
+  recipe)
+    [[ $# -eq 1 ]] || { echo "grocy recipe <id>" >&2; exit 1; }
+    head=$(req GET "/api/objects/recipes/$1")
+    pos=$(req GET "/api/objects/recipes_pos?query%5B%5D=$(uri "recipe_id=$1")")
+    jq -n --argjson r "$head" --argjson p "$pos" '{recipe:$r, ingredients:$p}';;
+  recipe-fulfillment)
+    if [[ $# -eq 0 ]]; then req GET "/api/recipes/fulfillment" | pretty
+    else req GET "/api/recipes/$1/fulfillment" | pretty
+    fi;;
+
+  mealplans)
+    start="${1:-$(today)}"; end="${2:-$start}"
+    req GET "/api/objects/meal_plan?query%5B%5D=$(uri "day>=$start")&query%5B%5D=$(uri "day<=$end")" | pretty;;
+
+  shopping-lists)   req GET "/api/objects/shopping_lists" | pretty;;
+  shopping-list)
+    [[ $# -eq 1 ]] || { echo "grocy shopping-list <listId>" >&2; exit 1; }
+    req GET "/api/objects/shopping_list?query%5B%5D=$(uri "shopping_list_id=$1")" | pretty;;
+
+  fields)
+    [[ $# -ge 1 ]] || { echo "grocy fields <entity> [objectId]" >&2; exit 1; }
+    if [[ $# -eq 1 ]]; then req GET "/api/objects/userfields?query%5B%5D=$(uri "entity=$1")" | pretty
+    else req GET "/api/userfields/$1/$2" | pretty
+    fi;;
+
+  # ---- writes: stock ----
+  stock-add)
+    [[ $# -ge 2 ]] || { echo "grocy stock-add <productId> <amount> [bestBefore] [price]" >&2; exit 1; }
+    body=$(jq -n --argjson a "$2" --arg b "${3:-2999-12-31}" --arg p "${4:-}" \
+      '{amount:$a, best_before_date:$b, transaction_type:"purchase"} + (if $p == "" then {} else {price:$p} end)')
+    req POST "/api/stock/products/$1/add" "$body" | pretty;;
+  stock-consume)
+    [[ $# -eq 2 ]] || { echo "grocy stock-consume <productId> <amount>" >&2; exit 1; }
+    req POST "/api/stock/products/$1/consume" \
+      "$(jq -n --argjson a "$2" '{amount:$a, transaction_type:"consume"}')" | pretty;;
+  stock-inventory)
+    [[ $# -eq 2 ]] || { echo "grocy stock-inventory <productId> <newAmount>" >&2; exit 1; }
+    req POST "/api/stock/products/$1/inventory" \
+      "$(jq -n --argjson a "$2" '{new_amount:$a}')" | pretty;;
+  stock-open)
+    [[ $# -eq 2 ]] || { echo "grocy stock-open <productId> <amount>" >&2; exit 1; }
+    req POST "/api/stock/products/$1/open" \
+      "$(jq -n --argjson a "$2" '{amount:$a}')" | pretty;;
+  stock-transfer)
+    [[ $# -eq 3 ]] || { echo "grocy stock-transfer <productId> <amount> <toLocId>" >&2; exit 1; }
+    req POST "/api/stock/products/$1/transfer" \
+      "$(jq -n --argjson a "$2" --argjson l "$3" '{amount:$a, location_id_to:$l}')" | pretty;;
+
+  # ---- writes: recipes ----
+  recipe-create)
+    [[ $# -ge 1 ]] || { echo "grocy recipe-create <name> [servings]" >&2; exit 1; }
+    req POST "/api/objects/recipes" \
+      "$(jq -n --arg n "$1" --argjson s "${2:-1}" '{name:$n, base_servings:$s, desired_servings:$s, type:"normal"}')" | pretty;;
+  recipe-pos-add)
+    [[ $# -ge 4 ]] || { echo "grocy recipe-pos-add <recipeId> <productId> <amount> <quId> [note]" >&2; exit 1; }
+    body=$(jq -n --argjson r "$1" --argjson p "$2" --argjson a "$3" --argjson q "$4" --arg n "${5:-}" \
+      '{recipe_id:$r, product_id:$p, amount:$a, qu_id:$q, ingredient_group:"", note:$n}')
+    req POST "/api/objects/recipes_pos" "$body" | pretty;;
+  recipe-consume)
+    [[ $# -eq 1 ]] || { echo "grocy recipe-consume <recipeId>" >&2; exit 1; }
+    req POST "/api/recipes/$1/consume" "" | pretty;;
+  recipe-copy)
+    [[ $# -eq 1 ]] || { echo "grocy recipe-copy <recipeId>" >&2; exit 1; }
+    req POST "/api/recipes/$1/copy" "" | pretty;;
+  recipe-fill-shopping)
+    [[ $# -ge 1 ]] || { echo "grocy recipe-fill-shopping <recipeId> [listId]" >&2; exit 1; }
+    body="{}"
+    [[ $# -eq 2 ]] && body="$(jq -n --argjson l "$2" '{list_id:$l}')"
+    req POST "/api/recipes/$1/add-not-fulfilled-products-to-shoppinglist" "$body" | pretty;;
+
+  # ---- writes: meal plan ----
+  mealplan-add)
+    [[ $# -ge 2 ]] || { echo "grocy mealplan-add <date> <recipeId> [servings] [section_id]" >&2; exit 1; }
+    body=$(jq -n --arg d "$1" --argjson r "$2" --argjson s "${3:-1}" --arg sec "${4:-}" \
+      '{day:$d, type:"recipe", recipe_id:$r, recipe_servings:$s} + (if $sec == "" then {} else {section_id:($sec|tonumber)} end)')
+    req POST "/api/objects/meal_plan" "$body" | pretty;;
+  mealplan-note)
+    [[ $# -ge 2 ]] || { echo "grocy mealplan-note <date> <note>" >&2; exit 1; }
+    req POST "/api/objects/meal_plan" \
+      "$(jq -n --arg d "$1" --arg n "$2" '{day:$d, type:"note", note:$n}')" | pretty;;
+  mealplan-delete)
+    [[ $# -eq 1 ]] || { echo "grocy mealplan-delete <id>" >&2; exit 1; }
+    req DELETE "/api/objects/meal_plan/$1" | pretty;;
+
+  # ---- writes: shopping ----
+  shopping-list-create)
+    [[ $# -eq 1 ]] || { echo "grocy shopping-list-create <name>" >&2; exit 1; }
+    req POST "/api/objects/shopping_lists" \
+      "$(jq -n --arg n "$1" '{name:$n}')" | pretty;;
+  shopping-list-delete)
+    [[ $# -eq 1 ]] || { echo "grocy shopping-list-delete <id>" >&2; exit 1; }
+    req DELETE "/api/objects/shopping_lists/$1" | pretty;;
+  shopping-list-clear)
+    list="${1:-1}"
+    req POST "/api/stock/shoppinglist/clear" \
+      "$(jq -n --argjson l "$list" '{list_id:$l}')" | pretty;;
+  shopping-add)
+    [[ $# -ge 2 ]] || { echo "grocy shopping-add <productId> <amount> [listId] [quId]" >&2; exit 1; }
+    body=$(jq -n --argjson p "$1" --argjson a "$2" --argjson l "${3:-1}" --arg q "${4:-}" \
+      '{product_id:$p, list_id:$l, product_amount:$a} + (if $q == "" then {} else {qu_id:($q|tonumber)} end)')
+    req POST "/api/stock/shoppinglist/add-product" "$body" | pretty;;
+  shopping-remove)
+    [[ $# -ge 1 ]] || { echo "grocy shopping-remove <productId> [listId]" >&2; exit 1; }
+    req POST "/api/stock/shoppinglist/remove-product" \
+      "$(jq -n --argjson p "$1" --argjson l "${2:-1}" '{product_id:$p, list_id:$l}')" | pretty;;
+  shopping-add-missing)
+    list="${1:-1}"
+    req POST "/api/stock/shoppinglist/add-missing-products" \
+      "$(jq -n --argjson l "$list" '{list_id:$l}')" | pretty;;
+
+  # ---- generic CRUD ----
+  list)
+    [[ $# -ge 1 ]] || { echo "grocy list <entity> [field] [value]" >&2; exit 1; }
+    list_objects "$1" "${2:-}" "${3:-}" | pretty;;
+  get)
+    [[ $# -eq 2 ]] || { echo "grocy get <entity> <objectId>" >&2; exit 1; }
+    req GET "/api/objects/$1/$2" | pretty;;
+  create)
+    [[ $# -eq 2 ]] || { echo "grocy create <entity> <bodyJson>" >&2; exit 1; }
+    req POST "/api/objects/$1" "$2" | pretty;;
+  update)
+    [[ $# -eq 3 ]] || { echo "grocy update <entity> <objectId> <bodyJson>" >&2; exit 1; }
+    req PUT "/api/objects/$1/$2" "$3" | pretty;;
+  delete)
+    [[ $# -eq 2 ]] || { echo "grocy delete <entity> <objectId>" >&2; exit 1; }
+    req DELETE "/api/objects/$1/$2" | pretty;;
+
+  *) echo "grocy: unknown command '$cmd'" >&2; usage >&2; exit 1;;
+esac

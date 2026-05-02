@@ -63,10 +63,16 @@ sf summary <YYYY-MM-DD>
 sf meals [searchTerm]             # list / search saved meals
 sf meal-types                     # list meal-type IDs (breakfast/lunch/dinner/snacks)
 sf foods <searchTerm> [page] [pageSize]
-sf food <foodId>                  # one food + variants
+sf food <foodId>                  # one food + default variant
+sf variants <foodId>              # list ALL variants of a food
+sf add-variant <foodId> <body>    # add a new variant (different unit/serving size)
 sf entries <YYYY-MM-DD>           # food entries logged on a date
 sf templates                      # list meal-plan templates
 sf weekly-plan [YYYY-MM-DD]       # active weekly plan for a date
+sf providers                      # list configured external data providers
+sf mealie-search <query> [page]   # search Mealie recipes via SF (needs Mealie provider)
+sf mealie-details <slug>          # fetch one Mealie recipe in SF food shape
+sf mealie-import <slug>           # import a Mealie recipe as a local SF food
 sf <METHOD> <path> [body-json]    # raw request, pretty-printed
 sf raw <METHOD> <path> [body-json]  # raw, no jq
 ```
@@ -143,6 +149,42 @@ Body is **flat** — top-level food fields and variant fields on the same object
 Returns the created food with a populated `default_variant.id` — use that as `variant_id` when logging.
 
 USDA → local food translation: keep `serving_size: 100` and `serving_unit` matching what you'll log in (`g` for solids, `ml` for liquids — espresso ≈ 1 g/ml so SR-Legacy per-100g values transfer to per-100ml directly). Default `shared_with_public: false` to keep the user's DB private.
+
+### Multi-variant foods — `POST /api/foods/food-variants`, `GET /api/foods/food-variants?food_id=…`
+
+A single food can carry multiple `food_variants`, each with its own `(serving_size, serving_unit)` + per-serving macros. SparkyFitness UI may not surface variant management for every food, but the API does. Useful pattern: when a recipe imports as `(1, "1 portion (~300 g)")` from Mealie, add a `(100, "g")` variant alongside it so the user can log either by whole portion (`quantity:1, unit:"1 portion (~300 g)"`) or by gram (`quantity:250, unit:"g"`).
+
+Variants are **independent** — each one carries its own copy of macros (no automatic cross-derivation). If you edit one variant's nutrition you must edit the others. The server doesn't link them by gram-equivalence the way USDA/Cronometer would.
+
+Endpoints (mounted under `/api/foods` by way of `foodCrudRoutes`):
+- `POST /api/foods/food-variants` — body `{food_id, serving_size, serving_unit, calories, protein, …}`. Returns the created variant with its `id`.
+- `GET  /api/foods/food-variants?food_id=…` — list all variants.
+- `GET  /api/foods/food-variants/:id` — fetch one.
+- `PUT  /api/foods/food-variants/:id` — update.
+- `DELETE /api/foods/food-variants/:id` — remove.
+
+⚠️ **The POST response is misleading**: `POST /api/foods/food-variants` returns `{id: "<new-uuid>", food_id: null, serving_size: null, serving_unit: null, calories: null, …}` — every field except `id` comes back null even when the variant is correctly stored on the server. Don't trust the POST response; verify with `GET /api/foods/food-variants?food_id=…` instead. (Same pattern as `POST /api/food-entries` returning `meal_type: null`.)
+
+When logging a food entry, use the variant's `id` as `variant_id` and pass `unit` matching that variant's `serving_unit` so the calorie math is consistent.
+
+### Mealie integration — `GET /api/foods/mealie/{search,details}` + `POST /api/foods` to import
+
+SparkyFitness's Mealie provider exposes recipes as foods. **Important quirks:**
+- Both endpoints require an `x-provider-id` header — the UUID of the Mealie provider from `GET /api/external-providers` (filter `provider_type=="mealie"`). Cache it once. The `sf` wrapper auto-discovers it; override via `SPARKYFITNESS_MEALIE_PROVIDER_ID` env if you have multiple Mealie providers.
+- `GET /api/foods/mealie/search?query=…` returns an **array** (not paginated wrapper) of mapped recipes. **Already-imported recipes are deduplicated out of the search results** — to re-import after editing the Mealie recipe, the user must first delete the existing local food.
+- `GET /api/foods/mealie/details?slug=…` returns `{food: {...}, variant: {...}}` — the same shape `mapMealieRecipeToSparkyFood` produces.
+- **There is no dedicated `/import` endpoint.** To materialize as a local food, flatten `food + variant` into a single object and `POST /api/foods` (which accepts `provider_external_id` + `provider_type` to mark it as Mealie-sourced). The `sf mealie-import <slug>` wrapper command does exactly this.
+
+⚠️ **Raw passthrough of Mealie's yield fields** — the SF Mealie service (verified in source: `SparkyFitnessServer/integrations/mealie/mealieService.ts`, `mapMealieRecipeToSparkyFood`) does:
+
+```ts
+serving_size = mealieRecipe.recipeServings || 1     // raw number
+serving_unit = mealieRecipe.recipeYield     || 'serving' // raw string, no parsing
+```
+
+There is **no parsing** of leading numbers from `recipeYield`. So a Mealie recipe with `recipeServings: 1, recipeYield: "300 g"` imports as `serving_size: 1, serving_unit: "300 g"` — meaning to log 250 g you'd need `quantity: 0.83`. **Rule of thumb: Mealie's `recipeYield` should be a discrete countable unit (`"1 portion"`, `"1 half"`, `"1 bowl"`), not a measurement (`"300 g"`).** Put grams in parentheses for human reference instead: `"1 portion (~300 g)"`.
+
+If gram-based logging matters for a Mealie-imported food, add a second variant via `POST /api/foods/food-variants` with `(100, "g")` and per-100g macros. See the multi-variant section above.
 
 ### `GET /api/meals[?searchTerm=…]` and `GET /api/meals/search?searchTerm=…`
 
