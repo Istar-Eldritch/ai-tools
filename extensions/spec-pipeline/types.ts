@@ -160,7 +160,7 @@ export interface ProjectConfig {
 // Error Handling Types
 // ============================================
 
-export type ErrorType = "RATE_LIMIT" | "TIMEOUT" | "NETWORK" | "VALIDATION" | "UNKNOWN";
+export type ErrorType = "RATE_LIMIT" | "TIMEOUT" | "NETWORK" | "VALIDATION" | "TOKEN_LIMIT" | "INCOMPLETE" | "UNKNOWN";
 
 export type RoleName = 
 	| "planDrafter"
@@ -180,6 +180,8 @@ export interface ErrorDetails {
 	stderr?: string;             // Error output from subprocess (truncated to 2000 chars)
 	errorType: ErrorType;        // Classified error type
 	agentTask: string;           // The exact task prompt sent to the agent
+	finishReason?: string;       // Provider/model finish reason if available
+	completed?: boolean;         // Whether the agent reported normal completion
 }
 
 // ============================================
@@ -369,6 +371,10 @@ export interface AgentResult {
 	output: string;
 	exitCode: number;
 	error?: string;
+	completed?: boolean;
+	finishReason?: string;
+	stopReason?: string;
+	limitHit?: boolean;
 }
 
 // ============================================

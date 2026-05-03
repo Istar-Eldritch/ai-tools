@@ -38,6 +38,12 @@ import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 // Phase Name Helpers
 // ============================================
 
+/**
+ * Minimum implementer output length (chars) below which an empty working tree
+ * is treated as a silent failure rather than a successful no-op.
+ */
+const MIN_IMPLEMENTER_OUTPUT_CHARS = 80;
+
 /** Stop words to skip when generating phase directory names from descriptions */
 const PHASE_STOP_WORDS = new Set([
 	"a", "an", "the", "and", "or", "for", "of", "in", "on", "to", "with",
@@ -516,7 +522,7 @@ Address all issues raised in the review.`;
 			recordAgentCall(metrics, "implementer", implementerConfig.model, implementerConfig.thinking, implementStartTime, implementResult.exitCode, phaseIdx + 1);
 			save();
 
-			if (implementResult.exitCode !== 0) {
+			if (implementResult.exitCode !== 0 || implementResult.completed === false || implementResult.limitHit) {
 				await handleAgentError(
 					cwd, state, implementResult,
 					implementerConfig.model, "implementer", implementTask,
@@ -528,10 +534,39 @@ Address all issues raised in the review.`;
 			}
 
 			ctx.ui.notify(formatAgentSummary("implementer", implementerConfig.model, implementResult.output, "✅", phaseIdx + 1), "info");
-			
+
 			const implementOutput = implementResult.output || "";
 			implementationSummary = implementOutput.slice(0, 1500);
-			
+
+			// Silent-failure guard: short assistant output with no working-tree changes means
+			// the agent stream ended without producing real work. Must run BEFORE createAgentCommit
+			// because a successful commit clears the working tree.
+			const modifiedBeforeCommit = await getModifiedFiles(cwd);
+			if (modifiedBeforeCommit.length === 0 && implementOutput.trim().length < MIN_IMPLEMENTER_OUTPUT_CHARS) {
+				await handleAgentError(
+					cwd,
+					state,
+					{
+						output: implementOutput,
+						exitCode: 0,
+						error: "Implementer exited without clear completion evidence: no file changes and minimal output",
+						completed: false,
+						finishReason: implementResult.finishReason,
+						stopReason: implementResult.stopReason,
+						limitHit: implementResult.limitHit,
+					},
+					implementerConfig.model,
+					"implementer",
+					implementTask,
+					phaseIdx + 1,
+					1,
+					ctx.ui.notify.bind(ctx.ui),
+					save
+				);
+				clearPipelineWidget(ctx);
+				return;
+			}
+
 			// Create commit after implementation
 			const commitResult = await createAgentCommit(
 				cwd, state,
@@ -547,7 +582,7 @@ Address all issues raised in the review.`;
 				save,
 				ctx.ui.notify.bind(ctx.ui)
 			);
-			
+
 			if (!commitResult.success) {
 				if (commitResult.usedFallback) {
 					state.lastError = "Commit message generation failed - fallback used";
@@ -562,7 +597,7 @@ Address all issues raised in the review.`;
 					return;
 				}
 			}
-			
+
 			state.implementerCompletedForPhase = true;
 			save();
 		} else {
@@ -672,6 +707,7 @@ Make the necessary fixes.`,
 		state.previousReview = "";
 		state.reviewCyclesCompleted = 0;
 		state.implementerCompletedForPhase = false;
+		state.lastError = undefined;
 		save();
 
 		ctx.ui.notify(formatStepBanner(

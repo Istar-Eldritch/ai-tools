@@ -75,6 +75,29 @@ export function classifyError(stderr: string | undefined): ErrorType {
 		return "VALIDATION";
 	}
 	
+	// Token/context/output limit detection
+	if (
+		lowerStderr.includes("max tokens") ||
+		lowerStderr.includes("maximum tokens") ||
+		lowerStderr.includes("context length") ||
+		lowerStderr.includes("context window") ||
+		lowerStderr.includes("output limit") ||
+		lowerStderr.includes("model_context_window_exceeded") ||
+		lowerStderr.includes("stop_reason: length") ||
+		lowerStderr.includes("finish_reason: length") ||
+		lowerStderr.includes("token limit")
+	) {
+		return "TOKEN_LIMIT";
+	}
+	
+	if (
+		lowerStderr.includes("incomplete") ||
+		lowerStderr.includes("did not complete") ||
+		lowerStderr.includes("aborted before completion")
+	) {
+		return "INCOMPLETE";
+	}
+	
 	return "UNKNOWN";
 }
 
@@ -91,6 +114,10 @@ export function getErrorEmoji(errorType: ErrorType): string {
 			return "🌐";  // Globe for network issues
 		case "VALIDATION":
 			return "⚠️";  // Warning for validation
+		case "TOKEN_LIMIT":
+			return "📏";
+		case "INCOMPLETE":
+			return "🧩";
 		case "UNKNOWN":
 		default:
 			return "❓";  // Question mark for unknown
@@ -110,6 +137,10 @@ export function getErrorSuggestion(errorType: ErrorType): string {
 			return "Check your network connection, then resume to retry";
 		case "VALIDATION":
 			return "Review the error details above. You may need to manually fix issues before resuming.";
+		case "TOKEN_LIMIT":
+			return "The model likely hit a token/context/output limit. Resume to retry, reduce phase scope, or use a larger-context model.";
+		case "INCOMPLETE":
+			return "The agent exited without a clear completion signal. Resume to retry and inspect provider/model limits.";
 		case "UNKNOWN":
 		default:
 			return "Check error details in the log file, then resume to retry";
@@ -185,6 +216,17 @@ export async function handleAgentError(
 	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void,
 	saveFn?: () => void
 ): Promise<ErrorDetails> {
+	const combinedErrorText = [result.error || "", result.finishReason || "", result.stopReason || ""]
+		.filter(Boolean)
+		.join("\n");
+	let errorType: ErrorType;
+	if (result.limitHit) {
+		errorType = "TOKEN_LIMIT";
+	} else if (result.completed === false) {
+		errorType = "INCOMPLETE";
+	} else {
+		errorType = classifyError(combinedErrorText);
+	}
 	const errorDetails: ErrorDetails = {
 		timestamp: new Date().toISOString(),
 		agent,
@@ -192,9 +234,11 @@ export async function handleAgentError(
 		phase,
 		cycle,
 		exitCode: result.exitCode,
-		stderr: truncateString(result.error || "", 2000),
-		errorType: classifyError(result.error),
+		stderr: truncateString(combinedErrorText, 2000),
+		errorType,
 		agentTask: task,
+		finishReason: result.finishReason || result.stopReason,
+		completed: result.completed,
 	};
 	
 	// Stash any uncommitted changes from the failed operation

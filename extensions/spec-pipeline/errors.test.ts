@@ -90,6 +90,30 @@ describe("classifyError", () => {
 		});
 	});
 
+	describe("TOKEN_LIMIT detection", () => {
+		it("detects 'finish_reason: length'", () => {
+			expect(classifyError("finish_reason: length")).toBe("TOKEN_LIMIT");
+		});
+
+		it("detects 'model_context_window_exceeded'", () => {
+			expect(classifyError("model_context_window_exceeded")).toBe("TOKEN_LIMIT");
+		});
+
+		it("detects 'max tokens'", () => {
+			expect(classifyError("max tokens reached")).toBe("TOKEN_LIMIT");
+		});
+	});
+
+	describe("INCOMPLETE detection", () => {
+		it("detects 'aborted before completion'", () => {
+			expect(classifyError("agent aborted before completion")).toBe("INCOMPLETE");
+		});
+
+		it("detects 'did not complete'", () => {
+			expect(classifyError("did not complete successfully")).toBe("INCOMPLETE");
+		});
+	});
+
 	describe("UNKNOWN fallback", () => {
 		it("returns UNKNOWN for empty stderr", () => {
 			expect(classifyError("")).toBe("UNKNOWN");

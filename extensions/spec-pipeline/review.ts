@@ -135,7 +135,7 @@ export async function runReview(
 			role
 		);
 
-		if (reviewResult.exitCode !== 0) {
+		if (reviewResult.exitCode !== 0 || reviewResult.completed === false || reviewResult.limitHit) {
 			await handleAgentError(cwd, state, reviewResult, reviewerConfig.model, role, reviewTask, phaseIndex, cycle, notify, saveFn);
 			return { verdict: "NEEDS_CHANGES", lastReviewOutput, cyclesCompleted, hadError: true };
 		}
@@ -166,7 +166,7 @@ export async function runReview(
 			"addressReview"
 		);
 
-		if (fixResult.exitCode !== 0) {
+		if (fixResult.exitCode !== 0 || fixResult.completed === false || fixResult.limitHit) {
 			await handleAgentError(cwd, state, fixResult, addressReviewConfig.model, "addressReview", fixTaskText, phaseIndex, cycle, notify, saveFn);
 			return { verdict: "NEEDS_CHANGES", lastReviewOutput, cyclesCompleted, hadError: true };
 		}

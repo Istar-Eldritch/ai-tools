@@ -194,6 +194,10 @@ export async function runAgentWithConfig(
 	let output = "";
 	let error = "";
 	let proc: ChildProcess | null = null;
+	let completed = false;
+	let finishReason: string | undefined;
+	let stopReason: string | undefined;
+	let limitHit = false;
 
 	try {
 		const exitCode = await new Promise<number>((resolve) => {
@@ -215,8 +219,6 @@ export async function runAgentWithConfig(
 						const delta = event.assistantMessageEvent.delta;
 						output += delta;
 						
-						// Call onOutput with text delta (backward compatibility)
-						// Legacy callers expect strings, new callers can handle TextEventData
 						if (onOutput) {
 							onOutput(delta);
 						}
@@ -226,7 +228,6 @@ export async function runAgentWithConfig(
 					if (event.type === "message_update" && event.assistantMessageEvent?.type === "toolcall_end") {
 						const toolCall = event.assistantMessageEvent?.toolCall;
 						
-						// Gracefully handle missing fields
 						if (toolCall && toolCall.name && toolCall.arguments) {
 							const toolEvent: ToolEventData = {
 								type: "tool",
@@ -234,10 +235,35 @@ export async function runAgentWithConfig(
 								arguments: toolCall.arguments,
 							};
 							
-							// Call onOutput with structured tool data
 							if (onOutput) {
 								onOutput(toolEvent);
 							}
+						}
+					}
+
+					if (
+						event.type === "message_stop" ||
+						event.type === "response.completed" ||
+						event.type === "completed"
+					) {
+						completed = true;
+					}
+
+					const rawFinishReason =
+						event.finishReason ??
+						event.finish_reason ??
+						event.stopReason ??
+						event.stop_reason ??
+						event.assistantMessageEvent?.finishReason ??
+						event.assistantMessageEvent?.finish_reason ??
+						event.response?.finishReason ??
+						event.response?.finish_reason;
+					if (typeof rawFinishReason === "string") {
+						finishReason = rawFinishReason;
+						stopReason = rawFinishReason;
+						const fr = rawFinishReason.toLowerCase();
+						if (fr === "length" || fr === "max_tokens" || fr === "output_limit") {
+							limitHit = true;
 						}
 					}
 				} catch {
@@ -275,7 +301,35 @@ export async function runAgentWithConfig(
 			}
 		});
 
-		return { output: output.trim(), exitCode, error: error || undefined };
+		// Stderr-only limit detection (safe to scan once at end; agent assistant text is in `output`, not `error`)
+		if (!limitHit && error) {
+			const lowerErr = error.toLowerCase();
+			if (
+				lowerErr.includes("max tokens") ||
+				lowerErr.includes("maximum tokens") ||
+				lowerErr.includes("context length") ||
+				lowerErr.includes("context window") ||
+				lowerErr.includes("output limit") ||
+				lowerErr.includes("model_context_window_exceeded") ||
+				lowerErr.includes("token limit")
+			) {
+				limitHit = true;
+			}
+		}
+
+		const combinedError = [error || "", finishReason || "", stopReason || "", limitHit ? "token/context/output limit hit" : ""]
+			.filter(Boolean)
+			.join("\n");
+		const successfulCompletion = !limitHit && (completed || (exitCode === 0 && output.trim().length > 0));
+		return {
+			output: output.trim(),
+			exitCode,
+			error: combinedError || undefined,
+			completed: successfulCompletion,
+			finishReason,
+			stopReason,
+			limitHit,
+		};
 	} finally {
 		try {
 			fs.unlinkSync(promptPath);
