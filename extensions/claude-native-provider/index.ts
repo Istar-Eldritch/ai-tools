@@ -39,13 +39,20 @@ const API = "claude-native-cli";
 const processPool = new ClaudeNativeProcessPool();
 
 function lastUserContent(context: Context): ClaudeUserBlock[] {
-	for (let i = context.messages.length - 1; i >= 0; i--) {
+	// Collect every consecutive trailing user message. pi-coding-agent's convertToLlm
+	// turns extension custom messages (e.g. spec-pipeline's brainstorm/discovery context
+	// tag) into role:"user" entries appended after the real user input, so taking only
+	// the very last user message would drop the human's actual text and leave Claude
+	// with just the mode tag.
+	let start = context.messages.length;
+	while (start > 0 && context.messages[start - 1].role === "user") start--;
+	const blocks: ClaudeUserBlock[] = [];
+	for (let i = start; i < context.messages.length; i++) {
 		const msg = context.messages[i];
-		if (msg.role !== "user") continue;
 		if (typeof msg.content === "string") {
-			return msg.content ? [{ type: "text", text: msg.content }] : [];
+			if (msg.content) blocks.push({ type: "text", text: msg.content });
+			continue;
 		}
-		const blocks: ClaudeUserBlock[] = [];
 		for (const part of msg.content) {
 			if (part.type === "text" && part.text) {
 				blocks.push({ type: "text", text: part.text });
@@ -56,9 +63,8 @@ function lastUserContent(context: Context): ClaudeUserBlock[] {
 				});
 			}
 		}
-		return blocks;
 	}
-	return [];
+	return blocks;
 }
 
 function makeEmptyMessage(model: Model<Api>): AssistantMessage {

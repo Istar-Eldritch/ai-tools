@@ -698,6 +698,32 @@ describe("claude native provider integration", () => {
 		]);
 	});
 
+	it("includes extension-injected user messages alongside the human's input on the next turn", async () => {
+		// Reproduces the spec-pipeline brainstorm interaction: pi-coding-agent's convertToLlm
+		// turns a custom message added via before_agent_start into a role:"user" entry that
+		// follows the real user input. Claude must receive both — taking only the last user
+		// message would leave Claude believing the human sent only the brainstorm tag.
+		MockClaudeNativeProcess.scenarios.push({
+			messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+		});
+
+		const { streamClaudeNative } = await loadModule();
+		const context = {
+			messages: [
+				{ role: "user", content: [{ type: "text", text: "I want to brainstorm e-commerce" }] },
+				{ role: "assistant", content: [{ type: "text", text: "Tell me about stock model" }] },
+				{ role: "user", content: [{ type: "text", text: "it create complexity but feels right" }] },
+				{ role: "user", content: [{ type: "text", text: "[BRAINSTORM MODE ACTIVE - Exploring: e-commerce]" }] },
+			],
+		} as any;
+		await collectEvents(streamClaudeNative(createModel("sonnet"), context));
+
+		expect(MockClaudeNativeProcess.instances[0].prompts[0]).toEqual([
+			{ type: "text", text: "it create complexity but feels right" },
+			{ type: "text", text: "[BRAINSTORM MODE ACTIVE - Exploring: e-commerce]" },
+		]);
+	});
+
 	it("prepends context.systemPrompt to the first user message on a fresh session", async () => {
 		MockClaudeNativeProcess.scenarios.push({
 			messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
