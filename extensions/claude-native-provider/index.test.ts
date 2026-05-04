@@ -324,6 +324,107 @@ describe("claude native provider integration", () => {
 		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("claude-before");
 	});
 
+	it("replays prior conversation history into a fresh Claude session after /tree", async () => {
+		// After /tree, hardInvalidateAll clears the remembered Claude session, so the next
+		// turn spawns a fresh `claude -p` with no internal history. The provider must
+		// replay context.messages so Claude can pick up where the new tree path left off
+		// instead of seeing only the user's newest message.
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-pre-tree", result: "pre" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "post" }] },
+		);
+
+		const mod = await loadModule();
+		const pi = createPi();
+		mod.default(pi.api as any);
+
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("pre"), { sessionId: "pi-session" }));
+		await pi.handlers.get("session_tree")(eventFor("session_tree"));
+
+		const branchedContext = {
+			messages: [
+				{ role: "user", content: "design the auth flow" },
+				{ role: "assistant", content: [
+					{ type: "thinking", thinking: "internal scratchpad" },
+					{ type: "text", text: "We will use OAuth with PKCE." },
+					{ type: "toolCall", id: "t1", name: "Read", arguments: { file_path: "auth.ts" } },
+				] },
+				{ role: "toolResult", toolName: "Read", toolCallId: "t1", isError: false, content: [{ type: "text", text: "export function login() {}" }] },
+				{ role: "assistant", content: [{ type: "text", text: "auth.ts is mostly empty." }] },
+				{ role: "user", content: "ok now scaffold the login route" },
+			],
+		} as any;
+		await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), branchedContext, { sessionId: "pi-session" }));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[1].config.args).not.toContain("--resume");
+
+		const replayedPrompt = MockClaudeNativeProcess.instances[1].prompts[0] as Array<{ type: string; text: string }>;
+		expect(replayedPrompt).toHaveLength(2);
+		const transcript = replayedPrompt[0].text;
+		// Replay header + footer
+		expect(transcript).toContain("Replayed conversation history follows");
+		expect(transcript).toContain("End of replayed history");
+		// Prior user turn included
+		expect(transcript).toContain("<user>\ndesign the auth flow\n</user>");
+		// Assistant text + tool_use surfaced; thinking dropped
+		expect(transcript).toContain("We will use OAuth with PKCE.");
+		expect(transcript).toContain("[tool: Read(file_path=auth.ts)]");
+		expect(transcript).not.toContain("internal scratchpad");
+		// Tool result surfaced
+		expect(transcript).toContain('<tool_result tool="Read">');
+		expect(transcript).toContain("export function login() {}");
+		// The user's newest message is still the trailing block, not folded into the transcript
+		expect(replayedPrompt[1]).toEqual({ type: "text", text: "ok now scaffold the login route" });
+		expect(transcript).not.toContain("ok now scaffold the login route");
+	});
+
+	it("does not replay history into a process that is being reused (no fresh session)", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "first" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "second" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("first")));
+		const ctxWithHistory = {
+			messages: [
+				{ role: "user", content: "first" },
+				{ role: "assistant", content: [{ type: "text", text: "answer" }] },
+				{ role: "user", content: "second" },
+			],
+		} as any;
+		await collectEvents(streamClaudeNative(createModel("sonnet"), ctxWithHistory));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(1);
+		// Reused process: second prompt is plain user content, no replay preamble
+		expect(MockClaudeNativeProcess.instances[0].prompts[1]).toEqual([{ type: "text", text: "second" }]);
+	});
+
+	it("does not replay history when the fresh process is --resume-ing a remembered Claude session", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-keep", result: "first" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "second" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel("sonnet"), createContext("first"), { sessionId: "pi-a" }));
+		MockClaudeNativeProcess.instances[0].live = false;
+		const ctxWithHistory = {
+			messages: [
+				{ role: "user", content: "first" },
+				{ role: "assistant", content: [{ type: "text", text: "answer" }] },
+				{ role: "user", content: "second" },
+			],
+		} as any;
+		await collectEvents(streamClaudeNative(createModel("sonnet"), ctxWithHistory, { sessionId: "pi-a" }));
+
+		expect(MockClaudeNativeProcess.instances).toHaveLength(2);
+		expect(MockClaudeNativeProcess.instances[1].config.args).toEqual(expect.arrayContaining(["--resume", "claude-keep"]));
+		// --resume means Claude already has the history; do not re-inject it.
+		expect(MockClaudeNativeProcess.instances[1].prompts[0]).toEqual([{ type: "text", text: "second" }]);
+	});
+
 	it("cancels host compaction when the active model is claude-native", async () => {
 		MockClaudeNativeProcess.scenarios.push(
 			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-keep", result: "before" }] },
@@ -718,10 +819,18 @@ describe("claude native provider integration", () => {
 		} as any;
 		await collectEvents(streamClaudeNative(createModel("sonnet"), context));
 
-		expect(MockClaudeNativeProcess.instances[0].prompts[0]).toEqual([
+		const prompt = MockClaudeNativeProcess.instances[0].prompts[0] as Array<{ type: string; text: string }>;
+		// On this fresh Claude session there is also prior history (the first brainstorm
+		// exchange) which gets replayed before the trailing user blocks. The trailing
+		// blocks must remain intact and in order so Claude sees the human's text and the
+		// extension-injected mode tag, not just the tag.
+		expect(prompt.slice(-2)).toEqual([
 			{ type: "text", text: "it create complexity but feels right" },
 			{ type: "text", text: "[BRAINSTORM MODE ACTIVE - Exploring: e-commerce]" },
 		]);
+		expect(prompt[0].text).toContain("Replayed conversation history");
+		expect(prompt[0].text).toContain("I want to brainstorm e-commerce");
+		expect(prompt[0].text).toContain("Tell me about stock model");
 	});
 
 	it("prepends context.systemPrompt to the first user message on a fresh session", async () => {

@@ -4,6 +4,7 @@ import {
 	AssistantMessageEventStream,
 	calculateCost,
 	type Context,
+	type Message,
 	type Model,
 	type SimpleStreamOptions,
 } from "@mariozechner/pi-ai";
@@ -38,33 +39,143 @@ const API = "claude-native-cli";
 
 const processPool = new ClaudeNativeProcessPool();
 
-function lastUserContent(context: Context): ClaudeUserBlock[] {
-	// Collect every consecutive trailing user message. pi-coding-agent's convertToLlm
-	// turns extension custom messages (e.g. spec-pipeline's brainstorm/discovery context
-	// tag) into role:"user" entries appended after the real user input, so taking only
-	// the very last user message would drop the human's actual text and leave Claude
-	// with just the mode tag.
-	let start = context.messages.length;
-	while (start > 0 && context.messages[start - 1].role === "user") start--;
+function userBlocksFromContent(content: unknown): ClaudeUserBlock[] {
 	const blocks: ClaudeUserBlock[] = [];
-	for (let i = start; i < context.messages.length; i++) {
-		const msg = context.messages[i];
-		if (typeof msg.content === "string") {
-			if (msg.content) blocks.push({ type: "text", text: msg.content });
-			continue;
-		}
-		for (const part of msg.content) {
-			if (part.type === "text" && part.text) {
-				blocks.push({ type: "text", text: part.text });
-			} else if (part.type === "image" && part.data && part.mimeType) {
-				blocks.push({
-					type: "image",
-					source: { type: "base64", media_type: part.mimeType, data: part.data },
-				});
-			}
+	if (typeof content === "string") {
+		if (content) blocks.push({ type: "text", text: content });
+		return blocks;
+	}
+	if (!Array.isArray(content)) return blocks;
+	for (const part of content as any[]) {
+		if (part?.type === "text" && typeof part.text === "string" && part.text) {
+			blocks.push({ type: "text", text: part.text });
+		} else if (part?.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") {
+			blocks.push({
+				type: "image",
+				source: { type: "base64", media_type: part.mimeType, data: part.data },
+			});
 		}
 	}
 	return blocks;
+}
+
+function trailingUserStart(messages: Message[]): number {
+	// pi-coding-agent's convertToLlm turns extension custom messages (e.g. spec-pipeline's
+	// brainstorm/discovery context tag) into role:"user" entries appended after the real
+	// user input, so taking only the very last user message would drop the human's actual
+	// text and leave Claude with just the mode tag.
+	let start = messages.length;
+	while (start > 0 && messages[start - 1].role === "user") start--;
+	return start;
+}
+
+function trailingUserContent(messages: Message[], start: number): ClaudeUserBlock[] {
+	const blocks: ClaudeUserBlock[] = [];
+	for (let i = start; i < messages.length; i++) {
+		blocks.push(...userBlocksFromContent(messages[i].content));
+	}
+	return blocks;
+}
+
+function renderToolCall(call: any): string {
+	const name = typeof call?.name === "string" ? call.name : "tool";
+	const args = call?.arguments ?? call?.input;
+	if (args && typeof args === "object" && !Array.isArray(args)) {
+		const keys = Object.keys(args);
+		if (keys.length === 0) return name;
+		const preview = keys.slice(0, 2).map((key) => {
+			const raw = args[key];
+			const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+			const value = str ?? "";
+			const truncated = value.length > 80 ? `${value.slice(0, 77)}...` : value;
+			return `${key}=${truncated}`;
+		}).join(", ");
+		const suffix = keys.length > 2 ? `, +${keys.length - 2} more` : "";
+		return `${name}(${preview}${suffix})`;
+	}
+	return name;
+}
+
+function renderAssistantTranscript(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	const parts: string[] = [];
+	for (const part of content as any[]) {
+		if (part?.type === "text" && typeof part.text === "string" && part.text) {
+			parts.push(part.text);
+		} else if (part?.type === "toolCall" || part?.type === "tool_use") {
+			parts.push(`[tool: ${renderToolCall(part)}]`);
+		}
+	}
+	return parts.join("\n");
+}
+
+function renderToolResultText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	const parts: string[] = [];
+	for (const part of content as any[]) {
+		if (part?.type === "text" && typeof part.text === "string" && part.text) parts.push(part.text);
+		else if (part?.type === "image") parts.push("[image]");
+	}
+	return parts.join("\n");
+}
+
+function escapeXmlAttr(value: string): string {
+	return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function priorHistoryBlocks(messages: Message[], end: number): ClaudeUserBlock[] {
+	if (end <= 0) return [];
+	const pieces: ClaudeUserBlock[] = [];
+	pieces.push({
+		type: "text",
+		text: "[Replayed conversation history follows. This is the prior dialogue that led to the user's next message; treat it as already-said context, not as new requests.]\n\n",
+	});
+
+	let sawAny = false;
+	for (let i = 0; i < end; i++) {
+		const msg = messages[i];
+		if (msg.role === "user") {
+			const userBlocks = userBlocksFromContent(msg.content);
+			if (userBlocks.length === 0) continue;
+			sawAny = true;
+			pieces.push({ type: "text", text: "<user>\n" });
+			for (const block of userBlocks) {
+				if (block.type === "text") {
+					pieces.push({ type: "text", text: block.text.endsWith("\n") ? block.text : `${block.text}\n` });
+				} else {
+					pieces.push(block);
+				}
+			}
+			pieces.push({ type: "text", text: "</user>\n\n" });
+		} else if (msg.role === "assistant") {
+			const text = renderAssistantTranscript(msg.content);
+			if (!text) continue;
+			sawAny = true;
+			pieces.push({ type: "text", text: `<assistant>\n${text}\n</assistant>\n\n` });
+		} else if (msg.role === "toolResult") {
+			const text = renderToolResultText(msg.content);
+			if (!text) continue;
+			sawAny = true;
+			const errAttr = msg.isError ? ' error="true"' : "";
+			const nameAttr = ` tool="${escapeXmlAttr(msg.toolName ?? "")}"`;
+			pieces.push({ type: "text", text: `<tool_result${nameAttr}${errAttr}>\n${text}\n</tool_result>\n\n` });
+		}
+	}
+
+	if (!sawAny) return [];
+	pieces.push({ type: "text", text: "[End of replayed history. The user's next message follows.]\n\n" });
+
+	const coalesced: ClaudeUserBlock[] = [];
+	for (const block of pieces) {
+		const prev = coalesced[coalesced.length - 1];
+		if (block.type === "text" && prev && prev.type === "text") {
+			prev.text += block.text;
+		} else {
+			coalesced.push(block);
+		}
+	}
+	return coalesced;
 }
 
 function makeEmptyMessage(model: Model<Api>): AssistantMessage {
@@ -183,19 +294,27 @@ export function streamClaudeNative(
 	const output = makeEmptyMessage(model);
 	stream.push({ type: "start", partial: output });
 
-	const userContent = lastUserContent(context);
+	const start = trailingUserStart(context.messages);
+	const userContent = trailingUserContent(context.messages, start);
 	const poolEntry = processPool.getOrCreate(model, options);
 	const { key, process: runtime, created, resumedClaudeSession } = poolEntry;
 
-	// On a brand-new Claude session (not a --resume), prepend the pi system prompt to the
-	// first user message so that mode-specific instructions (e.g. discovery mode injected
-	// by spec-pipeline via before_agent_start) actually reach Claude Code.  The Claude CLI
-	// manages its own session history, so once the instructions appear in turn 1 they
-	// persist for the entire session — re-injection on later turns is not needed.
-	const prompt =
-		created && !resumedClaudeSession && context.systemPrompt?.trim()
-			? [{ type: "text" as const, text: context.systemPrompt.trim() + "\n\n" }, ...userContent]
-			: userContent;
+	// On a brand-new Claude session (not a --resume), prepend the pi system prompt and any
+	// prior conversation history to the first user message. The system prompt carries
+	// mode-specific instructions (e.g. discovery mode injected by spec-pipeline via
+	// before_agent_start). The history replay is what restores chat context after pi
+	// invalidates the Claude session — e.g. /tree, /fork, /switch, or compaction — so
+	// Claude doesn't see only the user's newest message divorced from what came before.
+	// Once present in turn 1, the Claude CLI's own session history carries them forward.
+	const isFreshSession = created && !resumedClaudeSession;
+	const preamble: ClaudeUserBlock[] = [];
+	if (isFreshSession && context.systemPrompt?.trim()) {
+		preamble.push({ type: "text", text: context.systemPrompt.trim() + "\n\n" });
+	}
+	if (isFreshSession) {
+		preamble.push(...priorHistoryBlocks(context.messages, start));
+	}
+	const prompt = preamble.length ? [...preamble, ...userContent] : userContent;
 
 	let stderr = "";
 	let sawText = false;
