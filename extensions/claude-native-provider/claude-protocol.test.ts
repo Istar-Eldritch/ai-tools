@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { buildClaudeArgs, encodeUserInput, isClaudeResultEvent, modelAlias, numberFromEnv } from "./claude-protocol.ts";
+import { buildClaudeArgs, effortFromThinkingLevel, encodeUserInput, isClaudeResultEvent, modelAlias, numberFromEnv } from "./claude-protocol.ts";
 
 const model: any = { id: "sonnet", api: "claude-native-cli", provider: "claude-native" };
 
@@ -40,6 +40,12 @@ describe("claude protocol helpers", () => {
 		expect(buildClaudeArgs(model, { sessionId: "session-1", isFirstSessionUse: false })).toEqual(expect.arrayContaining(["--effort", "high", "--resume", "session-1"]));
 		process.env.CLAUDE_NATIVE_EFFORT = "invalid";
 		expect(buildClaudeArgs(model, undefined)).not.toContain("--effort");
+	});
+
+	it("passes --thinking disabled when disableThinking is true", () => {
+		expect(buildClaudeArgs(model, { disableThinking: true })).toEqual(expect.arrayContaining(["--thinking", "disabled"]));
+		expect(buildClaudeArgs(model, { disableThinking: false })).not.toContain("--thinking");
+		expect(buildClaudeArgs(model, {})).not.toContain("--thinking");
 	});
 
 	it("passes configured tool and turn options", () => {
@@ -87,5 +93,16 @@ describe("claude protocol helpers", () => {
 		expect(isClaudeResultEvent({ type: "result" })).toBe(true);
 		expect(isClaudeResultEvent({ type: "assistant" })).toBe(false);
 		expect(isClaudeResultEvent(null)).toBe(false);
+	});
+
+	it("maps pi thinking levels to Claude effort values", () => {
+		expect(effortFromThinkingLevel("minimal")).toBe("low");
+		expect(effortFromThinkingLevel("low")).toBe("low");
+		expect(effortFromThinkingLevel("medium")).toBe("medium");
+		expect(effortFromThinkingLevel("high")).toBe("high");
+		expect(effortFromThinkingLevel("xhigh")).toBe("xhigh");
+		expect(effortFromThinkingLevel(undefined)).toBeUndefined();
+		expect(effortFromThinkingLevel(null)).toBeUndefined();
+		expect(effortFromThinkingLevel("off")).toBeUndefined();
 	});
 });

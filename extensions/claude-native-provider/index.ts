@@ -10,8 +10,8 @@ import {
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { ClaudeTurnError } from "./claude-process.ts";
-import { ClaudeNativeProcessPool, DEFAULT_SESSION_IDENTITY } from "./claude-pool.ts";
-import { type ClaudeUserBlock, effortFromEnv, numberFromEnv, parseEffort } from "./claude-protocol.ts";
+import { ClaudeNativeProcessPool } from "./claude-pool.ts";
+import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
 
 /**
  * Pi provider that delegates inference + tool execution to the official Claude Code CLI.
@@ -25,7 +25,7 @@ import { type ClaudeUserBlock, effortFromEnv, numberFromEnv, parseEffort } from 
  * - CLAUDE_NATIVE_PERMISSION_MODE: auto | default | acceptEdits | dontAsk | plan | bypassPermissions | none (default: auto)
  * - CLAUDE_NATIVE_MAX_TURNS: passed to --max-turns (default unset)
  * - CLAUDE_NATIVE_NO_RESUME=1: do not reuse the Claude Code session id between turns
- * - CLAUDE_NATIVE_EFFORT: low | medium | high | xhigh | max (default --effort, overridden per pi session by /claude-native-effort)
+ * - CLAUDE_NATIVE_EFFORT: low | medium | high | xhigh | max (global fallback; pi's thinking level takes precedence)
  * - CLAUDE_NATIVE_TIMEOUT_MS: terminate an active request after this many ms (default: no timeout)
  * - CLAUDE_NATIVE_IDLE_TIMEOUT_MS: terminate idle long-lived process after this many ms (default: 600000)
  * - CLAUDE_NATIVE_HEARTBEAT_MS: emit "still running" thinking ticks while the CLI is silent (default: 0/off)
@@ -218,8 +218,8 @@ function appendThinking(stream: AssistantMessageEventStream, output: AssistantMe
 	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
 }
 
-function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string) {
-	if (!status || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
+function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string, active = false) {
+	if (!status || !active || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
 	appendThinking(stream, output, status);
 }
 
@@ -242,7 +242,7 @@ function formatToolUse(block: any): string {
 	return name;
 }
 
-function appendAssistantBlocks(stream: AssistantMessageEventStream, output: AssistantMessage, message: any): boolean {
+function appendAssistantBlocks(stream: AssistantMessageEventStream, output: AssistantMessage, message: any, showThinking: boolean): boolean {
 	const content = message?.message?.content;
 	if (!Array.isArray(content)) return false;
 	let saw = false;
@@ -251,8 +251,10 @@ function appendAssistantBlocks(stream: AssistantMessageEventStream, output: Assi
 			appendText(stream, output, block.text);
 			saw = true;
 		} else if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking) {
-			appendThinking(stream, output, block.thinking);
-			saw = true;
+			if (showThinking) {
+				appendThinking(stream, output, block.thinking);
+				saw = true;
+			}
 		} else if (block?.type === "tool_use") {
 			appendText(stream, output, `\n[Claude Code: ${formatToolUse(block)}]\n`);
 			saw = true;
@@ -321,6 +323,7 @@ export function streamClaudeNative(
 	let finalResult = "";
 	let finished = false;
 	let lastActivity = Date.now();
+	const thinkingActive = !!options?.reasoning;
 
 	appendStatus(
 		stream,
@@ -328,13 +331,14 @@ export function streamClaudeNative(
 		poolEntry.created
 			? `Claude Code process started (${poolEntry.resumedClaudeSession ? "resuming prior Claude session" : "fresh session"}; model=${key.modelAlias})`
 			: `Claude Code process reused (model=${key.modelAlias})`,
+		thinkingActive,
 	);
 	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS", 0);
 	let heartbeatIndex: number | undefined;
 	let heartbeatText = "";
 	const tickHeartbeat = () => {
 		if (finished) return;
-		if (process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
+		if (!thinkingActive || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
 		const idleSeconds = Math.max(1, Math.round((Date.now() - lastActivity) / 1000));
 		if (heartbeatIndex === undefined) {
 			heartbeatText = `Claude Code still running (${idleSeconds}s since last CLI event)`;
@@ -395,13 +399,13 @@ export function streamClaudeNative(
 			if (msg.type === "rate_limit_event") {
 				const resumeAt = msg.rate_limit_resets_at ?? msg.retry_after_ms ?? msg.retry_after;
 				const detail = resumeAt ? ` (resets at ${resumeAt})` : "";
-				appendStatus(stream, output, `Claude Code rate limited${detail}`);
+				appendStatus(stream, output, `Claude Code rate limited${detail}`, thinkingActive);
 			} else if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result" && msg.type !== "system" && msg.type !== "init" && msg.type !== "user") {
-				appendStatus(stream, output, `Claude Code event: ${msg.type}`);
+				appendStatus(stream, output, `Claude Code event: ${msg.type}`, thinkingActive);
 			}
 
 			if (msg.type === "assistant") {
-				if (appendAssistantBlocks(stream, output, msg)) sawText = true;
+				if (appendAssistantBlocks(stream, output, msg, thinkingActive)) sawText = true;
 			} else if (msg.type === "streamlined_text" && typeof msg.text === "string") {
 				sawText = true;
 				appendText(stream, output, msg.text);
@@ -421,14 +425,14 @@ export function streamClaudeNative(
 				updateUsageFromResult(model, output, msg);
 			}
 		},
-		onMalformedJson: (line) => appendStatus(stream, output, `Claude Code malformed JSON: ${line.slice(0, 200)}`),
+		onMalformedJson: (line) => appendStatus(stream, output, `Claude Code malformed JSON: ${line.slice(0, 200)}`, thinkingActive),
 		onStderr: (text) => {
 			lastActivity = Date.now();
 			stderr += text;
 			const lines = text.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
-			for (const line of lines) appendStatus(stream, output, `Claude Code stderr: ${line}`);
+			for (const line of lines) appendStatus(stream, output, `Claude Code stderr: ${line}`, thinkingActive);
 		},
-		onStatus: (status) => appendStatus(stream, output, status),
+		onStatus: (status) => appendStatus(stream, output, status, thinkingActive),
 	}, {
 		signal: options?.signal,
 		timeoutMs,
@@ -567,31 +571,6 @@ export default function (pi: ExtensionAPI) {
 		description: "Show Claude native process pool diagnostics",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify(formatPoolStatus(), "info");
-		},
-	});
-
-	pi.registerCommand("claude-native-effort", {
-		description: "Set Claude native thinking effort for this session: low, medium, high, xhigh, max, or none",
-		handler: async (args, ctx) => {
-			const value = firstCommandArg(args)?.toLowerCase();
-			const sessionIdentity = (ctx as any)?.sessionManager?.getSessionId?.() || DEFAULT_SESSION_IDENTITY;
-			if (!value) {
-				const current = processPool.getSessionEffort(sessionIdentity) ?? effortFromEnv() ?? "none";
-				ctx.ui.notify(`Claude native effort: ${current}`, "info");
-				return;
-			}
-			if (value === "none" || value === "off" || value === "default") {
-				processPool.setSessionEffort(sessionIdentity, undefined);
-				ctx.ui.notify("Claude native effort cleared for this session; existing warm processes remain until idle/reset.", "info");
-				return;
-			}
-			const effort = parseEffort(value);
-			if (!effort) {
-				ctx.ui.notify("Invalid Claude native effort. Use: low, medium, high, xhigh, max, or none.", "error");
-				return;
-			}
-			processPool.setSessionEffort(sessionIdentity, effort);
-			ctx.ui.notify(`Claude native effort set to ${effort} for this session; next turn will use/resume a matching process.`, "info");
 		},
 	});
 

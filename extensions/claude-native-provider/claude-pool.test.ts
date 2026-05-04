@@ -80,6 +80,31 @@ describe("ClaudeNativeProcessPool", () => {
 		expect(FakeRuntime.instances[1].config.args).toEqual(expect.arrayContaining(["--effort", "high", "--resume", "claude-a"]));
 	});
 
+	it("derives effort from options.reasoning, taking precedence over env var", () => {
+		const pool = createPool();
+		process.env.CLAUDE_NATIVE_EFFORT = "max";
+		const low = pool.getOrCreate(model, { sessionId: "pi-a", reasoning: "low" } as any);
+		pool.rememberClaudeSessionId(low.key, "claude-a");
+		const high = pool.getOrCreate(model, { sessionId: "pi-a", reasoning: "high" } as any);
+
+		expect(FakeRuntime.instances).toHaveLength(2);
+		expect(FakeRuntime.instances[0].config.args).toEqual(expect.arrayContaining(["--effort", "low"]));
+		expect(FakeRuntime.instances[1].config.args).toEqual(expect.arrayContaining(["--effort", "high", "--resume", "claude-a"]));
+	});
+
+	it("maps 'minimal' reasoning to 'low' effort", () => {
+		const pool = createPool();
+		pool.getOrCreate(model, { sessionId: "pi-a", reasoning: "minimal" } as any);
+		expect(FakeRuntime.instances[0].config.args).toEqual(expect.arrayContaining(["--effort", "low"]));
+	});
+
+	it("falls back to env var effort when options.reasoning is not set", () => {
+		const pool = createPool();
+		process.env.CLAUDE_NATIVE_EFFORT = "medium";
+		pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+		expect(FakeRuntime.instances[0].config.args).toEqual(expect.arrayContaining(["--effort", "medium"]));
+	});
+
 	it("resumes the remembered Claude session for the same Pi conversation", () => {
 		const pool = createPool();
 

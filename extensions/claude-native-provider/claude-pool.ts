@@ -6,7 +6,7 @@ import {
 	type ClaudeProcessExitEvent,
 } from "./claude-process.ts";
 import { logClaudeNativeDiagnostic, redactSessionId } from "./claude-diagnostics.ts";
-import { buildClaudeArgs, type ClaudeEffort, effortFromEnv, modelAlias, numberFromEnv } from "./claude-protocol.ts";
+import { buildClaudeArgs, type ClaudeEffort, effortFromEnv, effortFromThinkingLevel, modelAlias, numberFromEnv } from "./claude-protocol.ts";
 
 export const DEFAULT_SESSION_IDENTITY = "default";
 
@@ -97,31 +97,16 @@ function conversationKeyFromProcessKey(key: ClaudeProcessKey): ClaudeConversatio
 export class ClaudeNativeProcessPool {
 	private readonly processes = new Map<string, ClaudeProcessRuntime>();
 	private readonly claudeSessions = new Map<string, RememberedClaudeSession>();
-	private readonly sessionEffortOverrides = new Map<string, ClaudeEffort>();
 	private lastObservedCwd?: string;
 
 	constructor(private readonly config: ClaudeNativeProcessPoolConfig = {}) {}
-
-	setSessionEffort(sessionIdentity: string, effort: ClaudeEffort | undefined): void {
-		const id = sessionIdentity || DEFAULT_SESSION_IDENTITY;
-		if (effort) this.sessionEffortOverrides.set(id, effort);
-		else this.sessionEffortOverrides.delete(id);
-	}
-
-	getSessionEffort(sessionIdentity: string): ClaudeEffort | undefined {
-		return this.sessionEffortOverrides.get(sessionIdentity || DEFAULT_SESSION_IDENTITY);
-	}
-
-	resolveEffort(sessionIdentity: string, env: NodeJS.ProcessEnv = this.config.env ?? process.env): ClaudeEffort | undefined {
-		return this.getSessionEffort(sessionIdentity) ?? effortFromEnv(env);
-	}
 
 	getOrCreate(model: Model<Api>, options?: SimpleStreamOptions): ClaudeProcessPoolEntry {
 		const cwd = this.config.getCwd?.() ?? process.cwd();
 		this.observeCwd(cwd);
 		const env = this.config.env ?? process.env;
-		const sessionIdentity = options?.sessionId || DEFAULT_SESSION_IDENTITY;
-		const effort = this.resolveEffort(sessionIdentity, env);
+		const effort = effortFromThinkingLevel(options?.reasoning) ?? effortFromEnv(env);
+		const disableThinking = options !== undefined && !options.reasoning;
 		const key = buildClaudeProcessKey(model, options, cwd, env, effort);
 		const keyId = serializeClaudeProcessKey(key);
 		const conversationKeyId = serializeClaudeConversationKey(conversationKeyFromProcessKey(key));
@@ -152,7 +137,7 @@ export class ClaudeNativeProcessPool {
 				isFirstSessionUse = !rememberedSession.initialized;
 				rememberedSession.initialized = true;
 			}
-			const args = buildClaudeArgs(model, { sessionId, isFirstSessionUse, env, effort });
+			const args = buildClaudeArgs(model, { sessionId, isFirstSessionUse, env, effort, disableThinking });
 			resumedClaudeSession = args.includes("--resume");
 			const processConfig: ClaudeProcessConfig = {
 				bin: env.CLAUDE_NATIVE_BIN || "claude",

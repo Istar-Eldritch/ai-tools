@@ -28,11 +28,28 @@ export function effortFromEnv(env: NodeJS.ProcessEnv = process.env): ClaudeEffor
 	return parseEffort(env.CLAUDE_NATIVE_EFFORT);
 }
 
+export function effortFromThinkingLevel(level: string | undefined | null): ClaudeEffort | undefined {
+	switch (level?.trim().toLowerCase()) {
+		case "minimal":
+		case "low":
+			return "low";
+		case "medium":
+			return "medium";
+		case "high":
+			return "high";
+		case "xhigh":
+			return "xhigh";
+		default:
+			return undefined;
+	}
+}
+
 export interface ClaudeArgsOptions {
 	sessionId?: string;
 	isFirstSessionUse?: boolean;
 	env?: NodeJS.ProcessEnv;
 	effort?: ClaudeEffort;
+	disableThinking?: boolean;
 }
 
 export function buildClaudeArgs(model: Model<Api>, sessionIdOrOptions?: string | ClaudeArgsOptions): string[] {
@@ -53,6 +70,7 @@ export function buildClaudeArgs(model: Model<Api>, sessionIdOrOptions?: string |
 
 	const effort = options.effort ?? effortFromEnv(env);
 	if (effort) args.push("--effort", effort);
+	if (options.disableThinking) args.push("--thinking", "disabled");
 
 	if (options.sessionId && env.CLAUDE_NATIVE_NO_RESUME !== "1") {
 		args.push(options.isFirstSessionUse ? "--session-id" : "--resume", options.sessionId);
