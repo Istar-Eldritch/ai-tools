@@ -245,7 +245,7 @@ async function _runImplementPipelineInner(
 	// Extract doc name from spec path for commit message scoping
 	const docName = extractDocName(state.specPath) ?? undefined;
 
-	const effectiveSkipPlanGeneration = state.skipPlanGeneration ?? projectConfig.skipPlanGeneration;
+	const effectiveSkipPlanGeneration = state.skipPlanGeneration || projectConfig.skipPlanGeneration;
 
 	// ============================================
 	// PHASE EXTRACTION (if phases not yet extracted)
