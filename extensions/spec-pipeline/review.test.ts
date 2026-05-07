@@ -133,6 +133,52 @@ NEEDS_CHANGES - please address the critical issues above.
 `;
 			expect(parseVerdict(output)).toBe("NEEDS_CHANGES");
 		});
+
+		it("anchors to verdict marker even when body mentions 'APPROVED' later", () => {
+			const output = `
+**Verdict**: NEEDS_CHANGES
+
+**Issues**:
+1. [CRITICAL] Missing input validation on request body
+
+**Notes**:
+- Once these issues are fixed the change should be APPROVED for merge.
+`;
+			expect(parseVerdict(output)).toBe("NEEDS_CHANGES");
+		});
+
+		it("anchors to verdict marker even when body mentions 'NEEDS_CHANGES' later", () => {
+			const output = `
+**Verdict**: APPROVED
+
+**Strengths**:
+- Implementation follows spec exactly
+- Tests cover the new behaviour
+
+**Notes**:
+- Earlier drafts had NEEDS_CHANGES but those have been resolved.
+`;
+			expect(parseVerdict(output)).toBe("APPROVED");
+		});
+
+		it("falls through when marker parrots template 'APPROVED | NEEDS_CHANGES'", () => {
+			// When the model echoes the prompt template literally, the marker is
+			// ambiguous; the legacy last-wins fallback should pick NEEDS_CHANGES.
+			const output = "**Verdict**: APPROVED | NEEDS_CHANGES";
+			expect(parseVerdict(output)).toBe("NEEDS_CHANGES");
+		});
+
+		it("uses the last verdict marker when there are multiple", () => {
+			// A reviewer might draft an early verdict then revise it at the end.
+			const output = `
+**Verdict**: APPROVED
+
+(further analysis)
+
+**Verdict**: NEEDS_CHANGES
+`;
+			expect(parseVerdict(output)).toBe("NEEDS_CHANGES");
+		});
 	});
 });
 

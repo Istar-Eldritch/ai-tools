@@ -12,6 +12,7 @@ import type {
 	HierarchyState,
 	ModelConfig,
 	AgentOutputEvent,
+	RoleName,
 } from "./types.ts";
 import { runAgentWithConfig } from "./agents.ts";
 import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
@@ -27,12 +28,34 @@ type ReviewableState = SpecState | ImplementationState | HierarchyState;
 /**
  * Parse verdict from review output (R12, R13)
  * Returns NEEDS_CHANGES if no clear verdict is found (conservative behavior).
+ *
+ * Strategy:
+ * 1. Anchor to an explicit verdict marker line (**Verdict**:, **Status**:, Verdict:, Status:).
+ *    This avoids false positives when the body uses words like "approved" or
+ *    "needs changes" in prose ("after fixing X, this would be APPROVED").
+ * 2. Fall back to body-wide last-wins heuristic only when no marker is found.
  */
 export function parseVerdict(output: string): ReviewVerdict {
 	const normalized = output.toUpperCase();
+
+	// Anchored marker: **Verdict**: X / **Status**: X / Verdict: X / Status: X
+	// Use the LAST marker line (a re-emitted final verdict at the end of the
+	// review wins over an earlier draft verdict).
+	const markerRegex = /(?:\*\*\s*)?(?:VERDICT|STATUS)(?:\s*\*\*)?\s*:\s*([A-Z_ |/,]+)/g;
+	let lastMarkerValue: string | undefined;
+	let markerMatch: RegExpExecArray | null;
+	while ((markerMatch = markerRegex.exec(normalized)) !== null) {
+		lastMarkerValue = markerMatch[1].trim();
+	}
+	if (lastMarkerValue !== undefined) {
+		const verdict = classifyVerdictToken(lastMarkerValue);
+		if (verdict) return verdict;
+	}
+
+	// Fallback: body-wide heuristic (legacy behavior).
 	const approvedMatch = normalized.match(/\bAPPROVED\b/);
 	const needsChangesMatch = normalized.match(/\bNEEDS_CHANGES\b/);
-	
+
 	if (approvedMatch && needsChangesMatch) {
 		const approvedIndex = normalized.lastIndexOf("APPROVED");
 		const needsChangesIndex = normalized.lastIndexOf("NEEDS_CHANGES");
@@ -40,7 +63,7 @@ export function parseVerdict(output: string): ReviewVerdict {
 	}
 	if (approvedMatch) return "APPROVED";
 	if (needsChangesMatch) return "NEEDS_CHANGES";
-	
+
 	if (normalized.includes("CHANGES_REQUESTED") || normalized.includes("NEEDS_WORK") || normalized.includes("NEEDS WORK")) {
 		return "NEEDS_CHANGES";
 	}
@@ -48,6 +71,25 @@ export function parseVerdict(output: string): ReviewVerdict {
 		return "APPROVED";
 	}
 	return "NEEDS_CHANGES";
+}
+
+/**
+ * Classify the captured value of a verdict marker (already upper-cased).
+ * Returns undefined if the token is ambiguous so the caller can fall through.
+ */
+function classifyVerdictToken(token: string): ReviewVerdict | undefined {
+	// Strip trailing punctuation and pipe-style alternatives ("APPROVED | NEEDS_CHANGES")
+	// that the model sometimes parrots from the prompt template.
+	const cleaned = token.replace(/[|/,.;:]+/g, " ").trim();
+	const hasApproved = /\bAPPROVED\b/.test(cleaned);
+	const hasNeedsChanges = /\b(NEEDS_CHANGES|NEEDS\s+CHANGES|CHANGES_REQUESTED|NEEDS_WORK|NEEDS\s+WORK)\b/.test(cleaned);
+	const hasReady = /\bREADY\b/.test(cleaned);
+
+	if (hasApproved && hasNeedsChanges) return undefined; // template parrot — let caller decide
+	if (hasNeedsChanges) return "NEEDS_CHANGES";
+	if (hasApproved) return "APPROVED";
+	if (hasReady) return "APPROVED";
+	return undefined;
 }
 
 /** Check if review output mentions critical or major issues. */
@@ -72,6 +114,32 @@ export interface ReviewContext {
 	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
 	onOutput?: (event: AgentOutputEvent) => void;
 	signal?: AbortSignal;
+	/**
+	 * Optional callback invoked after every sub-agent run (review and fix).
+	 * Lets the caller record the agent in its metrics so codeReviewer /
+	 * addressReview show up alongside planDrafter / implementer.
+	 */
+	recordCall?: (info: {
+		role: RoleName;
+		modelConfig: ModelConfig;
+		startTime: Date;
+		exitCode: number;
+		phase?: number;
+		cycle: number;
+	}) => void;
+	/**
+	 * Optional callback invoked with the verbatim text the reviewer produced
+	 * for each cycle. Useful for postmortems when the verdict surprises the
+	 * user — the implementation state only retains `previousReview`, which is
+	 * cleared between phases.
+	 */
+	recordReviewOutput?: (info: {
+		role: RoleName;
+		phase?: number;
+		cycle: number;
+		verdict: ReviewVerdict;
+		output: string;
+	}) => void;
 }
 
 export interface ReviewOperation {
@@ -97,7 +165,7 @@ export async function runReview(
 	ctx: ReviewContext,
 	operation: ReviewOperation
 ): Promise<ReviewResult> {
-	const { cwd, projectConfig, systemPrompts, state, saveFn, phaseIndex, docName, notify, onOutput, signal } = ctx;
+	const { cwd, projectConfig, systemPrompts, state, saveFn, phaseIndex, docName, notify, onOutput, signal, recordCall, recordReviewOutput } = ctx;
 	const { role, reviewTask, fixTask, runAddressReviewOnSignificantIssues = false } = operation;
 	const reviewerConfig = projectConfig.models[role];
 	const addressReviewConfig = projectConfig.models.addressReview;
@@ -125,6 +193,7 @@ export async function runReview(
 		notify(`${phaseCtx} Review cycle ${cycle}/${maxCycles}`, "info");
 		await createCheckpointAndSave(cwd, state, role, saveFn, phaseIndex, cycle, notify);
 
+		const reviewStartTime = new Date();
 		const reviewResult = await runAgentWithConfig(
 			reviewerConfig,
 			cycle === 1 ? reviewTask : `Continue review after fixes were applied:\n\n${reviewTask}`,
@@ -134,6 +203,14 @@ export async function runReview(
 			onOutput,
 			role
 		);
+		recordCall?.({
+			role,
+			modelConfig: reviewerConfig,
+			startTime: reviewStartTime,
+			exitCode: reviewResult.exitCode,
+			phase: phaseIndex,
+			cycle,
+		});
 
 		if (reviewResult.exitCode !== 0 || reviewResult.completed === false || reviewResult.limitHit) {
 			await handleAgentError(cwd, state, reviewResult, reviewerConfig.model, role, reviewTask, phaseIndex, cycle, notify, saveFn);
@@ -143,6 +220,14 @@ export async function runReview(
 		lastReviewOutput = reviewResult.output;
 		const verdict = parseVerdict(lastReviewOutput);
 		notify(`${phaseCtx} Review cycle ${cycle}/${maxCycles} verdict: ${verdict}`, "info");
+
+		recordReviewOutput?.({
+			role,
+			phase: phaseIndex,
+			cycle,
+			verdict,
+			output: lastReviewOutput,
+		});
 
 		if (verdict === "APPROVED") {
 			return { verdict: "APPROVED", lastReviewOutput, cyclesCompleted, hadError: false };
@@ -156,6 +241,7 @@ export async function runReview(
 		notify(`${phaseCtx} Applying fixes (${addressReviewConfig.model})...`, "info");
 
 		const fixTaskText = fixTask(lastReviewOutput);
+		const fixStartTime = new Date();
 		const fixResult = await runAgentWithConfig(
 			addressReviewConfig,
 			fixTaskText,
@@ -165,6 +251,14 @@ export async function runReview(
 			onOutput,
 			"addressReview"
 		);
+		recordCall?.({
+			role: "addressReview",
+			modelConfig: addressReviewConfig,
+			startTime: fixStartTime,
+			exitCode: fixResult.exitCode,
+			phase: phaseIndex,
+			cycle,
+		});
 
 		if (fixResult.exitCode !== 0 || fixResult.completed === false || fixResult.limitHit) {
 			await handleAgentError(cwd, state, fixResult, addressReviewConfig.model, "addressReview", fixTaskText, phaseIndex, cycle, notify, saveFn);

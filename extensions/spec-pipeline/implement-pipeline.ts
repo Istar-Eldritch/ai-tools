@@ -101,6 +101,50 @@ function recordAgentCall(
 	metrics.agentCalls.push(call);
 }
 
+// ============================================
+// Review Output Logging
+// ============================================
+
+/**
+ * Persist the verbatim reviewer output for one cycle to disk.
+ *
+ * The implementation state only retains `previousReview` (cleared between
+ * phases). When a reviewer surprisingly returns APPROVED on a clearly-broken
+ * change — or vice versa — these logs let us see exactly what text the
+ * verdict was parsed from.
+ *
+ * Path: <cwd>/.pi/spec-pipeline/reviews/<implId>/phase<N>_cycle<M>_<role>.md
+ * Best-effort: failures are logged but never block the pipeline.
+ */
+function writeReviewLog(
+	cwd: string,
+	implId: string,
+	info: { role: RoleName; phase?: number; cycle: number; verdict: string; output: string },
+	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
+): void {
+	try {
+		const dir = path.join(cwd, ".pi/spec-pipeline/reviews", implId);
+		fs.mkdirSync(dir, { recursive: true });
+		const phaseLabel = info.phase !== undefined ? `phase${info.phase}` : "no_phase";
+		const file = path.join(dir, `${phaseLabel}_cycle${info.cycle}_${info.role}.md`);
+		const header = [
+			`# Review log`,
+			``,
+			`- Role: ${info.role}`,
+			`- Phase: ${info.phase ?? "n/a"}`,
+			`- Cycle: ${info.cycle}`,
+			`- Parsed verdict: ${info.verdict}`,
+			`- Captured at: ${new Date().toISOString()}`,
+			``,
+			`---`,
+			``,
+		].join("\n");
+		fs.writeFileSync(file, header + info.output, "utf-8");
+	} catch (err) {
+		notify?.(`Failed to write review log: ${err instanceof Error ? err.message : String(err)}`, "warning");
+	}
+}
+
 function finalizeImplMetrics(metrics: ImplementationMetrics, phasesCount: number, phasesApprovedFirstPass: number): void {
 	metrics.pipelineEndTime = new Date().toISOString();
 	const startTime = new Date(metrics.pipelineStartTime).getTime();
@@ -638,6 +682,13 @@ Address all issues raised in the review.`;
 				docName,
 				notify: ctx.ui.notify.bind(ctx.ui),
 				onOutput: codeReviewProgressCallback,  // ← Add callback (R19, R20)
+				recordCall: ({ role, modelConfig, startTime, exitCode, phase, cycle }) => {
+					recordAgentCall(metrics, role, modelConfig.model, modelConfig.thinking, startTime, exitCode, phase, cycle);
+					save();
+				},
+				recordReviewOutput: ({ role, phase, cycle, verdict, output }) => {
+					writeReviewLog(cwd, state.id, { role, phase, cycle, verdict, output }, ctx.ui.notify.bind(ctx.ui));
+				},
 			},
 			{
 				role: "codeReviewer",
