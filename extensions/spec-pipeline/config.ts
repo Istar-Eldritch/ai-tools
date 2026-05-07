@@ -460,6 +460,10 @@ function buildProjectConfig(
 		projectContext += `\n## Testing\n\nYou MUST run tests with: \`${testCommand}\`\n`;
 	}
 
+	// Snapshot for roles that run tests but don't author specs (implementer,
+	// addressReview). Includes the test command, excludes spec template/conventions.
+	const projectContextForFixer = projectContext;
+
 	// Discover spec template, conventions, and output format
 	const template = discoverSpecTemplate(cwd, specsDir, config.specTemplatePath);
 	const conventions = discoverSpecConventions(cwd, specsDir, config.specConventionsPath);
@@ -495,6 +499,7 @@ function buildProjectConfig(
 		contextFiles: foundFiles,
 		projectContext,
 		projectContextForReviewer,
+		projectContextForFixer,
 		specTemplate: template.content,
 		specTemplatePath: template.path,
 		specConventions: conventions.content,

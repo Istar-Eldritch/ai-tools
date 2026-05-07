@@ -155,6 +155,15 @@ export interface ProjectConfig {
 	 * could mislead the reviewer.
 	 */
 	projectContextForReviewer: string;
+	/**
+	 * Stripped projectContext for roles that run tests but don't author specs
+	 * (implementer, addressReview).
+	 *
+	 * Why: spec template/conventions are irrelevant to a coding agent applying
+	 * a plan or fixing review feedback, but the test command line IS needed.
+	 * Sits between projectContextForReviewer (no test) and projectContext (full).
+	 */
+	projectContextForFixer: string;
 	// Spec template content (auto-discovered or from config)
 	specTemplate: string | null;
 	// Path to spec template file (for reference in prompts)

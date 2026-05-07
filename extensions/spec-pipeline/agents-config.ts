@@ -17,6 +17,7 @@ export const DEFAULT_MODELS = {
 export function buildPromptOptions(projectConfig: {
 	projectContext: string;
 	projectContextForReviewer?: string;
+	projectContextForFixer?: string;
 	specTemplate?: string | null;
 	specTemplatePath?: string | null;
 	specConventions?: string | null;
@@ -26,6 +27,7 @@ export function buildPromptOptions(projectConfig: {
 	return {
 		projectContext: projectConfig.projectContext,
 		projectContextForReviewer: projectConfig.projectContextForReviewer,
+		projectContextForFixer: projectConfig.projectContextForFixer,
 		specTemplate: projectConfig.specTemplate,
 		specTemplatePath: projectConfig.specTemplatePath,
 		specConventions: projectConfig.specConventions,
@@ -44,6 +46,12 @@ export interface SystemPromptOptions {
 	 * Falls back to projectContext when not provided.
 	 */
 	projectContextForReviewer?: string;
+	/**
+	 * Stripped projectContext used for implementer and addressReview prompts.
+	 * Includes the test command but excludes spec template/conventions.
+	 * Falls back to projectContext when not provided.
+	 */
+	projectContextForFixer?: string;
 	specTemplate?: string | null;
 	specTemplatePath?: string | null;
 	specConventions?: string | null;
@@ -68,8 +76,9 @@ export function createSystemPrompts(projectContextOrOptions: string | SystemProm
 		? { projectContext: projectContextOrOptions }
 		: projectContextOrOptions;
 
-	const { projectContext, projectContextForReviewer, specTemplate, specTemplatePath, specConventions, specConventionsPath, specFormat } = options;
+	const { projectContext, projectContextForReviewer, projectContextForFixer, specTemplate, specTemplatePath, specConventions, specConventionsPath, specFormat } = options;
 	const reviewerContext = projectContextForReviewer ?? projectContext;
+	const fixerContext = projectContextForFixer ?? projectContext;
 	const format = specFormat ?? "md";
 
 	const hasTemplate = !!specTemplate;
@@ -381,7 +390,7 @@ The write tool creates parent directories automatically.`,
 
 Follow the implementation plan step-by-step, following project conventions.
 
-${projectContext}
+${fixerContext}
 
 ## Implementation Workflow
 
@@ -540,7 +549,7 @@ Output ONLY the commit message, nothing else.`,
 
 Fix issues raised in the code review, following project conventions.
 
-${projectContext}
+${fixerContext}
 
 ## Process
 

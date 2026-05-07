@@ -198,7 +198,7 @@ export async function runReview(
 		const reviewStartTime = new Date();
 		const reviewResult = await runAgentWithConfig(
 			reviewerConfig,
-			cycle === 1 ? reviewTask : `Continue review after fixes were applied:\n\n${reviewTask}`,
+			cycle === 1 ? reviewTask : `${reviewTask}\n\nNote: continuing review after fixes were applied in a prior cycle.`,
 			cwd,
 			systemPrompts[role],
 			signal,
