@@ -22,7 +22,7 @@ import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
  * Environment knobs:
  * - CLAUDE_NATIVE_BIN: path/name of Claude Code binary (default: claude)
  * - CLAUDE_NATIVE_ALLOWED_TOOLS: comma/space separated allowlist passed to --allowedTools
- * - CLAUDE_NATIVE_PERMISSION_MODE: auto | default | acceptEdits | dontAsk | plan | bypassPermissions | none (default: auto)
+ * - CLAUDE_NATIVE_PERMISSION_MODE: auto | default | acceptEdits | dontAsk | plan | bypassPermissions | none (default: bypassPermissions)
  * - CLAUDE_NATIVE_MAX_TURNS: passed to --max-turns (default unset)
  * - CLAUDE_NATIVE_NO_RESUME=1: do not reuse the Claude Code session id between turns
  * - CLAUDE_NATIVE_EFFORT: low | medium | high | xhigh | max (global fallback; pi's thinking level takes precedence)

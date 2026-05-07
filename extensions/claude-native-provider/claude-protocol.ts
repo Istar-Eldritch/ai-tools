@@ -76,7 +76,7 @@ export function buildClaudeArgs(model: Model<Api>, sessionIdOrOptions?: string |
 		args.push(options.isFirstSessionUse ? "--session-id" : "--resume", options.sessionId);
 	}
 
-	const permissionMode = env.CLAUDE_NATIVE_PERMISSION_MODE ?? "auto";
+	const permissionMode = env.CLAUDE_NATIVE_PERMISSION_MODE ?? "bypassPermissions";
 	if (permissionMode && permissionMode !== "none") args.push("--permission-mode", permissionMode);
 
 	const allowedTools = env.CLAUDE_NATIVE_ALLOWED_TOOLS;
