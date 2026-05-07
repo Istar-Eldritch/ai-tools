@@ -452,6 +452,10 @@ function buildProjectConfig(
 		projectContext = `## Project Context\n\nFound documentation in: ${foundFiles.join(", ")}\n\n` + projectContext;
 	}
 
+	// Snapshot the docs-only context before appending sections that don't apply
+	// to read-only review roles (testing instructions, spec template/conventions).
+	const projectContextForReviewer = projectContext;
+
 	if (testCommand) {
 		projectContext += `\n## Testing\n\nYou MUST run tests with: \`${testCommand}\`\n`;
 	}
@@ -490,6 +494,7 @@ function buildProjectConfig(
 		testCommand,
 		contextFiles: foundFiles,
 		projectContext,
+		projectContextForReviewer,
 		specTemplate: template.content,
 		specTemplatePath: template.path,
 		specConventions: conventions.content,

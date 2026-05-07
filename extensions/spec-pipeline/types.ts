@@ -79,6 +79,19 @@ export type NormalizedReviewCycles = number;
 // ============================================
 
 /**
+ * Token usage totals for one agent call. Aggregated across all assistant
+ * messages emitted during the run. Useful for diagnosing cache behavior:
+ * `cacheRead` should dominate `input` once the prefix is stable.
+ */
+export interface AgentCallUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	totalTokens: number;
+}
+
+/**
  * Metrics for a single agent call
  */
 export interface AgentCallMetrics {
@@ -91,6 +104,7 @@ export interface AgentCallMetrics {
 	exitCode: number;
 	phase?: number;         // Phase index if applicable
 	cycle?: number;         // Review cycle if applicable
+	usage?: AgentCallUsage; // Token usage if reported by the subprocess
 }
 
 /**
@@ -132,6 +146,15 @@ export interface ProjectConfig {
 	testCommand: string | null;
 	contextFiles: string[];
 	projectContext: string;
+	/**
+	 * Stripped projectContext for read-only roles (codeReviewer).
+	 *
+	 * Why: spec template/conventions and the testing instruction are dead weight
+	 * for a code reviewer (it doesn't write specs and is told not to run tests).
+	 * Stripping them shrinks the cached prompt prefix and removes signal that
+	 * could mislead the reviewer.
+	 */
+	projectContextForReviewer: string;
 	// Spec template content (auto-discovered or from config)
 	specTemplate: string | null;
 	// Path to spec template file (for reference in prompts)
@@ -375,6 +398,7 @@ export interface AgentResult {
 	finishReason?: string;
 	stopReason?: string;
 	limitHit?: boolean;
+	usage?: AgentCallUsage;
 }
 
 // ============================================

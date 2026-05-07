@@ -84,7 +84,8 @@ function recordAgentCall(
 	startTime: Date,
 	exitCode: number,
 	phase?: number,
-	cycle?: number
+	cycle?: number,
+	usage?: AgentCallMetrics["usage"]
 ): void {
 	const endTime = new Date();
 	const call: AgentCallMetrics = {
@@ -97,6 +98,7 @@ function recordAgentCall(
 		exitCode,
 		phase,
 		cycle,
+		usage,
 	};
 	metrics.agentCalls.push(call);
 }
@@ -422,7 +424,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 				planProgressCallback,  // ← Pass callback (R17)
 				"planDrafter"
 			);
-			recordAgentCall(metrics, "planDrafter", planDrafterConfig.model, planDrafterConfig.thinking, planStartTime, planDraftResult.exitCode, phaseIdx + 1);
+			recordAgentCall(metrics, "planDrafter", planDrafterConfig.model, planDrafterConfig.thinking, planStartTime, planDraftResult.exitCode, phaseIdx + 1, undefined, planDraftResult.usage);
 			save();
 
 			if (planDraftResult.exitCode !== 0) {
@@ -563,7 +565,7 @@ Address all issues raised in the review.`;
 				implProgressCallback,  // ← Pass callback (R18)
 				"implementer"
 			);
-			recordAgentCall(metrics, "implementer", implementerConfig.model, implementerConfig.thinking, implementStartTime, implementResult.exitCode, phaseIdx + 1);
+			recordAgentCall(metrics, "implementer", implementerConfig.model, implementerConfig.thinking, implementStartTime, implementResult.exitCode, phaseIdx + 1, undefined, implementResult.usage);
 			save();
 
 			if (implementResult.exitCode !== 0 || implementResult.completed === false || implementResult.limitHit) {
@@ -682,8 +684,8 @@ Address all issues raised in the review.`;
 				docName,
 				notify: ctx.ui.notify.bind(ctx.ui),
 				onOutput: codeReviewProgressCallback,  // ← Add callback (R19, R20)
-				recordCall: ({ role, modelConfig, startTime, exitCode, phase, cycle }) => {
-					recordAgentCall(metrics, role, modelConfig.model, modelConfig.thinking, startTime, exitCode, phase, cycle);
+				recordCall: ({ role, modelConfig, startTime, exitCode, phase, cycle, usage }) => {
+					recordAgentCall(metrics, role, modelConfig.model, modelConfig.thinking, startTime, exitCode, phase, cycle, usage);
 					save();
 				},
 				recordReviewOutput: ({ role, phase, cycle, verdict, output }) => {
@@ -810,6 +812,30 @@ Make the necessary fixes.`,
 	completionLines.push(formatKeyValue("  Agent Calls", String(metrics.agentCalls.length)));
 	completionLines.push(formatKeyValue("  Plan Generation", metrics.skipPlanGeneration ? "Skipped" : "Enabled"));
 	completionLines.push(formatKeyValue("  Code Review Cycles", String(metrics.codeReviewCycles)));
+
+	// Token totals — surfaces cache effectiveness in the run summary.
+	const usageTotals = metrics.agentCalls.reduce(
+		(acc, c) => {
+			if (!c.usage) return acc;
+			acc.input += c.usage.input;
+			acc.output += c.usage.output;
+			acc.cacheRead += c.usage.cacheRead;
+			acc.cacheWrite += c.usage.cacheWrite;
+			acc.totalTokens += c.usage.totalTokens;
+			acc.callsWithUsage += 1;
+			return acc;
+		},
+		{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, callsWithUsage: 0 }
+	);
+	if (usageTotals.callsWithUsage > 0) {
+		const fmt = (n: number) => n.toLocaleString();
+		const cacheableInput = usageTotals.input + usageTotals.cacheRead + usageTotals.cacheWrite;
+		const hitRate = cacheableInput > 0
+			? `${Math.round((usageTotals.cacheRead / cacheableInput) * 100)}%`
+			: "n/a";
+		completionLines.push(formatKeyValue("  Tokens (in/out)", `${fmt(usageTotals.input)} / ${fmt(usageTotals.output)}`));
+		completionLines.push(formatKeyValue("  Cache (read/write)", `${fmt(usageTotals.cacheRead)} / ${fmt(usageTotals.cacheWrite)} (hit ${hitRate})`));
+	}
 	
 	completionLines.push("");
 	completionLines.push("  📋 Next Steps:");

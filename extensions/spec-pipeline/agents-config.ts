@@ -16,6 +16,7 @@ export const DEFAULT_MODELS = {
  */
 export function buildPromptOptions(projectConfig: {
 	projectContext: string;
+	projectContextForReviewer?: string;
 	specTemplate?: string | null;
 	specTemplatePath?: string | null;
 	specConventions?: string | null;
@@ -24,6 +25,7 @@ export function buildPromptOptions(projectConfig: {
 }): SystemPromptOptions {
 	return {
 		projectContext: projectConfig.projectContext,
+		projectContextForReviewer: projectConfig.projectContextForReviewer,
 		specTemplate: projectConfig.specTemplate,
 		specTemplatePath: projectConfig.specTemplatePath,
 		specConventions: projectConfig.specConventions,
@@ -37,6 +39,11 @@ export function buildPromptOptions(projectConfig: {
  */
 export interface SystemPromptOptions {
 	projectContext: string;
+	/**
+	 * Stripped projectContext used for the codeReviewer prompt only.
+	 * Falls back to projectContext when not provided.
+	 */
+	projectContextForReviewer?: string;
 	specTemplate?: string | null;
 	specTemplatePath?: string | null;
 	specConventions?: string | null;
@@ -61,7 +68,8 @@ export function createSystemPrompts(projectContextOrOptions: string | SystemProm
 		? { projectContext: projectContextOrOptions }
 		: projectContextOrOptions;
 
-	const { projectContext, specTemplate, specTemplatePath, specConventions, specConventionsPath, specFormat } = options;
+	const { projectContext, projectContextForReviewer, specTemplate, specTemplatePath, specConventions, specConventionsPath, specFormat } = options;
+	const reviewerContext = projectContextForReviewer ?? projectContext;
 	const format = specFormat ?? "md";
 
 	const hasTemplate = !!specTemplate;
@@ -422,7 +430,7 @@ Report:
 
 Review the implementation against spec requirements and project conventions.
 
-${projectContext}
+${reviewerContext}
 
 ## CRITICAL: Do NOT Run Tests
 

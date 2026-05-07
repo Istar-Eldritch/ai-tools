@@ -9,6 +9,7 @@ import * as os from "node:os";
 import type {
 	ModelConfig,
 	AgentResult,
+	AgentCallUsage,
 	AgentOutputEvent,
 	ToolEventData,
 	PipelineUIContext,
@@ -199,6 +200,29 @@ export async function runAgentWithConfig(
 	let stopReason: string | undefined;
 	let limitHit = false;
 
+	// Accumulated token usage across all assistant turns. Pi emits one
+	// AssistantMessage per turn and each carries a `usage` object — see
+	// pi docs/session-format.md and docs/json.md. We sum across the run.
+	const usage: AgentCallUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+	let usageRecorded = false;
+	const seenAssistantUsage = new Set<string>();
+	const accumulateAssistantUsage = (msg: any): void => {
+		if (!msg || msg.role !== "assistant") return;
+		const u = msg.usage;
+		if (!u || typeof u !== "object") return;
+		// Dedupe across message_end/turn_end/agent_end which may all carry the
+		// same assistant message. Pi assigns a stable `id` to each entry.
+		const key = typeof msg.id === "string" ? msg.id : `t${msg.timestamp ?? ""}`;
+		if (seenAssistantUsage.has(key)) return;
+		seenAssistantUsage.add(key);
+		usage.input += Number(u.input) || 0;
+		usage.output += Number(u.output) || 0;
+		usage.cacheRead += Number(u.cacheRead) || 0;
+		usage.cacheWrite += Number(u.cacheWrite) || 0;
+		usage.totalTokens += Number(u.totalTokens) || 0;
+		usageRecorded = true;
+	};
+
 	try {
 		const exitCode = await new Promise<number>((resolve) => {
 			proc = spawn("pi", args, {
@@ -247,6 +271,14 @@ export async function runAgentWithConfig(
 						event.type === "completed"
 					) {
 						completed = true;
+					}
+
+					// Token usage from pi's --mode json events. Assistant messages
+					// arrive on message_end / turn_end / agent_end; dedupe by id.
+					if (event.type === "message_end" || event.type === "turn_end") {
+						accumulateAssistantUsage(event.message);
+					} else if (event.type === "agent_end" && Array.isArray(event.messages)) {
+						for (const m of event.messages) accumulateAssistantUsage(m);
 					}
 
 					const rawFinishReason =
@@ -329,6 +361,7 @@ export async function runAgentWithConfig(
 			finishReason,
 			stopReason,
 			limitHit,
+			usage: usageRecorded ? usage : undefined,
 		};
 	} finally {
 		try {

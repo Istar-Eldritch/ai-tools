@@ -11,6 +11,7 @@ import type {
 	ImplementationState,
 	HierarchyState,
 	ModelConfig,
+	AgentCallUsage,
 	AgentOutputEvent,
 	RoleName,
 } from "./types.ts";
@@ -126,6 +127,7 @@ export interface ReviewContext {
 		exitCode: number;
 		phase?: number;
 		cycle: number;
+		usage?: AgentCallUsage;
 	}) => void;
 	/**
 	 * Optional callback invoked with the verbatim text the reviewer produced
@@ -210,6 +212,7 @@ export async function runReview(
 			exitCode: reviewResult.exitCode,
 			phase: phaseIndex,
 			cycle,
+			usage: reviewResult.usage,
 		});
 
 		if (reviewResult.exitCode !== 0 || reviewResult.completed === false || reviewResult.limitHit) {
@@ -258,6 +261,7 @@ export async function runReview(
 			exitCode: fixResult.exitCode,
 			phase: phaseIndex,
 			cycle,
+			usage: fixResult.usage,
 		});
 
 		if (fixResult.exitCode !== 0 || fixResult.completed === false || fixResult.limitHit) {
