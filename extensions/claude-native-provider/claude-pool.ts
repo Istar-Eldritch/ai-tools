@@ -97,6 +97,8 @@ function conversationKeyFromProcessKey(key: ClaudeProcessKey): ClaudeConversatio
 export class ClaudeNativeProcessPool {
 	private readonly processes = new Map<string, ClaudeProcessRuntime>();
 	private readonly claudeSessions = new Map<string, RememberedClaudeSession>();
+	/** Last observed turn-level usage per process key. Used to detect cache drops. */
+	private readonly lastUsage = new Map<string, { cacheRead: number; input: number }>();
 	private lastObservedCwd?: string;
 
 	constructor(private readonly config: ClaudeNativeProcessPoolConfig = {}) {}
@@ -154,6 +156,15 @@ export class ClaudeNativeProcessPool {
 				sessionIdentity: key.sessionIdentity,
 				resumedClaudeSession,
 				claudeSessionId: redactSessionId(sessionId),
+				// Presence (not values) of network/auth env vars the Claude CLI
+				// will honor since we forward the full env. Lets users verify
+				// proxy/custom-header config is actually flowing through.
+				envHasHttpsProxy: !!env.HTTPS_PROXY || !!env.https_proxy,
+				envHasHttpProxy: !!env.HTTP_PROXY || !!env.http_proxy,
+				envHasNoProxy: !!env.NO_PROXY || !!env.no_proxy,
+				envHasAnthropicCustomHeaders: !!env.ANTHROPIC_CUSTOM_HEADERS,
+				envHasAnthropicBaseUrl: !!env.ANTHROPIC_BASE_URL,
+				envHasNodeExtraCaCerts: !!env.NODE_EXTRA_CA_CERTS,
 			}, env);
 			createdRuntime = this.config.createProcess?.(processConfig) ?? new ClaudeNativeProcess(processConfig);
 			runtime = createdRuntime;
@@ -173,7 +184,21 @@ export class ClaudeNativeProcessPool {
 	rememberClaudeSessionId(key: ClaudeProcessKey, sessionId: string): void {
 		if ((this.config.env ?? process.env).CLAUDE_NATIVE_NO_RESUME === "1") return;
 		const conversationKeyId = serializeClaudeConversationKey(conversationKeyFromProcessKey(key));
+		const previous = this.claudeSessions.get(conversationKeyId);
 		this.claudeSessions.set(conversationKeyId, { id: sessionId, initialized: true });
+		if (previous && previous.id !== sessionId) {
+			// Session-id change for the same conversation key. The next turn's
+			// cache hit will reset because we're now resuming a different Claude
+			// session — explicit log so cache_drop is attributable.
+			logClaudeNativeDiagnostic("pool.session_rotated", {
+				modelAlias: key.modelAlias,
+				effort: key.effort,
+				cwd: key.cwd,
+				sessionIdentity: key.sessionIdentity,
+				previousClaudeSessionId: redactSessionId(previous.id),
+				claudeSessionId: redactSessionId(sessionId),
+			}, this.config.env ?? process.env);
+		}
 		logClaudeNativeDiagnostic("pool.remember_session", {
 			modelAlias: key.modelAlias,
 			effort: key.effort,
@@ -181,6 +206,34 @@ export class ClaudeNativeProcessPool {
 			sessionIdentity: key.sessionIdentity,
 			claudeSessionId: redactSessionId(sessionId),
 		}, this.config.env ?? process.env);
+	}
+
+	/**
+	 * Record per-turn usage and emit a `pool.cache_drop` diagnostic when
+	 * `cache_read_input_tokens` for the same process key collapses
+	 * turn-over-turn (>5% AND >2K tokens drop). Per subagent-caching
+	 * techniques #7 phase 2 — cheap silent-regression detector.
+	 */
+	recordTurnUsage(key: ClaudeProcessKey, usage: { cacheRead: number; input: number }): void {
+		const keyId = serializeClaudeProcessKey(key);
+		const previous = this.lastUsage.get(keyId);
+		this.lastUsage.set(keyId, { cacheRead: usage.cacheRead, input: usage.input });
+		if (!previous) return;
+		const drop = previous.cacheRead - usage.cacheRead;
+		const relative = previous.cacheRead > 0 ? drop / previous.cacheRead : 0;
+		if (drop > 2_000 && relative > 0.05) {
+			logClaudeNativeDiagnostic("pool.cache_drop", {
+				modelAlias: key.modelAlias,
+				effort: key.effort,
+				cwd: key.cwd,
+				sessionIdentity: key.sessionIdentity,
+				previousCacheRead: previous.cacheRead,
+				cacheRead: usage.cacheRead,
+				dropTokens: drop,
+				dropFraction: Math.round(relative * 100) / 100,
+				input: usage.input,
+			}, this.config.env ?? process.env);
+		}
 	}
 
 	terminateAll(reason: string, options: { clearSessions?: boolean } = {}): ClaudeProcessPoolStats {

@@ -15,6 +15,14 @@ export interface ClaudeProcessEventHandlers {
 export interface ClaudeTurnOptions {
 	signal?: AbortSignal;
 	timeoutMs?: number;
+	/**
+	 * Abort the turn if no stdout/stderr event arrives from the Claude CLI
+	 * for this many ms. Catches the "server stopped sending events but
+	 * connection still open" hang (api-connection-report.md §5.2). Distinct
+	 * from `idleTimeoutMs` on `ClaudeProcessConfig`, which tears down idle
+	 * pooled processes between turns.
+	 */
+	streamIdleTimeoutMs?: number;
 }
 
 export type ClaudeTurnFailureCode =
@@ -58,6 +66,8 @@ interface InFlightTurn {
 	resolve(): void;
 	reject(error: Error): void;
 	timeoutHandle?: ReturnType<typeof setTimeout>;
+	streamIdleHandle?: ReturnType<typeof setTimeout>;
+	streamIdleTimeoutMs?: number;
 	abortHandler?: () => void;
 	signal?: AbortSignal;
 }
@@ -108,8 +118,14 @@ export class ClaudeNativeProcess {
 		}) as ChildProcessWithoutNullStreams;
 		this.child = child;
 		this.rl = readline.createInterface({ input: child.stdout });
-		this.rl.on("line", (line) => this.handleStdoutLine(line));
-		child.stderr.on("data", (chunk) => this.inFlight?.handlers.onStderr?.(chunk.toString()));
+		this.rl.on("line", (line) => {
+			this.armStreamIdle();
+			this.handleStdoutLine(line);
+		});
+		child.stderr.on("data", (chunk) => {
+			this.armStreamIdle();
+			this.inFlight?.handlers.onStderr?.(chunk.toString());
+		});
 		child.on("error", (err) => this.handleProcessFailure(err, child, "process_error"));
 		child.on("close", (code) => this.handleProcessFailure(new Error(`Claude Code exited with code ${code}`), child, "process_close"));
 	}
@@ -124,7 +140,13 @@ export class ClaudeNativeProcess {
 		if (!this.child) return Promise.reject(new Error("Claude Code process is not available"));
 
 		return new Promise((resolve, reject) => {
-			this.inFlight = { handlers, resolve, reject, signal: options.signal };
+			this.inFlight = {
+				handlers,
+				resolve,
+				reject,
+				signal: options.signal,
+				streamIdleTimeoutMs: options.streamIdleTimeoutMs && options.streamIdleTimeoutMs > 0 ? options.streamIdleTimeoutMs : undefined,
+			};
 
 			if (options.timeoutMs && options.timeoutMs > 0) {
 				this.inFlight.timeoutHandle = setTimeout(() => {
@@ -132,6 +154,8 @@ export class ClaudeNativeProcess {
 				}, options.timeoutMs);
 				this.inFlight.timeoutHandle.unref?.();
 			}
+
+			this.armStreamIdle();
 
 			if (options.signal) {
 				this.inFlight.abortHandler = () => this.failInFlight(new ClaudeTurnError("Claude Code request aborted", "aborted", true));
@@ -193,8 +217,23 @@ export class ClaudeNativeProcess {
 		if (!turn) return;
 		this.inFlight = undefined;
 		if (turn.timeoutHandle) clearTimeout(turn.timeoutHandle);
+		if (turn.streamIdleHandle) clearTimeout(turn.streamIdleHandle);
 		if (turn.signal && turn.abortHandler) turn.signal.removeEventListener("abort", turn.abortHandler);
 		if (error) turn.reject(error);
+	}
+
+	private armStreamIdle(): void {
+		const turn = this.inFlight;
+		if (!turn || !turn.streamIdleTimeoutMs) return;
+		if (turn.streamIdleHandle) clearTimeout(turn.streamIdleHandle);
+		turn.streamIdleHandle = setTimeout(() => {
+			this.failInFlight(new ClaudeTurnError(
+				`Claude Code stream idle: no events for ${turn.streamIdleTimeoutMs}ms`,
+				"timeout",
+				true,
+			));
+		}, turn.streamIdleTimeoutMs);
+		turn.streamIdleHandle.unref?.();
 	}
 
 	private closeReadline(): void {

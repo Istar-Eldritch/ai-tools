@@ -3,6 +3,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -154,6 +155,66 @@ function formatPath(path: string): string {
 }
 
 /**
+ * Cache observability: hash the bytes that contribute to the prompt prefix
+ * (system prompt, model config, role) per (cwd, role) so we can detect when a
+ * "stable" prefix actually changed across calls. Pairs with the post-call
+ * `cacheRead`/`cacheWrite` totals already captured in `AgentCallUsage`.
+ *
+ * LRU-bounded so a long-running pi process doesn't accumulate state.
+ */
+const CACHE_TRACK_MAX_ENTRIES = 32;
+interface CacheTrackEntry {
+	systemHash: string;
+	modelHash: string;
+	systemSample: string;
+}
+const cacheTrack = new Map<string, CacheTrackEntry>();
+
+function hashString(s: string): string {
+	return crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
+}
+
+function recordPromptHash(
+	cwd: string,
+	role: string | undefined,
+	systemPrompt: string,
+	modelConfig: ModelConfig,
+	roleArgs: string,
+): { systemChanged: boolean; modelChanged: boolean; previousSystemHash?: string } {
+	const key = `${cwd}::${role ?? "unknown"}`;
+	const systemHash = hashString(systemPrompt);
+	const modelHash = hashString(`${modelConfig.model}|${modelConfig.thinking}|${roleArgs}`);
+	const prev = cacheTrack.get(key);
+	const result = {
+		systemChanged: !!prev && prev.systemHash !== systemHash,
+		modelChanged: !!prev && prev.modelHash !== modelHash,
+		previousSystemHash: prev?.systemHash,
+	};
+	// LRU touch
+	if (prev) cacheTrack.delete(key);
+	cacheTrack.set(key, { systemHash, modelHash, systemSample: systemPrompt.slice(0, 4000) });
+	while (cacheTrack.size > CACHE_TRACK_MAX_ENTRIES) {
+		const first = cacheTrack.keys().next().value;
+		if (first === undefined) break;
+		cacheTrack.delete(first);
+	}
+	return result;
+}
+
+function writeCacheDiff(cwd: string, role: string | undefined, currentSystemPrompt: string, prevHash: string | undefined, currentHash: string): void {
+	if (!prevHash) return;
+	try {
+		const dir = path.join(cwd, ".pi", "spec-pipeline", "cache-diffs");
+		fs.mkdirSync(dir, { recursive: true });
+		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+		const file = path.join(dir, `${stamp}_${role ?? "unknown"}_${prevHash}_to_${currentHash}.txt`);
+		fs.writeFileSync(file, currentSystemPrompt, { encoding: "utf-8", mode: 0o600 });
+	} catch {
+		// Diagnostic only — never let this kill the run.
+	}
+}
+
+/**
  * Run a pi subprocess with explicit model configuration
  * This is the core agent runner that accepts ModelConfig directly.
  */
@@ -177,11 +238,27 @@ export async function runAgentWithConfig(
 		modelConfig.thinking,
 	];
 
-	// Restrict tools based on role
+	// Restrict tools based on role. The two strings below are intentionally
+	// constants — varying the --tools allowlist changes pi's tool-schema prefix
+	// and breaks cache between invocations of the same role. Read-only and write
+	// roles will never share a cache prefix; that's by design.
+	let roleArgs = "";
 	if (role && READ_ONLY_ROLES.has(role)) {
-		args.push("--tools", "read,bash,grep,find,ls");
+		roleArgs = "read,bash,grep,find,ls";
+		args.push("--tools", roleArgs);
 	} else if (role && WRITE_ROLES.has(role)) {
-		args.push("--tools", "read,bash,edit,write,grep,find,ls");
+		roleArgs = "read,bash,edit,write,grep,find,ls";
+		args.push("--tools", roleArgs);
+	}
+
+	// Cache-break detection (technique #7 phase 1): hash system prompt + model
+	// config per (cwd, role) and write a diff sample if the system prompt
+	// changed since the last call for the same source. Post-call cacheRead
+	// totals (below) plus this pre-call diff are enough to explain regressions.
+	const hashCheck = recordPromptHash(cwd, role, systemPrompt, modelConfig, roleArgs);
+	if (hashCheck.systemChanged) {
+		const newHash = hashString(systemPrompt);
+		writeCacheDiff(cwd, role, systemPrompt, hashCheck.previousSystemHash, newHash);
 	}
 
 	// Write system prompt to temp file
@@ -230,6 +307,26 @@ export async function runAgentWithConfig(
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
+
+			// Streaming idle-timeout watchdog. If pi stops emitting any stdout/stderr
+			// for this long, kill it. Catches the "server stopped sending events but
+			// connection still open" hang documented in api-connection-report.md §5.2.
+			// Default mirrors Claude Code's CLAUDE_STREAM_IDLE_TIMEOUT_MS=90s.
+			const idleTimeoutMs = Number(process.env.SPEC_PIPELINE_STREAM_IDLE_TIMEOUT_MS) || 90_000;
+			let idleHandle: NodeJS.Timeout | undefined;
+			const armIdle = () => {
+				if (idleHandle) clearTimeout(idleHandle);
+				if (idleTimeoutMs <= 0) return;
+				idleHandle = setTimeout(() => {
+					error += `\n[spec-pipeline] streaming idle timeout: no events for ${idleTimeoutMs}ms — killing pi subprocess\n`;
+					proc?.kill("SIGTERM");
+					setTimeout(() => {
+						if (proc && !proc.killed) proc.kill("SIGKILL");
+					}, 5000);
+				}, idleTimeoutMs);
+				idleHandle.unref?.();
+			};
+			armIdle();
 
 			let buffer = "";
 
@@ -304,6 +401,7 @@ export async function runAgentWithConfig(
 			};
 
 			proc.stdout?.on("data", (data) => {
+				armIdle();
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
@@ -311,10 +409,12 @@ export async function runAgentWithConfig(
 			});
 
 			proc.stderr?.on("data", (data) => {
+				armIdle();
 				error += data.toString();
 			});
 
 			proc.on("close", (code) => {
+				if (idleHandle) clearTimeout(idleHandle);
 				if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 0);
 			});

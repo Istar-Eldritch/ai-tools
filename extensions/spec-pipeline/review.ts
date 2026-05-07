@@ -196,9 +196,14 @@ export async function runReview(
 		await createCheckpointAndSave(cwd, state, role, saveFn, phaseIndex, cycle, notify);
 
 		const reviewStartTime = new Date();
+		// Keep the user message byte-identical across cycles so prompt-cache prefixes
+		// remain reusable. Earlier we appended a "continuing review after fixes" note
+		// on cycle ≥ 2 — that broke cache for every later cycle. The reviewer can
+		// observe applied fixes from git diff/status, so the note carries no signal
+		// the agent doesn't already have.
 		const reviewResult = await runAgentWithConfig(
 			reviewerConfig,
-			cycle === 1 ? reviewTask : `${reviewTask}\n\nNote: continuing review after fixes were applied in a prior cycle.`,
+			reviewTask,
 			cwd,
 			systemPrompts[role],
 			signal,

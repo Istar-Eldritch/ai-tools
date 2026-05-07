@@ -27,7 +27,13 @@ import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
  * - CLAUDE_NATIVE_NO_RESUME=1: do not reuse the Claude Code session id between turns
  * - CLAUDE_NATIVE_EFFORT: low | medium | high | xhigh | max (global fallback; pi's thinking level takes precedence)
  * - CLAUDE_NATIVE_TIMEOUT_MS: terminate an active request after this many ms (default: no timeout)
- * - CLAUDE_NATIVE_IDLE_TIMEOUT_MS: terminate idle long-lived process after this many ms (default: 600000)
+ * - CLAUDE_NATIVE_STREAM_IDLE_TIMEOUT_MS: abort an in-flight turn if the Claude CLI emits no
+ *   stdout/stderr events for this many ms (default: 90000). Catches hung connections where
+ *   the CLI stops streaming but doesn't close stdout. Distinct from CLAUDE_NATIVE_IDLE_TIMEOUT_MS,
+ *   which is *between* turns.
+ * - CLAUDE_NATIVE_IDLE_TIMEOUT_MS: tear down a pooled, between-turns idle process after this
+ *   many ms (default: 600000). This is process reuse / pool TTL — NOT a watchdog for active
+ *   requests; for that, see CLAUDE_NATIVE_STREAM_IDLE_TIMEOUT_MS above.
  * - CLAUDE_NATIVE_HEARTBEAT_MS: emit "still running" thinking ticks while the CLI is silent (default: 0/off)
  * - CLAUDE_NATIVE_HOST_COMPACTION=1: re-enable pi's host-side compaction while on a claude-native
  *   model (disabled by default because the Claude CLI manages its own session context, so pi's
@@ -391,6 +397,8 @@ export function streamClaudeNative(
 
 	const configuredTimeoutMs = numberFromEnv("CLAUDE_NATIVE_TIMEOUT_MS");
 	const timeoutMs = configuredTimeoutMs && configuredTimeoutMs > 0 ? configuredTimeoutMs : undefined;
+	const configuredStreamIdle = numberFromEnv("CLAUDE_NATIVE_STREAM_IDLE_TIMEOUT_MS", 90_000);
+	const streamIdleTimeoutMs = configuredStreamIdle && configuredStreamIdle > 0 ? configuredStreamIdle : undefined;
 
 	runtime.runTurn(prompt, {
 		onMessage: (msg) => {
@@ -423,6 +431,7 @@ export function streamClaudeNative(
 					else if (msg.stop_reason === "tool_use") output.stopReason = "toolUse";
 				}
 				updateUsageFromResult(model, output, msg);
+				processPool.recordTurnUsage(key, { cacheRead: output.usage.cacheRead, input: output.usage.input });
 			}
 		},
 		onMalformedJson: (line) => appendStatus(stream, output, `Claude Code malformed JSON: ${line.slice(0, 200)}`, thinkingActive),
@@ -436,10 +445,16 @@ export function streamClaudeNative(
 	}, {
 		signal: options?.signal,
 		timeoutMs,
+		streamIdleTimeoutMs,
 	}).then(finishDone, (err) => {
 		const message = errorMessage(err);
 		processPool.invalidateKey(key, `request failed: ${message}`, { clearSession: turnErrorUnsafeSession(err) });
-		const reason = options?.signal?.aborted || turnErrorCode(err) === "aborted" ? "aborted" : "error";
+		// "terminated" arrives when a session lifecycle event (tree/fork/switch/
+		// compact/shutdown) tore down the runtime mid-flight. Treat that as an
+		// abort, not an error — the consumer expects abort semantics on
+		// lifecycle-driven cancellation.
+		const code = turnErrorCode(err);
+		const reason = options?.signal?.aborted || code === "aborted" || code === "terminated" ? "aborted" : "error";
 		finishError(message, reason);
 	});
 
