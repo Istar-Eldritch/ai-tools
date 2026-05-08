@@ -541,7 +541,7 @@ describe("claude native provider integration", () => {
 		);
 	});
 
-	it("does not emit thinking events by default (thinking mode off)", async () => {
+	it("emits status thinking events even when reasoning is off (so non-reasoning runs aren't silent)", async () => {
 		MockClaudeNativeProcess.scenarios.push(
 			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "one" }] },
 			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "two" }] },
@@ -551,8 +551,8 @@ describe("claude native provider integration", () => {
 		const firstEvents = await collectEvents(streamClaudeNative(createModel(), createContext("one")));
 		const secondEvents = await collectEvents(streamClaudeNative(createModel(), createContext("two")));
 
-		expect(firstEvents.some((event) => event.type.startsWith("thinking"))).toBe(false);
-		expect(secondEvents.some((event) => event.type.startsWith("thinking"))).toBe(false);
+		expect(firstEvents.some((event) => event.type === "thinking_delta" && event.delta.includes("process started"))).toBe(true);
+		expect(secondEvents.some((event) => event.type === "thinking_delta" && event.delta.includes("process reused"))).toBe(true);
 	});
 
 	it("emits start and reuse status updates as thinking blocks when reasoning is set", async () => {

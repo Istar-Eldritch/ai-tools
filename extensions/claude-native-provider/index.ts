@@ -34,7 +34,9 @@ import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
  * - CLAUDE_NATIVE_IDLE_TIMEOUT_MS: tear down a pooled, between-turns idle process after this
  *   many ms (default: 600000). This is process reuse / pool TTL — NOT a watchdog for active
  *   requests; for that, see CLAUDE_NATIVE_STREAM_IDLE_TIMEOUT_MS above.
- * - CLAUDE_NATIVE_HEARTBEAT_MS: emit "still running" thinking ticks while the CLI is silent (default: 0/off)
+ * - CLAUDE_NATIVE_HEARTBEAT_MS: emit "still running" thinking ticks while the CLI is silent (default: 0/off).
+ *   Fires regardless of model reasoning capability so non-reasoning runs (e.g. spec-pipeline agents) still
+ *   get progress feedback. Set CLAUDE_NATIVE_STATUS_UPDATES=0 to suppress.
  * - CLAUDE_NATIVE_HOST_COMPACTION=1: re-enable pi's host-side compaction while on a claude-native
  *   model (disabled by default because the Claude CLI manages its own session context, so pi's
  *   summary is never sent to Claude and only burns tokens)
@@ -224,8 +226,8 @@ function appendThinking(stream: AssistantMessageEventStream, output: AssistantMe
 	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
 }
 
-function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string, active = false) {
-	if (!status || !active || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
+function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string) {
+	if (!status || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
 	appendThinking(stream, output, status);
 }
 
@@ -337,14 +339,13 @@ export function streamClaudeNative(
 		poolEntry.created
 			? `Claude Code process started (${poolEntry.resumedClaudeSession ? "resuming prior Claude session" : "fresh session"}; model=${key.modelAlias})`
 			: `Claude Code process reused (model=${key.modelAlias})`,
-		thinkingActive,
 	);
 	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS", 0);
 	let heartbeatIndex: number | undefined;
 	let heartbeatText = "";
 	const tickHeartbeat = () => {
 		if (finished) return;
-		if (!thinkingActive || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
+		if (process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
 		const idleSeconds = Math.max(1, Math.round((Date.now() - lastActivity) / 1000));
 		if (heartbeatIndex === undefined) {
 			heartbeatText = `Claude Code still running (${idleSeconds}s since last CLI event)`;
@@ -407,9 +408,9 @@ export function streamClaudeNative(
 			if (msg.type === "rate_limit_event") {
 				const resumeAt = msg.rate_limit_resets_at ?? msg.retry_after_ms ?? msg.retry_after;
 				const detail = resumeAt ? ` (resets at ${resumeAt})` : "";
-				appendStatus(stream, output, `Claude Code rate limited${detail}`, thinkingActive);
+				appendStatus(stream, output, `Claude Code rate limited${detail}`);
 			} else if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result" && msg.type !== "system" && msg.type !== "init" && msg.type !== "user") {
-				appendStatus(stream, output, `Claude Code event: ${msg.type}`, thinkingActive);
+				appendStatus(stream, output, `Claude Code event: ${msg.type}`);
 			}
 
 			if (msg.type === "assistant") {
@@ -434,14 +435,14 @@ export function streamClaudeNative(
 				processPool.recordTurnUsage(key, { cacheRead: output.usage.cacheRead, input: output.usage.input });
 			}
 		},
-		onMalformedJson: (line) => appendStatus(stream, output, `Claude Code malformed JSON: ${line.slice(0, 200)}`, thinkingActive),
+		onMalformedJson: (line) => appendStatus(stream, output, `Claude Code malformed JSON: ${line.slice(0, 200)}`),
 		onStderr: (text) => {
 			lastActivity = Date.now();
 			stderr += text;
 			const lines = text.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
-			for (const line of lines) appendStatus(stream, output, `Claude Code stderr: ${line}`, thinkingActive);
+			for (const line of lines) appendStatus(stream, output, `Claude Code stderr: ${line}`);
 		},
-		onStatus: (status) => appendStatus(stream, output, status, thinkingActive),
+		onStatus: (status) => appendStatus(stream, output, status),
 	}, {
 		signal: options?.signal,
 		timeoutMs,
