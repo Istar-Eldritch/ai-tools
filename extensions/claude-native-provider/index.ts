@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	type Api,
 	type AssistantMessage,
@@ -19,7 +21,7 @@ import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
  * This intentionally does NOT call Anthropic's private CCR/session APIs. It shells out to
  * `claude -p`, so auth/subscription behavior stays inside the native client.
  *
- * Environment knobs:
+ * Environment knobs (all can also be set in .pi/claude-native.json as camelCase keys):
  * - CLAUDE_NATIVE_BIN: path/name of Claude Code binary (default: claude)
  * - CLAUDE_NATIVE_ALLOWED_TOOLS: comma/space separated allowlist passed to --allowedTools
  * - CLAUDE_NATIVE_PERMISSION_MODE: auto | default | acceptEdits | dontAsk | plan | bypassPermissions | none (default: bypassPermissions)
@@ -40,7 +42,34 @@ import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
  * - CLAUDE_NATIVE_HOST_COMPACTION=1: re-enable pi's host-side compaction while on a claude-native
  *   model (disabled by default because the Claude CLI manages its own session context, so pi's
  *   summary is never sent to Claude and only burns tokens)
+ *
+ * Project config (.pi/claude-native.json in cwd):
+ * Overrides hardcoded defaults but is overridden by environment variables.
+ * Supported keys: streamIdleTimeoutMs, timeoutMs, heartbeatMs, idleTimeoutMs
+ * Example: { "streamIdleTimeoutMs": 900000 }
  */
+
+/** Project-level config loaded once from .pi/claude-native.json at startup. */
+interface ProjectConfig {
+	streamIdleTimeoutMs?: number;
+	timeoutMs?: number;
+	heartbeatMs?: number;
+	idleTimeoutMs?: number;
+}
+
+function loadProjectConfig(cwd: string): ProjectConfig {
+	try {
+		const raw = readFileSync(join(cwd, ".pi", "claude-native.json"), "utf8");
+		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as ProjectConfig;
+	} catch {
+		// file absent or unreadable — no project config
+	}
+	return {};
+}
+
+// Resolved once at extension load time; pi's cwd is stable for the session.
+const projectConfig: ProjectConfig = loadProjectConfig(process.cwd());
 
 const PROVIDER = "claude-native";
 const API = "claude-native-cli";
@@ -340,7 +369,7 @@ export function streamClaudeNative(
 			? `Claude Code process started (${poolEntry.resumedClaudeSession ? "resuming prior Claude session" : "fresh session"}; model=${key.modelAlias})`
 			: `Claude Code process reused (model=${key.modelAlias})`,
 	);
-	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS", 0);
+	const heartbeatMs = numberFromEnv("CLAUDE_NATIVE_HEARTBEAT_MS") ?? projectConfig.heartbeatMs ?? 0;
 	let heartbeatIndex: number | undefined;
 	let heartbeatText = "";
 	const tickHeartbeat = () => {
@@ -396,9 +425,9 @@ export function streamClaudeNative(
 		stream.end();
 	};
 
-	const configuredTimeoutMs = numberFromEnv("CLAUDE_NATIVE_TIMEOUT_MS");
+	const configuredTimeoutMs = numberFromEnv("CLAUDE_NATIVE_TIMEOUT_MS") ?? projectConfig.timeoutMs;
 	const timeoutMs = configuredTimeoutMs && configuredTimeoutMs > 0 ? configuredTimeoutMs : undefined;
-	const configuredStreamIdle = numberFromEnv("CLAUDE_NATIVE_STREAM_IDLE_TIMEOUT_MS", 90_000);
+	const configuredStreamIdle = numberFromEnv("CLAUDE_NATIVE_STREAM_IDLE_TIMEOUT_MS") ?? projectConfig.streamIdleTimeoutMs ?? 90_000;
 	const streamIdleTimeoutMs = configuredStreamIdle && configuredStreamIdle > 0 ? configuredStreamIdle : undefined;
 
 	runtime.runTurn(prompt, {
