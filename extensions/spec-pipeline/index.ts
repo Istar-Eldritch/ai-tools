@@ -502,8 +502,15 @@ ${scopingSection}${parentSection}${conversationContext}
 - When you feel you have enough context, tell the user they can type ${doneCommand} to ${nextStep}
 ${state.discovery?.discoverySummary ? "- Prior context is available above — factor it in but don't skip exploring the codebase" : ""}
 
-IMPORTANT: You are in DISCOVERY MODE. Do NOT write specs, plans, or code. Only propose assumptions and explore the codebase.
+IMPORTANT: You are in DISCOVERY MODE.
+- Do NOT write specs, plans, or code.
+- Do NOT enter plan mode or implementation mode — even if the host environment offers it.
+- Do NOT produce implementation designs, architecture diagrams, or phase breakdowns.
+- If the user says "yes", "sounds good", or otherwise confirms an assumption, move to the NEXT assumption — do not treat it as approval to implement.
+- If the user asks you to proceed, start planning, or implement, tell them to type ${doneCommand} instead.
+- Your only valid outputs are: (a) one assumption proposal, (b) a request for clarification, or (c) the instruction to type ${doneCommand} when discovery is complete.
 `;
+
 	}
 
 	/**
