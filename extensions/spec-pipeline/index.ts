@@ -158,7 +158,7 @@ import { retryFailedOperation } from "./review.ts";
 
 // Import pipelines
 import { runSpecPipeline } from "./spec-pipeline.ts";
-import { runImplementPipeline } from "./implement-pipeline.ts";
+import { runImplementPipeline, extractPhases } from "./implement-pipeline.ts";
 import { runHierarchyPipeline } from "./hierarchy-pipeline.ts";
 
 // Import system prompts
@@ -956,6 +956,17 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		if (!state.specDraft.trim()) {
 			ctx.ui.notify("Spec file is empty. Continue chatting to guide the LLM.", "error");
 			return;
+		}
+
+		// Warn if the spec has no phase table — /implement will fall back to a single phase
+		const { paths: detectedPhases } = extractPhases(state.specDraft, state.specTimestamp, "check");
+		if (detectedPhases.length === 0) {
+			ctx.ui.notify(
+				"⚠️  No phase table found in the spec.\n" +
+				"/implement will treat this as a single phase.\n" +
+				"Add a phases table (| Phase | Focus | Effort |) if you want parallel phase planning.",
+				"warning"
+			);
 		}
 
 		// Mark drafting as complete
