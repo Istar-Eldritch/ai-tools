@@ -1,23 +1,29 @@
 /**
- * Commit message generation using the configured model via the pi SDK for better context-aware messages.
- * 
- * Uses a minimal SDK session with NO tools so the model just generates text
- * without trying to read files or run commands.
+ * Commit message generation.
+ *
+ * Spawns a `pi` subprocess in print/no-tools mode to generate conventional-commit
+ * messages from the staged diff. Subprocess (not in-process SDK) is intentional:
+ * spec-pipeline configs often reference custom-provider models (e.g.
+ * `claude-native/haiku`) registered by sibling extensions at pi startup. Those
+ * providers are not visible to a fresh in-process SDK session, so the previous
+ * in-process implementation silently fell back to template messages for any
+ * non-built-in provider.
  */
 
+import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ModelConfig, RoleName } from "./types.ts";
 
 // ============================================
 // Types
 // ============================================
 
-/**
- * Context for commit message generation
- */
 export interface CommitMessageContext {
 	/** The role that performed the work (e.g., "specDrafter", "implementer") */
 	role: RoleName;
-	/** The model configuration that was used */
+	/** The model configuration that was used for the actual work */
 	modelConfig: ModelConfig;
 	/** Files that were modified by the agent */
 	files: string[];
@@ -35,314 +41,390 @@ export interface CommitMessageContext {
 	diff?: string;
 }
 
-/**
- * Result type for commit message generation
- * 
- * Always returns type "success" since generation is now deterministic.
- * The "fallback" type is retained for backward compatibility but never produced.
- * 
- * @example
- * { type: "success", message: "feat(phase-1): implement backend API endpoints" }
- */
-export type CommitMessageResult = 
+export type CommitMessageResult =
 	| { type: "success"; message: string }
 	| { type: "fallback"; message: string };
 
 // ============================================
-// Deterministic Message Templates
+// Phase/Doc Name Extraction
 // ============================================
 
-/** Maximum number of files to list in commit body */
-const MAX_FILES_IN_BODY = 20;
-
 /**
- * Extract phase name from a phase path
+ * Extract phase name from a phase path.
  * Phase paths look like: "20250209_myproject/phase1_backend_api.md"
- * This extracts "backend_api" from the filename
+ * This extracts "backend_api" → "backend api"
  */
 export function extractPhaseName(phasePath: string): string | undefined {
-	// Get just the filename
 	const filename = phasePath.split("/").pop();
 	if (!filename) return undefined;
-	
-	// Match pattern: phaseN_name.md
 	const match = filename.match(/^phase\d+_(.+)\.md$/);
 	if (!match) return undefined;
-	
-	// Convert underscores to spaces for readability
 	return match[1].replace(/_/g, " ");
 }
 
 /**
- * Extract document name from spec/roadmap/epic filename
- * Filenames look like: 
- *   - "20250209_spec_user_auth.md"
- *   - "2602071200_roadmap_warm_pools.md"
- *   - "2602071200_epic_user_auth.md"
- * This extracts "user_auth", "warm_pools", etc. and converts to "user auth", "warm pools", etc.
+ * Extract document name from spec/roadmap/epic filename.
+ * e.g. "2602071200_roadmap_warm_pools.md" → "warm pools"
  */
 export function extractDocName(filename: string): string | undefined {
-	// Get just the filename (in case a path was passed)
 	const name = filename.split("/").pop();
 	if (!name) return undefined;
-	
-	// Match pattern: TIMESTAMP_TYPE_name.ext where TYPE is spec, roadmap, epic, discovery, etc.
 	const match = name.match(/^\d+_(?:spec|roadmap|epic|discovery|brainstorm|fix|guide)_(.+)\.(md|typ)$/);
 	if (!match) return undefined;
-	
-	// Convert underscores to spaces for readability
 	return match[1].replace(/_/g, " ");
 }
 
+// ============================================
+// Fallback Template
+// ============================================
+
+const MAX_FILES_IN_BODY = 20;
+/** Phase-name scopes longer than this are dropped from the scope (template only). */
+const MAX_PHASE_NAME_IN_SCOPE = 24;
+
 /**
- * Generate a short scope string from a phase number and optional name.
- * Only used for deterministic fallback messages.
+ * Pick a short scope for fallback messages.
+ *
+ * Truncating phase names with "..." produces ugly scopes like
+ * `phase-3/frontend renamefilemodalhtm...`, so when the phase name would be
+ * too long we just drop it and use `phase-N`.
  */
 function phaseScope(phase?: number, phaseName?: string): string {
 	if (phase === undefined) return "pipeline";
-	if (phaseName) {
-		// Use phase name if available, truncate if too long
-		const name = phaseName.length > 30 ? phaseName.slice(0, 27) + "..." : phaseName;
-		return `phase-${phase}/${name}`;
+	if (phaseName && phaseName.length <= MAX_PHASE_NAME_IN_SCOPE) {
+		return `phase-${phase}/${phaseName}`;
 	}
 	return `phase-${phase}`;
 }
 
-/**
- * Build the commit body listing modified files
- */
 function buildFileListBody(files: string[]): string {
 	if (files.length === 0) return "";
-	
 	const lines: string[] = [""];
-	if (files.length <= MAX_FILES_IN_BODY) {
-		for (const file of files) {
-			lines.push(`- ${file}`);
-		}
-	} else {
-		for (const file of files.slice(0, MAX_FILES_IN_BODY)) {
-			lines.push(`- ${file}`);
-		}
+	const shown = files.slice(0, MAX_FILES_IN_BODY);
+	for (const file of shown) lines.push(`- ${file}`);
+	if (files.length > MAX_FILES_IN_BODY) {
 		lines.push(`- ... and ${files.length - MAX_FILES_IN_BODY} more files`);
 	}
 	return lines.join("\n");
 }
 
 /**
- * Generate a fallback commit message based on the agent context.
- * Used when model generation fails or times out.
+ * Last-resort message used when the LLM call fails. Generic by design — the
+ * file list at least tells a human reader which area was touched.
  */
 function generateFallbackMessage(context: CommitMessageContext): string {
-	const { role, files, phase, phaseName, cycle } = context;
-	const scope = phaseScope(phase, phaseName);
+	const { role, files, phase, phaseName, cycle, docName } = context;
+	const scope = docName ?? phaseScope(phase, phaseName);
 	const body = buildFileListBody(files);
-	
+
 	let subject: string;
-	
 	switch (role) {
 		case "brainstormAgent":
 			subject = `docs(${scope}): capture brainstorm session`;
 			break;
-		
 		case "planDrafter":
 			subject = `docs(${scope}): create implementation plan`;
 			break;
-		
 		case "implementer":
 			subject = `feat(${scope}): implement phase changes`;
 			break;
-		
 		case "addressReview":
-			if (cycle !== undefined) {
-				subject = `fix(${scope}): address review feedback (cycle ${cycle})`;
-			} else {
-				subject = `fix(${scope}): address review feedback`;
-			}
+			subject = cycle !== undefined
+				? `fix(${scope}): address review feedback (cycle ${cycle})`
+				: `fix(${scope}): address review feedback`;
 			break;
-		
 		case "codeReviewer":
 			subject = `refactor(${scope}): apply code review changes`;
 			break;
-		
 		default:
 			subject = `chore(${scope}): ${role} changes`;
 			break;
 	}
-	
 	return body ? `${subject}\n${body}` : subject;
 }
 
+// ============================================
+// Prompt
+// ============================================
+
 /**
- * Build a prompt to generate a contextual commit message
+ * Maximum diff bytes we feed the model. The diff drives message quality, but
+ * large diffs (8KB+) waste cache and rarely add information past the first
+ * couple of hunks. The truncation marker tells the model not to assume the
+ * whole diff was shown.
  */
-function buildCommitPrompt(context: CommitMessageContext): string {
-	const { role, files, phase, phaseName, docName, cycle, reviewFeedback, diff } = context;
-	
-	const parts: string[] = [
-		"Generate a concise git commit message following conventional commits format.",
-		"The message MUST accurately describe the actual changes shown in the diff below.",
-		"Do NOT invent or hallucinate functionality that is not in the diff.",
+const MAX_DIFF_LENGTH = 8000;
+
+function truncateDiff(diff: string): string {
+	if (diff.length <= MAX_DIFF_LENGTH) return diff;
+	return diff.slice(0, MAX_DIFF_LENGTH) + "\n... (diff truncated)";
+}
+
+function buildSystemPrompt(): string {
+	return [
+		"You write git commit messages for an automated spec-pipeline. Output ONLY the commit message — no preamble, no explanation, no surrounding code fences.",
 		"",
-		"Context:",
-	];
-	
-	// Add role context
+		"Format: conventional commits.",
+		"  <type>(<scope>): <subject>",
+		"  ",
+		"  <optional body>",
+		"",
+		"Rules:",
+		"- type: feat | fix | docs | refactor | test | chore",
+		"- subject: lowercase, imperative mood ('add X', not 'added X'), no trailing period, under 72 characters",
+		"- subject MUST describe what the staged diff actually does — not the role or phase name",
+		"- body (optional): 1–4 short bullet points explaining what changed and why, wrapped at ~72 chars. Skip the body if the subject is self-explanatory.",
+		"- Do NOT echo file paths as a bullet list — the body should explain change intent, not enumerate files",
+		"- Do NOT invent functionality not present in the diff",
+	].join("\n");
+}
+
+function buildUserPrompt(context: CommitMessageContext): string {
+	const { role, files, phase, phaseName, docName, cycle, reviewFeedback, diff } = context;
+	const parts: string[] = ["Context for this commit:"];
+
 	switch (role) {
 		case "brainstormAgent":
-			parts.push("- Role: Capturing brainstorm session");
-			parts.push("- Action: Wrote brainstorm document synthesizing exploratory discussion");
+			parts.push("- Stage: brainstorm capture (a brainstorm document was written)");
 			break;
 		case "planDrafter":
-			parts.push(`- Role: Planning phase ${phase ?? 'N/A'}${phaseName ? ` (${phaseName})` : ''}`);
-			parts.push("- Action: Created an implementation plan document");
+			parts.push(`- Stage: implementation plan for phase ${phase ?? "?"}${phaseName ? ` (${phaseName})` : ""}`);
 			break;
 		case "implementer":
-			parts.push(`- Role: Implementing phase ${phase ?? 'N/A'}${phaseName ? ` (${phaseName})` : ''}`);
-			parts.push("- Action: Implemented code changes based on the plan");
+			parts.push(`- Stage: implementation of phase ${phase ?? "?"}${phaseName ? ` (${phaseName})` : ""}`);
 			break;
 		case "addressReview":
-			parts.push(`- Role: Addressing code review feedback${cycle ? ` (cycle ${cycle})` : ''}`);
+			parts.push(`- Stage: addressing review feedback${cycle ? ` (cycle ${cycle})` : ""}`);
 			if (reviewFeedback) {
-				parts.push(`- Feedback: ${reviewFeedback.slice(0, 200)}${reviewFeedback.length > 200 ? '...' : ''}`);
+				const snippet = reviewFeedback.slice(0, 400);
+				parts.push(`- Review feedback excerpt: ${snippet}${reviewFeedback.length > 400 ? "..." : ""}`);
 			}
 			break;
 		case "codeReviewer":
-			parts.push(`- Role: Applying code review suggestions`);
+			parts.push("- Stage: applying code-review fixes");
+			break;
+		default:
+			// Other roles (e.g. specDrafter, roadmapDrafter) reach here.
+			// The diff + files list below is enough context for the model.
+			parts.push(`- Stage: ${role}`);
 			break;
 	}
-	
-	// Add document context if available
-	if (docName) {
-		parts.push(`- Document: ${docName}`);
-	}
-	
-	// Add files context
-	parts.push("", "Files modified:");
+
+	if (docName) parts.push(`- Document: ${docName}`);
+
+	parts.push("", "Files staged:");
 	if (files.length === 0) {
 		parts.push("- (no files)");
-	} else if (files.length <= 10) {
-		files.forEach(f => parts.push(`- ${f}`));
 	} else {
-		files.slice(0, 10).forEach(f => parts.push(`- ${f}`));
-		parts.push(`- ... and ${files.length - 10} more files`);
+		const shown = files.slice(0, 15);
+		for (const f of shown) parts.push(`- ${f}`);
+		if (files.length > 15) parts.push(`- ... and ${files.length - 15} more`);
 	}
-	
-	// Add the actual diff - this is critical for accurate commit messages
+
 	if (diff) {
-		parts.push("");
-		parts.push("Git diff of staged changes:");
-		parts.push("```");
-		parts.push(diff);
-		parts.push("```");
+		parts.push("", "Staged diff:", "```diff", truncateDiff(diff), "```");
 	}
-	
+
 	parts.push("");
-	parts.push("Requirements:");
-	parts.push("- Use conventional commits format: <type>(<scope>): <subject>");
-	parts.push("- Type must be one of: feat, fix, docs, refactor, test, chore");
 	if (docName) {
-		parts.push(`- Scope MUST be: ${docName}`);
+		parts.push(`Scope MUST be: ${docName}`);
+	} else if (phaseName && phaseName.length <= MAX_PHASE_NAME_IN_SCOPE) {
+		parts.push(`Suggested scope: a short component name from the diff (e.g. 'auth', 'jobs', 'billing'). If nothing better fits, use 'phase-${phase}'.`);
 	} else {
-		parts.push("- Scope should be a short, meaningful word or two derived from what was actually changed (e.g., 'billing', 'auth', 'api', 'jobs')");
+		parts.push("Suggested scope: a short component name (1–2 words, lowercase) derived from what the diff actually changes — e.g. 'auth', 'jobs', 'billing', 'files'. Avoid invented or overly specific scopes.");
 	}
-	parts.push("- Subject line MUST accurately reflect what the diff actually changes");
-	parts.push("- Subject must be lowercase and under 72 characters");
-	parts.push("- Subject should describe WHAT was done based on the diff content");
-	parts.push("- Do NOT include a body with file list");
-	parts.push("- Output ONLY the commit message, nothing else");
-	
+	parts.push("Output the commit message and nothing else.");
+
 	return parts.join("\n");
 }
 
+// ============================================
+// Pi subprocess invocation
+// ============================================
+
 /**
- * Generate a commit message using the configured commit-message model via the pi SDK.
- * Uses a minimal session with NO tools for fast text-only generation.
- * Falls back to template-based message if model generation fails.
- * 
- * @param context - Context about the agent work and changes
- * @param _agentConfig - Unused, retained for backward compatibility
- * @param _cwd - Unused, retained for backward compatibility
- * @returns Result with generated message and whether fallback was used
+ * How long we wait for the commit-message subprocess. The job is small (a few
+ * hundred tokens of output, no tools), but custom providers like claude-native
+ * spawn their own subprocess and can have cold-start overhead, so 30s gives
+ * plenty of headroom before we fall back to a template.
+ */
+const SUBPROCESS_TIMEOUT_MS = 30_000;
+
+interface PiResult {
+	exitCode: number;
+	output: string;
+	error: string;
+	timedOut: boolean;
+}
+
+function spawnPiCommitJob(
+	model: string,
+	thinking: string,
+	systemPrompt: string,
+	userPrompt: string,
+	cwd: string,
+): Promise<PiResult> {
+	return new Promise((resolve) => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-commit-"));
+		const promptPath = path.join(tmpDir, "system.md");
+		fs.writeFileSync(promptPath, systemPrompt, { encoding: "utf-8", mode: 0o600 });
+
+		const args = [
+			"--mode", "json",
+			"-p",
+			"--no-session",
+			"--no-tools",
+			"--model", model,
+			"--thinking", thinking,
+			"--append-system-prompt", promptPath,
+			userPrompt,
+		];
+
+		let output = "";
+		let error = "";
+		let timedOut = false;
+
+		const proc = spawn("pi", args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+
+		const timeout = setTimeout(() => {
+			timedOut = true;
+			proc.kill("SIGTERM");
+			setTimeout(() => {
+				if (!proc.killed) proc.kill("SIGKILL");
+			}, 2000);
+		}, SUBPROCESS_TIMEOUT_MS);
+
+		let buffer = "";
+		const processLine = (line: string) => {
+			if (!line.trim()) return;
+			try {
+				const event = JSON.parse(line);
+				if (
+					event.type === "message_update" &&
+					event.assistantMessageEvent?.type === "text_delta" &&
+					typeof event.assistantMessageEvent.delta === "string"
+				) {
+					output += event.assistantMessageEvent.delta;
+				}
+			} catch {
+				// Non-JSON line; ignore. pi sometimes emits banner lines.
+			}
+		};
+
+		proc.stdout?.on("data", (data) => {
+			buffer += data.toString();
+			const lines = buffer.split("\n");
+			buffer = lines.pop() ?? "";
+			for (const line of lines) processLine(line);
+		});
+		proc.stderr?.on("data", (data) => {
+			error += data.toString();
+		});
+		proc.on("close", (code) => {
+			clearTimeout(timeout);
+			if (buffer.trim()) processLine(buffer);
+			try {
+				fs.unlinkSync(promptPath);
+				fs.rmdirSync(tmpDir);
+			} catch {
+				/* ignore */
+			}
+			resolve({ exitCode: code ?? 1, output, error, timedOut });
+		});
+		proc.on("error", (err) => {
+			clearTimeout(timeout);
+			error += `\n${err.message}`;
+			try {
+				fs.unlinkSync(promptPath);
+				fs.rmdirSync(tmpDir);
+			} catch {
+				/* ignore */
+			}
+			resolve({ exitCode: 1, output, error, timedOut });
+		});
+	});
+}
+
+// ============================================
+// Output sanitization & validation
+// ============================================
+
+const CONVENTIONAL_HEADER = /^(feat|fix|docs|refactor|test|chore)\([^)]+\):\s+\S/;
+const CONVENTIONAL_HEADER_NO_SCOPE = /^(feat|fix|docs|refactor|test|chore):\s+\S/;
+
+/**
+ * Strip framing the model sometimes adds: leading "Here is..." preambles,
+ * outer fenced code blocks, or stray "Output:" prefixes.
+ */
+function sanitizeMessage(raw: string): string {
+	let message = raw.trim();
+
+	// Drop a single outer code fence if the entire message is wrapped in one.
+	const fence = message.match(/^```(?:[\w-]+)?\n([\s\S]*?)\n```\s*$/);
+	if (fence) message = fence[1].trim();
+
+	// Drop common preamble lines that some models emit before the message.
+	const preamblePatterns = [
+		/^here(?:'s| is) (?:the |a )?commit message[:.]\s*/i,
+		/^commit message:\s*/i,
+		/^output:\s*/i,
+	];
+	for (const re of preamblePatterns) message = message.replace(re, "").trim();
+
+	return message;
+}
+
+function isValidConventionalMessage(message: string): boolean {
+	const firstLine = message.split("\n")[0];
+	if (!firstLine) return false;
+	if (firstLine.length > 120) return false; // sanity cap
+	return CONVENTIONAL_HEADER.test(firstLine) || CONVENTIONAL_HEADER_NO_SCOPE.test(firstLine);
+}
+
+// ============================================
+// Public API
+// ============================================
+
+/**
+ * Generate a commit message by shelling out to `pi -p --no-tools`. The
+ * subprocess inherits the pi runtime, so custom-provider models registered
+ * by sibling extensions (e.g. `claude-native/haiku`) resolve correctly.
+ *
+ * Falls back to a deterministic template if the subprocess fails, times out,
+ * or returns something that doesn't look like a conventional commit.
  */
 export async function generateCommitMessage(
 	context: CommitMessageContext,
 	agentConfig?: ModelConfig,
-	_cwd?: string
+	cwd?: string,
 ): Promise<CommitMessageResult> {
 	try {
-		const prompt = buildCommitPrompt(context);
-		const configuredModel = agentConfig?.model ?? context.modelConfig.model;
-		const configuredThinking = agentConfig?.thinking ?? context.modelConfig.thinking;
-		const provider = configuredModel.startsWith("gpt-") ? "openai" : "anthropic";
-		
-		// Dynamically import the SDK to avoid circular dependencies
-		const { createAgentSession, SessionManager, SettingsManager } = await import("@mariozechner/pi-coding-agent");
-		const { getModel } = await import("@mariozechner/pi-ai");
-		
-		const model = getModel(provider as any, configuredModel);
-		if (!model) {
+		const model = agentConfig?.model ?? context.modelConfig.model;
+		const thinking = agentConfig?.thinking ?? context.modelConfig.thinking ?? "off";
+		const systemPrompt = buildSystemPrompt();
+		const userPrompt = buildUserPrompt(context);
+
+		const result = await spawnPiCommitJob(model, thinking, systemPrompt, userPrompt, cwd ?? process.cwd());
+
+		if (process.env.DEBUG_COMMIT_MESSAGES) {
+			console.error("[commit-agent] pi exit=%d timedOut=%s raw=%s err=%s",
+				result.exitCode, result.timedOut,
+				JSON.stringify(result.output.slice(0, 500)),
+				result.error ? result.error.slice(0, 300) : "");
+		}
+
+		if (result.timedOut || result.exitCode !== 0 || !result.output.trim()) {
 			return { type: "fallback", message: generateFallbackMessage(context) };
 		}
-		
-		// Create session with no tools and in-memory storage
-		const { session } = await createAgentSession({
-			model,
-			thinkingLevel: configuredThinking,
-			tools: [],              // NO tools — just text generation
-			sessionManager: SessionManager.inMemory(),
-			settingsManager: SettingsManager.inMemory({
-				compaction: { enabled: false },
-				retry: { enabled: false },
-			}),
-		});
-		
-		// Collect output
-		let output = "";
-		session.subscribe((event: any) => {
-			if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-				output += event.assistantMessageEvent.delta;
-			}
-		});
-		
-		// Run with a timeout
-		const timeoutPromise = new Promise<void>((_, reject) => 
-			setTimeout(() => reject(new Error("timeout")), 10000)
-		);
-		
-		await Promise.race([
-			session.prompt(prompt),
-			timeoutPromise,
-		]);
-		
-		session.dispose();
-		
-		// Process output
-		let message = output.trim();
-		
-		if (process.env.DEBUG_COMMIT_MESSAGES) {
-			console.error("Commit message model output:", JSON.stringify(message));
+
+		const sanitized = sanitizeMessage(result.output);
+		if (!isValidConventionalMessage(sanitized)) {
+			return { type: "fallback", message: generateFallbackMessage(context) };
 		}
-		
-		// Remove markdown code blocks if present
-		const codeBlockMatch = message.match(/```(?:\w*\n)?([\s\S]*?)```/);
-		if (codeBlockMatch) {
-			message = codeBlockMatch[1].trim();
-		}
-		
-		// Validate it looks like a conventional commit
-		if (message.match(/^(feat|fix|docs|refactor|test|chore)\([^)]+\):/)) {
-			// Take only the first line as the subject
-			const firstLine = message.split("\n")[0].trim();
-			return { type: "success", message: firstLine };
-		}
-		
-		// If output didn't look valid, use fallback
-		return { type: "fallback", message: generateFallbackMessage(context) };
-		
+		return { type: "success", message: sanitized };
 	} catch (error) {
-		// On any error, use fallback
 		if (process.env.DEBUG_COMMIT_MESSAGES) {
-			console.error("Commit message model error:", error);
+			console.error("[commit-agent] threw:", error);
 		}
 		return { type: "fallback", message: generateFallbackMessage(context) };
 	}
