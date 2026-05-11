@@ -59,6 +59,19 @@ export interface ClaudeProcessConfig {
 	idleTimeoutMs: number;
 	spawnFn?: SpawnFn;
 	onExit?: (event: ClaudeProcessExitEvent) => void;
+	/**
+	 * Invoked for stdout JSON messages that arrive while no turn is in flight.
+	 * The Claude CLI emits `type:"system"` events (notably `task_notification`)
+	 * for background bash tasks even between user turns — without this hook
+	 * those events would be silently dropped.
+	 */
+	onOutOfTurnMessage?: (message: any) => void;
+	/**
+	 * Returns true when the process should NOT be reaped on idle timeout.
+	 * Consulted at idle-fire time; used to keep a process alive while it
+	 * still has running background bash tasks the model may want to react to.
+	 */
+	shouldDeferIdleReap?: () => boolean;
 }
 
 interface InFlightTurn {
@@ -181,7 +194,11 @@ export class ClaudeNativeProcess {
 			this.inFlight?.handlers.onMalformedJson?.(line);
 			return;
 		}
-		this.inFlight?.handlers.onMessage(message);
+		if (this.inFlight) {
+			this.inFlight.handlers.onMessage(message);
+		} else {
+			this.config.onOutOfTurnMessage?.(message);
+		}
 		if (isClaudeResultEvent(message)) this.resolveInFlight();
 	}
 
@@ -290,6 +307,11 @@ export class ClaudeNativeProcess {
 		this.clearIdleTimer();
 		if (this.config.idleTimeoutMs <= 0) return;
 		this.idleHandle = setTimeout(() => {
+			if (this.config.shouldDeferIdleReap?.()) {
+				logClaudeNativeDiagnostic("process.idle_reap_deferred", { idleTimeoutMs: this.config.idleTimeoutMs, cwd: this.config.cwd }, this.config.env);
+				this.armIdleTimer();
+				return;
+			}
 			logClaudeNativeDiagnostic("process.idle_reap", { idleTimeoutMs: this.config.idleTimeoutMs, cwd: this.config.cwd }, this.config.env);
 			this.terminateWithEvent(`idle timeout after ${this.config.idleTimeoutMs}ms`, "idle");
 		}, this.config.idleTimeoutMs);

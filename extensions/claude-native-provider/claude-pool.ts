@@ -57,6 +57,44 @@ export interface ClaudeNativeProcessPoolConfig {
 	createProcess?: (config: ClaudeProcessConfig) => ClaudeProcessRuntime;
 }
 
+/** Background-task event surfaced by the pool to consumers (the provider). */
+export interface ClaudeBackgroundTaskEvent {
+	/** Process key the event originated from. */
+	key: ClaudeProcessKey;
+	/** Whether the event arrived while a turn was in flight (true) or between turns (false). */
+	inTurn: boolean;
+	/** Subtype as emitted by the CLI: task_started, task_progress, task_updated, task_notification, task_summary, post_turn_summary. */
+	subtype: string;
+	/** Task id from the CLI, if present. */
+	taskId?: string;
+	/** For `task_notification`: completed | failed | stopped. */
+	status?: string;
+	/** Free-form summary text the CLI provides on terminal events. */
+	summary?: string;
+	/** The raw stdout message, in case the consumer needs more fields. */
+	raw: any;
+}
+
+export type ClaudeBackgroundTaskListener = (event: ClaudeBackgroundTaskEvent) => void;
+
+const TASK_EVENT_SUBTYPES = new Set([
+	"task_started",
+	"task_progress",
+	"task_updated",
+	"task_notification",
+	"task_summary",
+	"post_turn_summary",
+]);
+
+function isTaskEvent(message: any): boolean {
+	return message?.type === "system" && typeof message?.subtype === "string" && TASK_EVENT_SUBTYPES.has(message.subtype);
+}
+
+interface LiveTaskEntry {
+	taskId: string;
+	startedAt: number;
+}
+
 export function buildClaudeProcessKey(
 	model: Model<Api>,
 	options?: SimpleStreamOptions,
@@ -99,9 +137,97 @@ export class ClaudeNativeProcessPool {
 	private readonly claudeSessions = new Map<string, RememberedClaudeSession>();
 	/** Last observed turn-level usage per process key. Used to detect cache drops. */
 	private readonly lastUsage = new Map<string, { cacheRead: number; input: number }>();
+	/** Live background tasks per process keyId. Populated by stream events; consulted to keep the process alive while tasks run. */
+	private readonly liveTasks = new Map<string, Map<string, LiveTaskEntry>>();
+	private readonly backgroundListeners: ClaudeBackgroundTaskListener[] = [];
 	private lastObservedCwd?: string;
 
 	constructor(private readonly config: ClaudeNativeProcessPoolConfig = {}) {}
+
+	/**
+	 * Register a listener for background-task events surfaced by any pooled
+	 * process. The listener fires for both in-turn and out-of-turn events;
+	 * use `event.inTurn` to distinguish. Terminal `task_notification` events
+	 * also clear the task from the pool's live-task registry before firing.
+	 */
+	onBackgroundTaskEvent(listener: ClaudeBackgroundTaskListener): () => void {
+		this.backgroundListeners.push(listener);
+		return () => {
+			const index = this.backgroundListeners.indexOf(listener);
+			if (index >= 0) this.backgroundListeners.splice(index, 1);
+		};
+	}
+
+	/**
+	 * Forward an in-turn task event coming from the provider's `onMessage`
+	 * stream. Mirrors what we do for out-of-turn events so the registry stays
+	 * consistent regardless of whether the event arrived during or between
+	 * turns.
+	 */
+	handleInTurnTaskEvent(key: ClaudeProcessKey, message: any): void {
+		if (!isTaskEvent(message)) return;
+		this.processTaskEvent(key, message, true);
+	}
+
+	private processTaskEvent(key: ClaudeProcessKey, message: any, inTurn: boolean): void {
+		const keyId = serializeClaudeProcessKey(key);
+		const subtype = message.subtype as string;
+		const taskId = typeof message.task_id === "string" ? message.task_id : undefined;
+		const status = typeof message.status === "string" ? message.status : undefined;
+		const summary = typeof message.summary === "string" ? message.summary : undefined;
+
+		if (taskId) {
+			let bucket = this.liveTasks.get(keyId);
+			if (subtype === "task_started" || subtype === "task_progress" || subtype === "task_updated") {
+				if (!bucket) {
+					bucket = new Map();
+					this.liveTasks.set(keyId, bucket);
+				}
+				if (!bucket.has(taskId)) bucket.set(taskId, { taskId, startedAt: Date.now() });
+			} else if (subtype === "task_notification") {
+				bucket?.delete(taskId);
+				if (bucket && bucket.size === 0) this.liveTasks.delete(keyId);
+			}
+		}
+
+		const event: ClaudeBackgroundTaskEvent = { key, inTurn, subtype, taskId, status, summary, raw: message };
+		for (const listener of this.backgroundListeners) {
+			try {
+				listener(event);
+			} catch (err) {
+				logClaudeNativeDiagnostic("pool.background_listener_error", {
+					subtype,
+					taskId,
+					reason: err instanceof Error ? err.message : String(err),
+				}, this.config.env ?? process.env);
+			}
+		}
+	}
+
+	/**
+	 * Whether the process for the given key should defer idle-reap because it
+	 * still has live background bash tasks. Returns false once tasks have
+	 * exceeded their max age (configurable via CLAUDE_NATIVE_MAX_BG_TASK_AGE_MS,
+	 * default 1h) so a runaway bg shell can't pin a process forever.
+	 */
+	hasLiveTasks(keyId: string, now = Date.now()): boolean {
+		const bucket = this.liveTasks.get(keyId);
+		if (!bucket || bucket.size === 0) return false;
+		const env = this.config.env ?? process.env;
+		const maxAge = numberFromEnv("CLAUDE_NATIVE_MAX_BG_TASK_AGE_MS", 3_600_000, env);
+		if (!maxAge || maxAge <= 0) return true;
+		for (const entry of bucket.values()) {
+			if (now - entry.startedAt < maxAge) return true;
+		}
+		// All tasks are past the max age — give up on them so idle reap can proceed.
+		logClaudeNativeDiagnostic("pool.bg_tasks_expired", {
+			keyId,
+			liveTaskCount: bucket.size,
+			maxAgeMs: maxAge,
+		}, env);
+		this.liveTasks.delete(keyId);
+		return false;
+	}
 
 	getOrCreate(model: Model<Api>, options?: SimpleStreamOptions): ClaudeProcessPoolEntry {
 		const cwd = this.config.getCwd?.() ?? process.cwd();
@@ -148,6 +274,10 @@ export class ClaudeNativeProcessPool {
 				env,
 				idleTimeoutMs: numberFromEnv("CLAUDE_NATIVE_IDLE_TIMEOUT_MS", 600_000, env),
 				onExit: (event) => this.handleProcessExit(key, keyId, createdRuntime, event),
+				onOutOfTurnMessage: (message) => {
+					if (isTaskEvent(message)) this.processTaskEvent(key, message, false);
+				},
+				shouldDeferIdleReap: () => this.hasLiveTasks(keyId),
 			};
 			logClaudeNativeDiagnostic("pool.create_runtime", {
 				modelAlias: key.modelAlias,
@@ -246,6 +376,7 @@ export class ClaudeNativeProcessPool {
 		}, this.config.env ?? process.env);
 		for (const runtime of this.processes.values()) runtime.terminate(reason);
 		this.processes.clear();
+		this.liveTasks.clear();
 		if (options.clearSessions) this.claudeSessions.clear();
 		return before;
 	}
@@ -287,6 +418,7 @@ export class ClaudeNativeProcessPool {
 		if (runtime && this.processes.get(keyId) === runtime) {
 			this.processes.delete(keyId);
 		}
+		this.liveTasks.delete(keyId);
 		if (event.unsafeSession) {
 			this.claudeSessions.delete(serializeClaudeConversationKey(conversationKeyFromProcessKey(key)));
 		}
@@ -305,6 +437,7 @@ export class ClaudeNativeProcessPool {
 		const runtime = this.processes.get(keyId);
 		if (runtime) runtime.terminate(reason);
 		this.processes.delete(keyId);
+		this.liveTasks.delete(keyId);
 		if (options.clearSession) this.claudeSessions.delete(serializeClaudeConversationKey(conversationKeyFromProcessKey(key)));
 	}
 

@@ -383,4 +383,72 @@ describe("ClaudeNativeProcess", () => {
 		expect(logs).toContain("process.terminate");
 		expect(logs).not.toContain("claude-secret-session");
 	});
+
+	it("dispatches stdout lines to onOutOfTurnMessage when no turn is in flight", async () => {
+		const child = new FakeClaudeChild();
+		const spawnFn = vi.fn(() => child as any);
+		const outOfTurn: any[] = [];
+		const proc = new ClaudeNativeProcess({
+			bin: "claude",
+			args: ["-p"],
+			cwd: process.cwd(),
+			env: process.env,
+			idleTimeoutMs: 60_000,
+			spawnFn: spawnFn as any,
+			onOutOfTurnMessage: (msg) => outOfTurn.push(msg),
+		});
+
+		const inTurn: any[] = [];
+		const turn = proc.runTurn("hello", { onMessage: (msg) => inTurn.push(msg) });
+		writeJson(child, { type: "assistant", message: { content: [] } });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+
+		// Out-of-turn line after the result event resolves the turn.
+		writeJson(child, {
+			type: "system",
+			subtype: "task_notification",
+			task_id: "bash_1",
+			status: "completed",
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+
+		expect(outOfTurn).toEqual([
+			expect.objectContaining({ type: "system", subtype: "task_notification", task_id: "bash_1" }),
+		]);
+		// The same message should NOT have been delivered to the (already-finished) turn handler.
+		expect(inTurn.map((m) => m.type)).toEqual(["assistant", "result"]);
+		proc.terminate("test cleanup");
+	});
+
+	it("defers idle reap when shouldDeferIdleReap returns true", async () => {
+		vi.useFakeTimers();
+		const child = new FakeClaudeChild();
+		const spawnFn = vi.fn(() => child as any);
+		let live = true;
+		const proc = new ClaudeNativeProcess({
+			bin: "claude",
+			args: ["-p"],
+			cwd: process.cwd(),
+			env: process.env,
+			idleTimeoutMs: 1_000,
+			spawnFn: spawnFn as any,
+			shouldDeferIdleReap: () => live,
+		});
+
+		const turn = proc.runTurn("hello", { onMessage: () => {} });
+		writeJson(child, { type: "result", subtype: "success" });
+		await turn;
+
+		// First idle window — deferred.
+		vi.advanceTimersByTime(1_000);
+		expect(child.killed).toBe(false);
+		expect(proc.isLive()).toBe(true);
+
+		// Drop the live flag, next idle window reaps.
+		live = false;
+		vi.advanceTimersByTime(1_000);
+		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(proc.isLive()).toBe(false);
+	});
 });

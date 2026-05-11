@@ -235,4 +235,117 @@ describe("ClaudeNativeProcessPool", () => {
 		expect(err).toHaveBeenCalledWith(expect.stringContaining("pool.reset"));
 		expect(err.mock.calls.flat().join("\n")).not.toContain("claude-secret-session");
 	});
+
+	describe("background task events", () => {
+		it("forwards out-of-turn task_notification events to listeners with inTurn=false", () => {
+			const pool = createPool();
+			const events: any[] = [];
+			pool.onBackgroundTaskEvent((event) => events.push(event));
+
+			pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+			const runtime = FakeRuntime.instances[0];
+
+			runtime.config.onOutOfTurnMessage({
+				type: "system",
+				subtype: "task_notification",
+				task_id: "bash_1",
+				status: "failed",
+				summary: "exit code 1",
+			});
+
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({ inTurn: false, subtype: "task_notification", taskId: "bash_1", status: "failed", summary: "exit code 1" });
+		});
+
+		it("forwards in-turn events with inTurn=true via handleInTurnTaskEvent", () => {
+			const pool = createPool();
+			const events: any[] = [];
+			pool.onBackgroundTaskEvent((event) => events.push(event));
+
+			const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+			pool.handleInTurnTaskEvent(entry.key, {
+				type: "system",
+				subtype: "task_started",
+				task_id: "bash_1",
+			});
+
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({ inTurn: true, subtype: "task_started", taskId: "bash_1" });
+		});
+
+		it("ignores non-task system messages", () => {
+			const pool = createPool();
+			const events: any[] = [];
+			pool.onBackgroundTaskEvent((event) => events.push(event));
+
+			pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+			const runtime = FakeRuntime.instances[0];
+
+			runtime.config.onOutOfTurnMessage({ type: "system", subtype: "init" });
+			runtime.config.onOutOfTurnMessage({ type: "rate_limit_event" });
+			pool.handleInTurnTaskEvent({ modelAlias: "sonnet", effort: "none", cwd: "/repo", sessionIdentity: "pi-a" }, { type: "assistant" });
+
+			expect(events).toEqual([]);
+		});
+
+		it("defers idle reap while a task is live, allows it once the notification arrives", () => {
+			const pool = createPool();
+			pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+			const runtime = FakeRuntime.instances[0];
+
+			runtime.config.onOutOfTurnMessage({ type: "system", subtype: "task_started", task_id: "bash_1" });
+			expect(runtime.config.shouldDeferIdleReap()).toBe(true);
+
+			runtime.config.onOutOfTurnMessage({
+				type: "system",
+				subtype: "task_notification",
+				task_id: "bash_1",
+				status: "completed",
+			});
+			expect(runtime.config.shouldDeferIdleReap()).toBe(false);
+		});
+
+		it("expires stale tasks past CLAUDE_NATIVE_MAX_BG_TASK_AGE_MS and allows idle reap", () => {
+			process.env.CLAUDE_NATIVE_MAX_BG_TASK_AGE_MS = "1000";
+			const pool = createPool();
+			pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+			const runtime = FakeRuntime.instances[0];
+
+			const t0 = 1_000_000;
+			vi.spyOn(Date, "now").mockReturnValue(t0);
+			runtime.config.onOutOfTurnMessage({ type: "system", subtype: "task_started", task_id: "bash_1" });
+			expect(runtime.config.shouldDeferIdleReap()).toBe(true);
+
+			vi.spyOn(Date, "now").mockReturnValue(t0 + 5_000);
+			expect(runtime.config.shouldDeferIdleReap()).toBe(false);
+		});
+
+		it("clears live-task registry when a process exits", () => {
+			const pool = createPool();
+			const entry = pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+			const runtime = FakeRuntime.instances[0];
+
+			runtime.config.onOutOfTurnMessage({ type: "system", subtype: "task_started", task_id: "bash_1" });
+			const keyId = serializeClaudeProcessKey(entry.key);
+			expect(pool.hasLiveTasks(keyId)).toBe(true);
+
+			runtime.emitExit({ code: "process_close", reason: "child exit", unsafeSession: false });
+			expect(pool.hasLiveTasks(keyId)).toBe(false);
+		});
+
+		it("unsubscribe stops a listener from receiving further events", () => {
+			const pool = createPool();
+			const events: any[] = [];
+			const unsubscribe = pool.onBackgroundTaskEvent((event) => events.push(event));
+
+			pool.getOrCreate(model, { sessionId: "pi-a" } as any);
+			const runtime = FakeRuntime.instances[0];
+
+			runtime.config.onOutOfTurnMessage({ type: "system", subtype: "task_started", task_id: "bash_1" });
+			unsubscribe();
+			runtime.config.onOutOfTurnMessage({ type: "system", subtype: "task_notification", task_id: "bash_1", status: "completed" });
+
+			expect(events).toHaveLength(1);
+		});
+	});
 });

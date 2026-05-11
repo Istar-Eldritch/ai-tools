@@ -12,7 +12,7 @@ import {
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { ClaudeTurnError } from "./claude-process.ts";
-import { ClaudeNativeProcessPool } from "./claude-pool.ts";
+import { type ClaudeBackgroundTaskEvent, ClaudeNativeProcessPool } from "./claude-pool.ts";
 import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
 
 /**
@@ -42,6 +42,15 @@ import { type ClaudeUserBlock, numberFromEnv } from "./claude-protocol.ts";
  * - CLAUDE_NATIVE_HOST_COMPACTION=1: re-enable pi's host-side compaction while on a claude-native
  *   model (disabled by default because the Claude CLI manages its own session context, so pi's
  *   summary is never sent to Claude and only burns tokens)
+ * - CLAUDE_NATIVE_AUTO_RESUME_ON_TASK=0: disable auto-re-prompting the model when a background
+ *   bash `task_notification` arrives between turns (default enabled). When a Bash tool was
+ *   launched with `run_in_background: true` and finishes after the assistant turn has already
+ *   ended, the CLI emits a `task_notification` on stdout. We surface it as a synthetic user
+ *   message so the agent loop resumes and the model can react — matching how the Claude Code
+ *   TUI handles the same event.
+ * - CLAUDE_NATIVE_MAX_BG_TASK_AGE_MS: maximum age (ms) for a tracked background task before
+ *   pi gives up on it and allows the pooled Claude process to be idle-reaped (default 3600000
+ *   = 1h). Prevents a runaway bg shell from pinning a CLI process forever.
  *
  * Project config (.pi/claude-native.json in cwd):
  * Overrides hardcoded defaults but is overridden by environment variables.
@@ -75,6 +84,97 @@ const PROVIDER = "claude-native";
 const API = "claude-native-cli";
 
 const processPool = new ClaudeNativeProcessPool();
+
+/** Captured at registration so the background-task listener can call sendUserMessage. */
+let piRef: ExtensionAPI | undefined;
+
+/** Per-process active stream, so the global task-event listener can render in-turn. */
+interface ActiveTurnHandle {
+	stream: AssistantMessageEventStream;
+	output: AssistantMessage;
+}
+const activeTurns = new Map<string, ActiveTurnHandle>();
+
+/**
+ * Pending out-of-turn terminal notifications, coalesced so multiple bg tasks
+ * finishing in quick succession produce a single re-prompt.
+ */
+interface PendingResume {
+	keyId: string;
+	events: ClaudeBackgroundTaskEvent[];
+	timer: ReturnType<typeof setTimeout>;
+}
+const pendingResumes = new Map<string, PendingResume>();
+const RESUME_COALESCE_MS = 200;
+
+function autoResumeEnabled(): boolean {
+	return process.env.CLAUDE_NATIVE_AUTO_RESUME_ON_TASK !== "0";
+}
+
+/** Build the synthetic user message body from one or more coalesced terminal task events. */
+function buildResumePrompt(events: ClaudeBackgroundTaskEvent[]): string {
+	if (events.length === 1) {
+		const e = events[0];
+		return `[claude-native] Background bash task ${e.taskId ?? "(unknown id)"} ${e.status ?? "finished"}${e.summary ? `: ${e.summary}` : ""}. The Claude Code CLI has attached the full notification — please check the output (e.g. via BashOutput) and continue.`;
+	}
+	const lines = events.map((e) => `- ${e.taskId ?? "(unknown id)"} ${e.status ?? "finished"}${e.summary ? `: ${e.summary}` : ""}`);
+	return `[claude-native] ${events.length} background bash tasks finished:\n${lines.join("\n")}\nThe Claude Code CLI has attached the full notifications — please check their output and continue.`;
+}
+
+function cancelAllPendingResumes(): void {
+	for (const pending of pendingResumes.values()) clearTimeout(pending.timer);
+	pendingResumes.clear();
+}
+
+function flushPendingResume(keyId: string): void {
+	const pending = pendingResumes.get(keyId);
+	if (!pending) return;
+	pendingResumes.delete(keyId);
+	if (!piRef) return;
+	if (!autoResumeEnabled()) return;
+	const prompt = buildResumePrompt(pending.events);
+	try {
+		// Use deliverAs:"followUp" defensively: when pi is idle this fires a new
+		// turn immediately; if a user-typed turn happens to be in flight, pi
+		// queues this until the agent finishes its tool calls instead of
+		// throwing the streaming-without-deliverAs error.
+		piRef.sendUserMessage(prompt, { deliverAs: "followUp" });
+	} catch (err) {
+		// Surface but don't crash — losing the auto-resume just means the user
+		// sees the rendered notification and has to nudge the agent themselves.
+		// eslint-disable-next-line no-console
+		console.error("[claude-native] auto-resume sendUserMessage failed:", err);
+	}
+}
+
+processPool.onBackgroundTaskEvent((event) => {
+	const stream = activeTurns.get(serializeKey(event.key));
+	if (event.inTurn && stream) {
+		appendStatus(stream.stream, stream.output, `Claude Code: ${formatTaskEvent(event)}`);
+		return;
+	}
+	// Out-of-turn (between turns). Only terminal notifications should trigger a
+	// re-prompt; intermediate progress events are interesting but the model has
+	// no current turn to react in, so we just log them.
+	if (event.subtype !== "task_notification") return;
+	if (!autoResumeEnabled()) return;
+	const keyId = serializeKey(event.key);
+	const existing = pendingResumes.get(keyId);
+	if (existing) {
+		existing.events.push(event);
+		clearTimeout(existing.timer);
+		existing.timer = setTimeout(() => flushPendingResume(keyId), RESUME_COALESCE_MS);
+		existing.timer.unref?.();
+		return;
+	}
+	const timer = setTimeout(() => flushPendingResume(keyId), RESUME_COALESCE_MS);
+	timer.unref?.();
+	pendingResumes.set(keyId, { keyId, events: [event], timer });
+});
+
+function serializeKey(key: { modelAlias: string; effort: string; cwd: string; sessionIdentity: string }): string {
+	return JSON.stringify([key.modelAlias, key.effort, key.cwd, key.sessionIdentity]);
+}
 
 function userBlocksFromContent(content: unknown): ClaudeUserBlock[] {
 	const blocks: ClaudeUserBlock[] = [];
@@ -260,6 +360,36 @@ function appendStatus(stream: AssistantMessageEventStream, output: AssistantMess
 	appendThinking(stream, output, status);
 }
 
+/**
+ * Format a Claude CLI background-task event as a single line for the user/log.
+ * The CLI emits `type:"system"` events with subtype `task_started`, `task_progress`,
+ * `task_updated`, `task_notification` (terminal, with `status`), `task_summary`,
+ * and `post_turn_summary`. We render them so the user actually sees what their
+ * background bash jobs are doing.
+ */
+function formatTaskEvent(event: ClaudeBackgroundTaskEvent): string {
+	const idTag = event.taskId ? ` ${event.taskId}` : "";
+	const summary = event.summary ? `: ${event.summary}` : "";
+	switch (event.subtype) {
+		case "task_started":
+			return `Background task${idTag} started${summary}`;
+		case "task_progress":
+			return `Background task${idTag} progress${summary}`;
+		case "task_updated":
+			return `Background task${idTag} updated${summary}`;
+		case "task_notification": {
+			const status = event.status ?? "finished";
+			return `Background task${idTag} ${status}${summary}`;
+		}
+		case "task_summary":
+			return `Background task summary${idTag}${summary}`;
+		case "post_turn_summary":
+			return summary ? `Post-turn summary${summary}` : "Post-turn summary";
+		default:
+			return `Background task event ${event.subtype}${idTag}${summary}`;
+	}
+}
+
 function formatToolUse(block: any): string {
 	const name = typeof block.name === "string" ? block.name : "tool";
 	const input = block.input;
@@ -336,7 +466,8 @@ export function streamClaudeNative(
 	const start = trailingUserStart(context.messages);
 	const userContent = trailingUserContent(context.messages, start);
 	const poolEntry = processPool.getOrCreate(model, options);
-	const { key, process: runtime, created, resumedClaudeSession } = poolEntry;
+	const { key, keyId, process: runtime, created, resumedClaudeSession } = poolEntry;
+	activeTurns.set(keyId, { stream, output });
 
 	// On a brand-new Claude session (not a --resume), prepend the pi system prompt and any
 	// prior conversation history to the first user message. The system prompt carries
@@ -398,11 +529,16 @@ export function streamClaudeNative(
 	const heartbeatHandle = heartbeatMs > 0 ? setInterval(tickHeartbeat, heartbeatMs) : undefined;
 	heartbeatHandle?.unref?.();
 
+	const releaseActiveTurn = () => {
+		if (activeTurns.get(keyId)?.stream === stream) activeTurns.delete(keyId);
+	};
+
 	const finishDone = () => {
 		if (heartbeatHandle) clearInterval(heartbeatHandle);
 		closeHeartbeat();
 		if (finished) return;
 		finished = true;
+		releaseActiveTurn();
 		if (output.stopReason === "error") {
 			if (!output.errorMessage) output.errorMessage = stderr.trim() || "Claude Code returned an error";
 			stream.push({ type: "error", reason: "error", error: output });
@@ -419,6 +555,7 @@ export function streamClaudeNative(
 		closeHeartbeat();
 		if (finished) return;
 		finished = true;
+		releaseActiveTurn();
 		output.stopReason = reason;
 		output.errorMessage = message;
 		stream.push({ type: "error", reason, error: output });
@@ -438,6 +575,11 @@ export function streamClaudeNative(
 				const resumeAt = msg.rate_limit_resets_at ?? msg.retry_after_ms ?? msg.retry_after;
 				const detail = resumeAt ? ` (resets at ${resumeAt})` : "";
 				appendStatus(stream, output, `Claude Code rate limited${detail}`);
+			} else if (msg.type === "system" && typeof msg.subtype === "string") {
+				// Background task events (task_started/_progress/_updated/_notification/_summary,
+				// post_turn_summary) flow through here. Forward to the pool so its live-task
+				// registry stays consistent — the pool's listener will surface them.
+				processPool.handleInTurnTaskEvent(key, msg);
 			} else if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result" && msg.type !== "system" && msg.type !== "init" && msg.type !== "user") {
 				appendStatus(stream, output, `Claude Code event: ${msg.type}`);
 			}
@@ -518,7 +660,10 @@ function formatPoolStatus(): string {
 }
 
 function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
-	const hardInvalidate = (reason: string) => processPool.hardInvalidateAll(reason);
+	const hardInvalidate = (reason: string) => {
+		cancelAllPendingResumes();
+		return processPool.hardInvalidateAll(reason);
+	};
 
 	pi.on("session_before_tree", async (event) => {
 		hardInvalidate(`session_before_tree target=${event.preparation.targetId}`);
@@ -564,6 +709,7 @@ function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
 }
 
 export default function (pi: ExtensionAPI) {
+	piRef = pi;
 	(pi as any).registerProvider(PROVIDER, {
 		name: "Claude Native (claude -p)",
 		baseUrl: "process:claude",
@@ -605,6 +751,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Reset Claude native process and remembered session state",
 		handler: async (_args, ctx) => {
 			const before = processPool.reset("reset command");
+			cancelAllPendingResumes();
 			ctx.ui.notify(
 				`Claude native process/session state reset: terminated ${before.liveProcesses} live process(es), cleared ${before.rememberedSessions} remembered Claude session(s).`,
 				"info",

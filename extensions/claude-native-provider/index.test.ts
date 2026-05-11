@@ -105,14 +105,17 @@ function createPi() {
 	const providers = new Map<string, any>();
 	const commands = new Map<string, any>();
 	const handlers = new Map<string, any>();
+	const userMessages: Array<{ content: any; options?: any }> = [];
 	return {
 		providers,
 		commands,
 		handlers,
+		userMessages,
 		api: {
 			registerProvider: (name: string, provider: any) => providers.set(name, provider),
 			registerCommand: (name: string, command: any) => commands.set(name, command),
 			on: (event: string, handler: any) => handlers.set(event, handler),
+			sendUserMessage: (content: any, options?: any) => userMessages.push({ content, options }),
 		},
 	};
 }
@@ -1001,5 +1004,163 @@ describe("claude native provider integration", () => {
 		expect(finalEvent).toMatchObject({ type: "error", reason: "error" });
 		expect(finalEvent.error.stopReason).toBe("error");
 		expect(finalEvent.error.errorMessage).toContain("boom");
+	});
+
+	describe("background task auto-resume", () => {
+		it("renders in-turn task events as thinking status without re-prompting", async () => {
+			MockClaudeNativeProcess.scenarios.push({
+				messages: [
+					{
+						type: "system",
+						subtype: "task_notification",
+						task_id: "bash_1",
+						status: "failed",
+						summary: "exit code 1",
+					},
+					{ type: "result", subtype: "success", is_error: false, result: "ok" },
+				],
+			});
+
+			const mod = await loadModule();
+			const pi = createPi();
+			mod.default(pi.api as any);
+
+			const events = await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("hi")));
+
+			const thinking = events.filter((e) => e.type === "thinking_delta").map((e) => e.delta).join("");
+			expect(thinking).toContain("Background task bash_1 failed");
+			expect(thinking).toContain("exit code 1");
+			// In-turn — no auto-resume.
+			expect(pi.userMessages).toEqual([]);
+		});
+
+		it("auto-resumes via sendUserMessage on an out-of-turn task_notification", async () => {
+			vi.useFakeTimers();
+			MockClaudeNativeProcess.scenarios.push({
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+			});
+
+			const mod = await loadModule();
+			const pi = createPi();
+			mod.default(pi.api as any);
+
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("hi")));
+			const mock = MockClaudeNativeProcess.instances[0];
+
+			// Simulate the CLI emitting a terminal task notification AFTER the turn ended.
+			mock.config.onOutOfTurnMessage({
+				type: "system",
+				subtype: "task_notification",
+				task_id: "bash_1",
+				status: "completed",
+				summary: "build succeeded",
+			});
+
+			// Coalescing window — advance past it.
+			await vi.advanceTimersByTimeAsync(250);
+
+			expect(pi.userMessages).toHaveLength(1);
+			expect(pi.userMessages[0].content).toContain("bash_1");
+			expect(pi.userMessages[0].content).toContain("completed");
+			expect(pi.userMessages[0].content).toContain("build succeeded");
+			expect(pi.userMessages[0].options).toEqual({ deliverAs: "followUp" });
+		});
+
+		it("coalesces multiple out-of-turn notifications into a single sendUserMessage", async () => {
+			vi.useFakeTimers();
+			MockClaudeNativeProcess.scenarios.push({
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+			});
+
+			const mod = await loadModule();
+			const pi = createPi();
+			mod.default(pi.api as any);
+
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("hi")));
+			const mock = MockClaudeNativeProcess.instances[0];
+
+			mock.config.onOutOfTurnMessage({ type: "system", subtype: "task_notification", task_id: "bash_1", status: "completed" });
+			await vi.advanceTimersByTimeAsync(50);
+			mock.config.onOutOfTurnMessage({ type: "system", subtype: "task_notification", task_id: "bash_2", status: "failed" });
+			await vi.advanceTimersByTimeAsync(300);
+
+			expect(pi.userMessages).toHaveLength(1);
+			expect(pi.userMessages[0].content).toContain("bash_1");
+			expect(pi.userMessages[0].content).toContain("bash_2");
+			expect(pi.userMessages[0].content).toContain("2 background bash tasks finished");
+		});
+
+		it("does not auto-resume on intermediate out-of-turn task_started events", async () => {
+			vi.useFakeTimers();
+			MockClaudeNativeProcess.scenarios.push({
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+			});
+
+			const mod = await loadModule();
+			const pi = createPi();
+			mod.default(pi.api as any);
+
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("hi")));
+			const mock = MockClaudeNativeProcess.instances[0];
+
+			mock.config.onOutOfTurnMessage({ type: "system", subtype: "task_started", task_id: "bash_1" });
+			mock.config.onOutOfTurnMessage({ type: "system", subtype: "task_progress", task_id: "bash_1" });
+			await vi.advanceTimersByTimeAsync(500);
+
+			expect(pi.userMessages).toEqual([]);
+		});
+
+		it("is disabled by CLAUDE_NATIVE_AUTO_RESUME_ON_TASK=0", async () => {
+			vi.useFakeTimers();
+			process.env.CLAUDE_NATIVE_AUTO_RESUME_ON_TASK = "0";
+			MockClaudeNativeProcess.scenarios.push({
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+			});
+
+			const mod = await loadModule();
+			const pi = createPi();
+			mod.default(pi.api as any);
+
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("hi")));
+			const mock = MockClaudeNativeProcess.instances[0];
+
+			mock.config.onOutOfTurnMessage({
+				type: "system",
+				subtype: "task_notification",
+				task_id: "bash_1",
+				status: "completed",
+			});
+			await vi.advanceTimersByTimeAsync(500);
+
+			expect(pi.userMessages).toEqual([]);
+		});
+
+		it("does not crash if sendUserMessage throws — surfaces via console.error", async () => {
+			vi.useFakeTimers();
+			const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+			MockClaudeNativeProcess.scenarios.push({
+				messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
+			});
+
+			const mod = await loadModule();
+			const pi = createPi();
+			(pi.api as any).sendUserMessage = () => {
+				throw new Error("nope");
+			};
+			mod.default(pi.api as any);
+
+			await collectEvents(pi.providers.get("claude-native").streamSimple(createModel("sonnet"), createContext("hi")));
+			const mock = MockClaudeNativeProcess.instances[0];
+
+			mock.config.onOutOfTurnMessage({
+				type: "system",
+				subtype: "task_notification",
+				task_id: "bash_1",
+				status: "completed",
+			});
+			await vi.advanceTimersByTimeAsync(500);
+
+			expect(err.mock.calls.flat().some((arg) => String(arg).includes("auto-resume"))).toBe(true);
+		});
 	});
 });
