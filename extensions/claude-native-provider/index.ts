@@ -703,7 +703,11 @@ function registerLifecycleInvalidationHandlers(pi: ExtensionAPI): void {
 		void event;
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event) => {
+		// On /reload the session and conversation stay the same — only the extension
+		// runtime is restarted. Clearing the Claude session ID here would force a
+		// fresh process on the next turn and lose accumulated Claude-side context.
+		if (event.reason === "reload") return;
 		hardInvalidate("session_shutdown");
 	});
 }
