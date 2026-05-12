@@ -223,7 +223,9 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 	function updateStatus(uiCtx: { ui: { setStatus: (key: string, val: string | undefined) => void } }) {
 		const globalEntries = splitEntries(readFileOrEmpty(globalFile)).length;
 		const projectEntries = splitEntries(readFileOrEmpty(projectFile)).length;
-		uiCtx.ui.setStatus("pi-memory", `memory: ${globalEntries}g / ${projectEntries}p`);
+		// Show counters toward next review threshold
+		const nextReviewIn = Math.max(0, cfg.reviewTurnInterval - turnsSinceReview);
+		uiCtx.ui.setStatus("pi-memory", `memory: ${globalEntries}g/${projectEntries}p (rev in ${nextReviewIn}t)`);
 	}
 
 	const REVIEW_SPINNER = ["◐", "◓", "◑", "◒"];
@@ -275,11 +277,9 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	// Count user turns for the min-turns gate
-	pi.on("message_end", (event) => {
-		if ((event.message as { role?: string })?.role === "user") {
-			userTurnCount++;
-		}
+	// Count user prompts for the min-turns gate. agent_end fires once per user prompt.
+	pi.on("agent_end", (_event, _ctx) => {
+		userTurnCount++;
 	});
 
 	pi.on("turn_end", async (event, ctx) => {
@@ -301,6 +301,9 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 
 		const turnThresholdMet = turnsSinceReview >= cfg.reviewTurnInterval;
 		const toolCallThresholdMet = toolCallsSinceReview >= cfg.reviewToolCalls;
+
+		// Always update status so the countdown is visible
+		if (!reviewInProgress) updateStatus(ctx);
 
 		if ((!turnThresholdMet && !toolCallThresholdMet) || reviewInProgress || userTurnCount < cfg.reviewMinUserTurns) {
 			return;
@@ -558,6 +561,20 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 			ctx.ui.notify(
 				`global (${g.length}/${CAPS.global}, ${gEntries.length} entries): ${globalFile}\n` +
 					`project (${p.length}/${CAPS.project}, ${pEntries.length} entries): ${projectFile}`,
+				"info",
+			);
+		},
+	});
+
+	pi.registerCommand("memory-debug", {
+		description: "Show memory review counter state",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify(
+				`turns since review: ${turnsSinceReview}/${cfg.reviewTurnInterval}\n` +
+					`tool calls since review: ${toolCallsSinceReview}/${cfg.reviewToolCalls}\n` +
+					`user turn count: ${userTurnCount} (min: ${cfg.reviewMinUserTurns})\n` +
+					`review in progress: ${reviewInProgress}\n` +
+					`review model: ${cfg.reviewModel || "(default)"}`,
 				"info",
 			);
 		},
