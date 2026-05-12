@@ -92,6 +92,7 @@ let piRef: ExtensionAPI | undefined;
 interface ActiveTurnHandle {
 	stream: AssistantMessageEventStream;
 	output: AssistantMessage;
+	displayOnly: Set<number>;
 }
 const activeTurns = new Map<string, ActiveTurnHandle>();
 
@@ -150,7 +151,7 @@ function flushPendingResume(keyId: string): void {
 processPool.onBackgroundTaskEvent((event) => {
 	const stream = activeTurns.get(serializeKey(event.key));
 	if (event.inTurn && stream) {
-		appendStatus(stream.stream, stream.output, `Claude Code: ${formatTaskEvent(event)}`);
+		appendStatus(stream.stream, stream.output, stream.displayOnly, `Claude Code: ${formatTaskEvent(event)}`);
 		return;
 	}
 	// Out-of-turn (between turns). Only terminal notifications should trigger a
@@ -416,6 +417,32 @@ function appendThinking(stream: AssistantMessageEventStream, output: AssistantMe
 	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
 }
 
+// Like appendThinking but tracks the block index in displayOnly for later removal.
+// Keeps the block in output.content during the turn so stream-event contentIndex stays
+// valid, then strip via stripDisplayOnlyBlocks() before the final done/error event so
+// the block is excluded from the conversation history sent to the API.
+function appendDisplayOnlyThinking(
+	stream: AssistantMessageEventStream,
+	output: AssistantMessage,
+	displayOnly: Set<number>,
+	thinking: string,
+) {
+	if (!thinking) return;
+	const contentIndex = output.content.length;
+	output.content.push({ type: "thinking", thinking: "" });
+	stream.push({ type: "thinking_start", contentIndex, partial: output });
+	(output.content[contentIndex] as { type: "thinking"; thinking: string }).thinking += thinking;
+	stream.push({ type: "thinking_delta", contentIndex, delta: thinking, partial: output });
+	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
+	displayOnly.add(contentIndex);
+}
+
+function stripDisplayOnlyBlocks(output: AssistantMessage, displayOnly: Set<number>) {
+	if (displayOnly.size === 0) return;
+	output.content = output.content.filter((_, index) => !displayOnly.has(index));
+	displayOnly.clear();
+}
+
 function formatToolUse(block: any): string {
 	const name = typeof block.name === "string" ? block.name : "tool";
 	const input = block.input;
@@ -435,9 +462,14 @@ function formatToolUse(block: any): string {
 	return name;
 }
 
-function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string) {
+function appendStatus(
+	stream: AssistantMessageEventStream,
+	output: AssistantMessage,
+	displayOnly: Set<number>,
+	status: string,
+) {
 	if (!status || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
-	appendThinking(stream, output, status);
+	appendDisplayOnlyThinking(stream, output, displayOnly, status);
 }
 
 /**
@@ -470,7 +502,13 @@ function formatTaskEvent(event: ClaudeBackgroundTaskEvent): string {
 	}
 }
 
-function appendAssistantBlocks(stream: AssistantMessageEventStream, output: AssistantMessage, message: any, showThinking: boolean): boolean {
+function appendAssistantBlocks(
+	stream: AssistantMessageEventStream,
+	output: AssistantMessage,
+	displayOnly: Set<number>,
+	message: any,
+	showThinking: boolean,
+): boolean {
 	const content = message?.message?.content;
 	if (!Array.isArray(content)) return false;
 	let saw = false;
@@ -484,7 +522,7 @@ function appendAssistantBlocks(stream: AssistantMessageEventStream, output: Assi
 				saw = true;
 			}
 		} else if (block?.type === "tool_use") {
-			appendThinking(stream, output, `[Claude Code: ${formatToolUse(block)}]`);
+			appendDisplayOnlyThinking(stream, output, displayOnly, `[Claude Code: ${formatToolUse(block)}]`);
 			saw = true;
 		}
 	}
@@ -522,6 +560,7 @@ export function streamClaudeNative(
 ): AssistantMessageEventStream {
 	const stream = new AssistantMessageEventStream();
 	const output = makeEmptyMessage(model);
+	const displayOnly = new Set<number>();
 	stream.push({ type: "start", partial: output });
 
 	const start = trailingUserStart(context.messages);
@@ -529,7 +568,7 @@ export function streamClaudeNative(
 	const userContent = trailingUserContent(context.messages, start);
 	const poolEntry = processPool.getOrCreate(model, options);
 	const { key, keyId, process: runtime, created, resumedClaudeSession } = poolEntry;
-	activeTurns.set(keyId, { stream, output });
+	activeTurns.set(keyId, { stream, output, displayOnly });
 
 	// On a brand-new Claude session (not a --resume), prepend the pi system prompt and any
 	// prior conversation history to the first user message. The system prompt carries
@@ -558,6 +597,7 @@ export function streamClaudeNative(
 	appendStatus(
 		stream,
 		output,
+		displayOnly,
 		poolEntry.created
 			? `Claude Code process started (${poolEntry.resumedClaudeSession ? "resuming prior Claude session" : "fresh session"}; model=${key.modelAlias})`
 			: `Claude Code process reused (model=${key.modelAlias})`,
@@ -573,6 +613,7 @@ export function streamClaudeNative(
 			heartbeatText = `Claude Code still running (${idleSeconds}s since last CLI event)`;
 			heartbeatIndex = output.content.length;
 			output.content.push({ type: "thinking", thinking: "" });
+			displayOnly.add(heartbeatIndex);
 			stream.push({ type: "thinking_start", contentIndex: heartbeatIndex, partial: output });
 			(output.content[heartbeatIndex] as { type: "thinking"; thinking: string }).thinking = heartbeatText;
 			stream.push({ type: "thinking_delta", contentIndex: heartbeatIndex, delta: heartbeatText, partial: output });
@@ -603,11 +644,13 @@ export function streamClaudeNative(
 		releaseActiveTurn();
 		if (output.stopReason === "error") {
 			if (!output.errorMessage) output.errorMessage = stderr.trim() || "Claude Code returned an error";
+			stripDisplayOnlyBlocks(output, displayOnly);
 			stream.push({ type: "error", reason: "error", error: output });
 			stream.end();
 			return;
 		}
 		if (!sawText && finalResult) appendText(stream, output, finalResult);
+		stripDisplayOnlyBlocks(output, displayOnly);
 		stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
 		stream.end();
 	};
@@ -620,6 +663,7 @@ export function streamClaudeNative(
 		releaseActiveTurn();
 		output.stopReason = reason;
 		output.errorMessage = message;
+		stripDisplayOnlyBlocks(output, displayOnly);
 		stream.push({ type: "error", reason, error: output });
 		stream.end();
 	};
@@ -636,24 +680,24 @@ export function streamClaudeNative(
 			if (msg.type === "rate_limit_event") {
 				const resumeAt = msg.rate_limit_resets_at ?? msg.retry_after_ms ?? msg.retry_after;
 				const detail = resumeAt ? ` (resets at ${resumeAt})` : "";
-				appendStatus(stream, output, `Claude Code rate limited${detail}`);
+				appendStatus(stream, output, displayOnly, `Claude Code rate limited${detail}`);
 			} else if (msg.type === "system" && typeof msg.subtype === "string") {
 				// Background task events (task_started/_progress/_updated/_notification/_summary,
 				// post_turn_summary) flow through here. Forward to the pool so its live-task
 				// registry stays consistent — the pool's listener will surface them.
 				processPool.handleInTurnTaskEvent(key, msg);
 			} else if (typeof msg.type === "string" && msg.type !== "assistant" && msg.type !== "result" && msg.type !== "system" && msg.type !== "init" && msg.type !== "user") {
-				appendStatus(stream, output, `Claude Code event: ${msg.type}`);
+				appendStatus(stream, output, displayOnly, `Claude Code event: ${msg.type}`);
 			}
 
 			if (msg.type === "assistant") {
-				if (appendAssistantBlocks(stream, output, msg, thinkingActive)) sawText = true;
+				if (appendAssistantBlocks(stream, output, displayOnly, msg, thinkingActive)) sawText = true;
 			} else if (msg.type === "streamlined_text" && typeof msg.text === "string") {
 				sawText = true;
 				appendText(stream, output, msg.text);
 			} else if (msg.type === "streamlined_tool_use_summary" && typeof msg.tool_summary === "string") {
 				// Surface tool activity as lightweight text for now. Later this can become a custom renderer/status update.
-				appendThinking(stream, output, `[Claude Code: ${msg.tool_summary}]`);
+				appendDisplayOnlyThinking(stream, output, displayOnly, `[Claude Code: ${msg.tool_summary}]`);
 			} else if (msg.type === "result") {
 				if (typeof msg.result === "string") finalResult = msg.result;
 				if (msg.is_error || msg.subtype !== "success") {
@@ -668,14 +712,14 @@ export function streamClaudeNative(
 				processPool.recordTurnUsage(key, { cacheRead: output.usage.cacheRead, input: output.usage.input });
 			}
 		},
-		onMalformedJson: (line) => appendStatus(stream, output, `Claude Code malformed JSON: ${line.slice(0, 200)}`),
+		onMalformedJson: (line) => appendStatus(stream, output, displayOnly, `Claude Code malformed JSON: ${line.slice(0, 200)}`),
 		onStderr: (text) => {
 			lastActivity = Date.now();
 			stderr += text;
 			const lines = text.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
-			for (const line of lines) appendStatus(stream, output, `Claude Code stderr: ${line}`);
+			for (const line of lines) appendStatus(stream, output, displayOnly, `Claude Code stderr: ${line}`);
 		},
-		onStatus: (status) => appendStatus(stream, output, status),
+		onStatus: (status) => appendStatus(stream, output, displayOnly, status),
 	}, {
 		signal: options?.signal,
 		timeoutMs,
