@@ -226,6 +226,18 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		uiCtx.ui.setStatus("pi-memory", `memory: ${globalEntries}g / ${projectEntries}p`);
 	}
 
+	const REVIEW_SPINNER = ["◐", "◓", "◑", "◒"];
+
+	function startReviewSpinner(uiCtx: { ui: { setStatus: (key: string, val: string | undefined) => void } }): () => void {
+		let frame = 0;
+		const timer = setInterval(() => {
+			frame = (frame + 1) % REVIEW_SPINNER.length;
+			uiCtx.ui.setStatus("pi-memory", `memory: ${REVIEW_SPINNER[frame]} reviewing…`);
+		}, 150);
+		uiCtx.ui.setStatus("pi-memory", `memory: ${REVIEW_SPINNER[0]} reviewing…`);
+		return () => clearInterval(timer);
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		cfg = loadConfig();
 		globalFile = fileFor("global", ctx.cwd);
@@ -339,7 +351,9 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		if (cfg.reviewModel) reviewArgs.push("--model", cfg.reviewModel);
 		reviewArgs.push(reviewPrompt);
 
-		ctx.ui.setStatus("pi-memory", "memory: reviewing…");
+		const triggerReason = turnThresholdMet ? `${cfg.reviewTurnInterval} turns` : `${cfg.reviewToolCalls} tool calls`;
+		ctx.ui.notify(`memory: starting background review (${triggerReason})`, "info");
+		const stopSpinner = startReviewSpinner(ctx);
 
 		const reviewPromise = pi.exec("pi", reviewArgs, {
 			signal: undefined,
@@ -348,20 +362,27 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 
 		reviewPromise
 			.then((result) => {
+				stopSpinner();
 				reviewInProgress = false;
 				updateStatus(ctx);
 				if (result.code === 0 && result.stdout) {
 					const output = result.stdout.trim();
 					if (output && !output.toLowerCase().startsWith("nothing to save")) {
-						ctx.ui.notify("memory: background review saved new entries", "info");
+						ctx.ui.notify("memory: review complete — new entries saved", "info");
+					} else {
+						ctx.ui.notify("memory: review complete — nothing new to save", "info");
 					}
+				} else {
+					ctx.ui.notify("memory: review complete", "info");
 				}
 			})
 			.catch(() => {
+				stopSpinner();
 				// Best-effort: silently ignore subprocess failures (timeout, spawn errors).
 				// The next review cycle will retry.
 				reviewInProgress = false;
 				updateStatus(ctx);
+				ctx.ui.notify("memory: background review failed (will retry next cycle)", "warning");
 			});
 	});
 
