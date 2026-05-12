@@ -28,18 +28,40 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 type Scope = "global" | "project";
 
 const SEPARATOR = "\n§\n";
-const MEMORY_ROOT = path.join(process.env.HOME ?? "", ".pi", "agent", "memory");
+const PI_HOME = path.join(process.env.HOME ?? "", ".pi");
+const MEMORY_ROOT = path.join(PI_HOME, "agent", "memory");
+const CONFIG_FILE = path.join(PI_HOME, "pi-memory.json");
 
 const CAPS: Record<Scope, number> = {
 	global: 1375,
 	project: 2200,
 };
 
-// Background review triggers
-const REVIEW_TURN_INTERVAL = 10;   // review every N assistant turns
-const REVIEW_TOOL_CALLS = 15;      // or every M tool calls in a turn
-const REVIEW_MIN_USER_TURNS = 3;   // skip review in short sessions
-const REVIEW_TIMEOUT_MS = 120_000;
+interface MemoryConfig {
+	reviewModel?: string;
+	reviewTurnInterval?: number;
+	reviewToolCalls?: number;
+	reviewMinUserTurns?: number;
+	reviewTimeoutMs?: number;
+}
+
+const DEFAULTS: Required<MemoryConfig> = {
+	reviewModel: "claude-native/haiku",
+	reviewTurnInterval: 10,
+	reviewToolCalls: 15,
+	reviewMinUserTurns: 3,
+	reviewTimeoutMs: 120_000,
+};
+
+function loadConfig(): Required<MemoryConfig> {
+	try {
+		const raw = fs.readFileSync(CONFIG_FILE, "utf8");
+		const parsed = JSON.parse(raw) as MemoryConfig;
+		return { ...DEFAULTS, ...parsed };
+	} catch {
+		return { ...DEFAULTS };
+	}
+}
 
 function slugForCwd(cwd: string): string {
 	const abs = path.resolve(cwd);
@@ -190,6 +212,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 	let frozenSnapshot: { global: string; project: string } = { global: "", project: "" };
 	let projectFile = "";
 	let globalFile = "";
+	let cfg: Required<MemoryConfig> = { ...DEFAULTS };
 
 	// Background review state
 	let turnsSinceReview = 0;
@@ -198,6 +221,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 	let reviewInProgress = false;
 
 	pi.on("session_start", async (_event, ctx) => {
+		cfg = loadConfig();
 		globalFile = fileFor("global", ctx.cwd);
 		projectFile = fileFor("project", ctx.cwd);
 		frozenSnapshot = {
@@ -262,10 +286,10 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 			// Ignore — fall back to turn-based threshold only
 		}
 
-		const turnThresholdMet = turnsSinceReview >= REVIEW_TURN_INTERVAL;
-		const toolCallThresholdMet = toolCallsSinceReview >= REVIEW_TOOL_CALLS;
+		const turnThresholdMet = turnsSinceReview >= cfg.reviewTurnInterval;
+		const toolCallThresholdMet = toolCallsSinceReview >= cfg.reviewToolCalls;
 
-		if ((!turnThresholdMet && !toolCallThresholdMet) || reviewInProgress || userTurnCount < REVIEW_MIN_USER_TURNS) {
+		if ((!turnThresholdMet && !toolCallThresholdMet) || reviewInProgress || userTurnCount < cfg.reviewMinUserTurns) {
 			return;
 		}
 
@@ -310,9 +334,12 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		// Fire-and-forget: do NOT await. Review runs in a subprocess so it doesn't
 		// block the interactive session. We intentionally omit ctx.signal — it's
 		// tied to the turn lifetime and would abort the subprocess prematurely.
-		const reviewPromise = pi.exec("pi", ["-p", "--no-session", reviewPrompt], {
+		const reviewArgs = ["-p", "--no-session"];
+		if (cfg.reviewModel) reviewArgs.push("--model", cfg.reviewModel);
+		reviewArgs.push(reviewPrompt);
+		const reviewPromise = pi.exec("pi", reviewArgs, {
 			signal: undefined,
-			timeout: REVIEW_TIMEOUT_MS,
+			timeout: cfg.reviewTimeoutMs,
 		});
 
 		reviewPromise
