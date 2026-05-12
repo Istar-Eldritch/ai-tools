@@ -31,6 +31,18 @@ const SEPARATOR = "\n§\n";
 const PI_HOME = path.join(process.env.HOME ?? "", ".pi");
 const MEMORY_ROOT = path.join(PI_HOME, "agent", "memory");
 const CONFIG_FILE = path.join(PI_HOME, "pi-memory.json");
+const DEBUG_LOG = path.join(PI_HOME, "pi-memory.debug.log");
+
+let debugEnabled = false;
+
+function dlog(msg: string): void {
+	if (!debugEnabled) return;
+	try {
+		fs.appendFileSync(DEBUG_LOG, `${new Date().toISOString()} [pid=${process.pid}] ${msg}\n`);
+	} catch {
+		// swallow — best-effort logging
+	}
+}
 
 const CAPS: Record<Scope, number> = {
 	global: 1375,
@@ -43,6 +55,7 @@ interface MemoryConfig {
 	reviewToolCalls?: number;
 	reviewMinUserTurns?: number;
 	reviewTimeoutMs?: number;
+	debug?: boolean;
 }
 
 const DEFAULTS: Required<MemoryConfig> = {
@@ -51,6 +64,7 @@ const DEFAULTS: Required<MemoryConfig> = {
 	reviewToolCalls: 8,
 	reviewMinUserTurns: 2,
 	reviewTimeoutMs: 120_000,
+	debug: false,
 };
 
 function loadConfig(): Required<MemoryConfig> {
@@ -214,11 +228,20 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 	let globalFile = "";
 	let cfg: Required<MemoryConfig> = { ...DEFAULTS };
 
+	// Stable session ctx captured at session_start. Long-lived async callbacks (the review
+	// promise) use this so the status bar stays live after the agent finishes its turn.
+	type SessionCtx = {
+		ui: { setStatus: (key: string, val: string | undefined) => void; notify: (msg: string, level: string) => void };
+		sessionManager: { getBranch: () => unknown[] };
+	};
+	let sessionCtx: SessionCtx | null = null;
+
 	// Background review state
 	let turnsSinceReview = 0;
 	let toolCallsSinceReview = 0;
 	let userTurnCount = 0;
 	let reviewInProgress = false;
+	let stopActiveSpinner: (() => void) | null = null;
 
 	function updateStatus(uiCtx: { ui: { setStatus: (key: string, val: string | undefined) => void } }) {
 		const globalEntries = splitEntries(readFileOrEmpty(globalFile)).length;
@@ -242,6 +265,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		cfg = loadConfig();
+		debugEnabled = cfg.debug;
 		globalFile = fileFor("global", ctx.cwd);
 		projectFile = fileFor("project", ctx.cwd);
 		frozenSnapshot = {
@@ -254,11 +278,31 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		userTurnCount = 0;
 		reviewInProgress = false;
 
+		// Store a stable ctx reference for use in long-lived async callbacks (review promise).
+		sessionCtx = ctx;
+
 		updateStatus(ctx);
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
+		dlog("session_shutdown");
+		stopActiveSpinner?.();
+		stopActiveSpinner = null;
+		reviewInProgress = false;
 		ctx.ui.setStatus("pi-memory", undefined);
+		sessionCtx = null;
+	});
+
+	pi.on("agent_start", async () => {
+		dlog("agent_start");
+	});
+
+	pi.on("agent_end", async () => {
+		dlog("agent_end");
+	});
+
+	pi.on("turn_start", async () => {
+		dlog("turn_start");
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -301,8 +345,8 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		// Always update status so the countdown is visible
 		if (!reviewInProgress) updateStatus(ctx);
 
-		console.debug(
-			`[pi-memory] turn_end: turns=${turnsSinceReview}/${cfg.reviewTurnInterval} tools=${toolCallsSinceReview}/${cfg.reviewToolCalls} userTurns=${userTurnCount}/${cfg.reviewMinUserTurns} inProgress=${reviewInProgress}`,
+		dlog(
+			`turn_end: turns=${turnsSinceReview}/${cfg.reviewTurnInterval} tools=${toolCallsSinceReview}/${cfg.reviewToolCalls} userTurns=${userTurnCount}/${cfg.reviewMinUserTurns} inProgress=${reviewInProgress}`,
 		);
 
 		if ((!turnThresholdMet && !toolCallThresholdMet) || reviewInProgress || userTurnCount < cfg.reviewMinUserTurns) {
@@ -310,13 +354,25 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		}
 
 		const triggerReason = turnThresholdMet ? `${cfg.reviewTurnInterval} turns` : `${cfg.reviewToolCalls} tool calls`;
-		triggerReview(ctx, triggerReason);
+		// Defer review off the event loop tick so turn_end resolves immediately and
+		// pi can emit agent_end (clearing the "Working..." indicator) without waiting
+		// for getBranch() / pi.exec spawn overhead.
+		dlog(`turn_end scheduling triggerReview via setImmediate, reason=${triggerReason}`);
+		setImmediate(() => {
+			dlog("setImmediate fired, calling triggerReview");
+			try {
+				triggerReview(triggerReason);
+			} catch (err) {
+				dlog(`triggerReview threw: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		});
+		dlog("turn_end returning");
 	});
 
-	function triggerReview(
-		ctx: { ui: { setStatus: (k: string, v: string | undefined) => void; notify: (msg: string, level: string) => void }; sessionManager: { getBranch: () => unknown[] } },
-		triggerReason: string,
-	): void {
+	function triggerReview(triggerReason: string): void {
+		const ctx = sessionCtx;
+		if (!ctx) return;
+
 		if (reviewInProgress) {
 			ctx.ui.notify("memory: review already in progress", "info");
 			return;
@@ -370,16 +426,34 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 
 		ctx.ui.notify(`memory: starting background review (${triggerReason})`, "info");
 		const stopSpinner = startReviewSpinner(ctx);
+		stopActiveSpinner = stopSpinner;
 
-		const reviewPromise = pi.exec("pi", reviewArgs, {
-			signal: undefined,
-			timeout: cfg.reviewTimeoutMs,
-		});
+		const cleanupReview = () => {
+			dlog("cleanupReview firing");
+			stopSpinner();
+			stopActiveSpinner = null;
+			reviewInProgress = false;
+		};
+
+		dlog("spawning review subprocess");
+		let reviewPromise: Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
+		try {
+			reviewPromise = pi.exec("pi", reviewArgs, {
+				signal: undefined,
+				timeout: cfg.reviewTimeoutMs,
+			});
+		} catch (err) {
+			// pi.exec throws synchronously if the extension runtime is stale (e.g. mid-reload).
+			dlog(`pi.exec threw synchronously: ${err instanceof Error ? err.message : String(err)}`);
+			cleanupReview();
+			updateStatus(ctx);
+			return;
+		}
 
 		reviewPromise
 			.then((result) => {
-				stopSpinner();
-				reviewInProgress = false;
+				dlog(`review subprocess settled: code=${result.code} killed=${result.killed}`);
+				cleanupReview();
 				updateStatus(ctx);
 				if (result.code === 0 && result.stdout) {
 					const output = result.stdout.trim();
@@ -393,10 +467,9 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 				}
 			})
 			.catch(() => {
-				stopSpinner();
 				// Best-effort: silently ignore subprocess failures (timeout, spawn errors).
 				// The next review cycle will retry.
-				reviewInProgress = false;
+				cleanupReview();
 				updateStatus(ctx);
 				ctx.ui.notify("memory: background review failed (will retry next cycle)", "warning");
 			});
@@ -595,8 +668,8 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("memory-review-now", {
 		description: "Manually trigger a background memory review immediately",
-		handler: async (_args, ctx) => {
-			triggerReview(ctx, "manual");
+		handler: async (_args, _ctx) => {
+			triggerReview("manual");
 		},
 	});
 }
