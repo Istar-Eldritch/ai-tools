@@ -47,9 +47,9 @@ interface MemoryConfig {
 
 const DEFAULTS: Required<MemoryConfig> = {
 	reviewModel: "claude-native/haiku",
-	reviewTurnInterval: 10,
-	reviewToolCalls: 15,
-	reviewMinUserTurns: 3,
+	reviewTurnInterval: 5,
+	reviewToolCalls: 8,
+	reviewMinUserTurns: 2,
 	reviewTimeoutMs: 120_000,
 };
 
@@ -277,13 +277,9 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	// Count user prompts for the min-turns gate. agent_end fires once per user prompt.
-	pi.on("agent_end", (_event, _ctx) => {
-		userTurnCount++;
-	});
-
 	pi.on("turn_end", async (event, ctx) => {
 		turnsSinceReview++;
+		userTurnCount++;
 
 		// Count tool calls from this turn only (not cumulative)
 		try {
@@ -305,7 +301,24 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		// Always update status so the countdown is visible
 		if (!reviewInProgress) updateStatus(ctx);
 
+		console.debug(
+			`[pi-memory] turn_end: turns=${turnsSinceReview}/${cfg.reviewTurnInterval} tools=${toolCallsSinceReview}/${cfg.reviewToolCalls} userTurns=${userTurnCount}/${cfg.reviewMinUserTurns} inProgress=${reviewInProgress}`,
+		);
+
 		if ((!turnThresholdMet && !toolCallThresholdMet) || reviewInProgress || userTurnCount < cfg.reviewMinUserTurns) {
+			return;
+		}
+
+		const triggerReason = turnThresholdMet ? `${cfg.reviewTurnInterval} turns` : `${cfg.reviewToolCalls} tool calls`;
+		triggerReview(ctx, triggerReason);
+	});
+
+	function triggerReview(
+		ctx: { ui: { setStatus: (k: string, v: string | undefined) => void; notify: (msg: string, level: string) => void }; sessionManager: { getBranch: () => unknown[] } },
+		triggerReason: string,
+	): void {
+		if (reviewInProgress) {
+			ctx.ui.notify("memory: review already in progress", "info");
 			return;
 		}
 
@@ -336,6 +349,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 
 		if (!conversationSnippet) {
 			reviewInProgress = false;
+			ctx.ui.notify("memory: nothing to review yet", "info");
 			return;
 		}
 
@@ -354,7 +368,6 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		if (cfg.reviewModel) reviewArgs.push("--model", cfg.reviewModel);
 		reviewArgs.push(reviewPrompt);
 
-		const triggerReason = turnThresholdMet ? `${cfg.reviewTurnInterval} turns` : `${cfg.reviewToolCalls} tool calls`;
 		ctx.ui.notify(`memory: starting background review (${triggerReason})`, "info");
 		const stopSpinner = startReviewSpinner(ctx);
 
@@ -387,7 +400,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 				updateStatus(ctx);
 				ctx.ui.notify("memory: background review failed (will retry next cycle)", "warning");
 			});
-	});
+	}
 
 	pi.registerTool({
 		name: "memory",
@@ -577,6 +590,13 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 					`review model: ${cfg.reviewModel || "(default)"}`,
 				"info",
 			);
+		},
+	});
+
+	pi.registerCommand("memory-review-now", {
+		description: "Manually trigger a background memory review immediately",
+		handler: async (_args, ctx) => {
+			triggerReview(ctx, "manual");
 		},
 	});
 }
