@@ -196,13 +196,40 @@ function userBlocksFromContent(content: unknown): ClaudeUserBlock[] {
 	return blocks;
 }
 
+/**
+ * Maximum gap between two user-role messages for the walker to treat them as
+ * belonging to the same turn. Extension-injected mode tags (e.g. spec-pipeline)
+ * land microseconds after the real user input — same turn. Two cross-turn user
+ * messages are separated by an assistant turn worth of seconds-to-minutes.
+ *
+ * Bounded so a missing intermediate assistant (state desync between persisted
+ * session and live agent.state.messages) can't bleed a prior user turn's text
+ * into the current prompt. Repro: pi-session-2026-05-12T01-37-34-527Z idx 19
+ * ("When I sort by name…") leaked into the prompt for idx 21 ("commit the
+ * changes please") because the agent state lacked idx 20 between them.
+ */
+const TRAILING_USER_CLUSTER_MS = 5_000;
+
+function messageTimestamp(msg: Message | undefined): number | undefined {
+	const ts = (msg as { timestamp?: unknown } | undefined)?.timestamp;
+	return typeof ts === "number" && Number.isFinite(ts) ? ts : undefined;
+}
+
 function trailingUserStart(messages: Message[]): number {
-	// pi-coding-agent's convertToLlm turns extension custom messages (e.g. spec-pipeline's
-	// brainstorm/discovery context tag) into role:"user" entries appended after the real
-	// user input, so taking only the very last user message would drop the human's actual
-	// text and leave Claude with just the mode tag.
+	// Walk back across consecutive user-role messages — but only while their
+	// timestamps cluster, so a same-turn extension-injected tag is included
+	// while a stale prior user turn is not. Messages without timestamps are
+	// treated as same-turn (covers tests and any caller that omits the field).
 	let start = messages.length;
-	while (start > 0 && messages[start - 1].role === "user") start--;
+	let referenceTs: number | undefined;
+	while (start > 0 && messages[start - 1].role === "user") {
+		const ts = messageTimestamp(messages[start - 1]);
+		if (referenceTs !== undefined && ts !== undefined && Math.abs(referenceTs - ts) > TRAILING_USER_CLUSTER_MS) {
+			break;
+		}
+		if (ts !== undefined) referenceTs = ts;
+		start--;
+	}
 	return start;
 }
 
@@ -212,6 +239,40 @@ function trailingUserContent(messages: Message[], start: number): ClaudeUserBloc
 		blocks.push(...userBlocksFromContent(messages[i].content));
 	}
 	return blocks;
+}
+
+/**
+ * Emit a diagnostic when the trailing-user run spans more than one message.
+ * Single-message runs are the overwhelming common case; multi-message runs
+ * indicate either a legitimate extension injection or a state desync. Logging
+ * unconditionally (not gated on CLAUDE_NATIVE_DEBUG) so a recurrence leaves a
+ * trace in stderr/session logs without needing to flip a debug flag first.
+ */
+function logTrailingUserAnomaly(messages: Message[], start: number): void {
+	if (messages.length - start <= 1) return;
+	const preview = (msg: Message) => {
+		const content = (msg as { content?: unknown }).content;
+		if (typeof content === "string") return content.slice(0, 60);
+		if (!Array.isArray(content)) return "";
+		for (const part of content as Array<{ type?: string; text?: string }>) {
+			if (part?.type === "text" && typeof part.text === "string") return part.text.slice(0, 60);
+		}
+		return "";
+	};
+	const entries = messages.slice(start).map((m) => ({
+		ts: messageTimestamp(m),
+		chars: typeof (m as { content?: unknown }).content === "string"
+			? ((m as { content: string }).content).length
+			: JSON.stringify((m as { content?: unknown }).content ?? "").length,
+		preview: preview(m),
+	}));
+	try {
+		// eslint-disable-next-line no-console
+		console.error(`[claude-native] trailing_user_run count=${entries.length} entries=${JSON.stringify(entries)}`);
+	} catch {
+		// eslint-disable-next-line no-console
+		console.error(`[claude-native] trailing_user_run count=${entries.length}`);
+	}
 }
 
 function renderToolCall(call: any): string {
@@ -464,6 +525,7 @@ export function streamClaudeNative(
 	stream.push({ type: "start", partial: output });
 
 	const start = trailingUserStart(context.messages);
+	logTrailingUserAnomaly(context.messages, start);
 	const userContent = trailingUserContent(context.messages, start);
 	const poolEntry = processPool.getOrCreate(model, options);
 	const { key, keyId, process: runtime, created, resumedClaudeSession } = poolEntry;

@@ -798,6 +798,70 @@ describe("claude native provider integration", () => {
 		expect(prompt[0].text).toContain("Tell me about stock model");
 	});
 
+	it("does not bleed an older user turn into the prompt when timestamps span more than the cluster window", async () => {
+		// Repro for pi-session-2026-05-12T01-37-34-527Z: when agent.state.messages
+		// drops an intermediate assistant message (state desync, e.g. an interrupted
+		// stream's partial never being replaced), two prior-turn user messages can
+		// end up adjacent at the tail. The walker must not concatenate them — that
+		// would replay a stale user message ("When I sort by name…") inside the
+		// prompt for a fresh user message ("commit the changes please") and Claude
+		// would respond to the wrong instruction.
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-1", result: "first" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "second" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		// Prime the process so the second turn lands on a reused warm process
+		// (resumedClaudeSession path) and there's no priorHistoryBlocks preamble
+		// hiding the trailing-user-content output we want to assert on.
+		await collectEvents(streamClaudeNative(createModel("sonnet"), {
+			messages: [{ role: "user", content: [{ type: "text", text: "warmup" }], timestamp: 1_000_000 }],
+		} as any));
+
+		const oldUserTs = 1_000_000;
+		const newUserTs = oldUserTs + 15 * 60 * 1000; // 15 minutes later
+		await collectEvents(streamClaudeNative(createModel("sonnet"), {
+			messages: [
+				// Intermediate assistant turn from idx 20 in the bug session — present
+				// in the persisted jsonl but missing from agent.state.messages at the
+				// moment of the streamSimple call (reproducing the desync).
+				{ role: "user", content: [{ type: "text", text: "When I sort by name I get a 500 error" }], timestamp: oldUserTs },
+				{ role: "user", content: [{ type: "text", text: "commit the changes please" }], timestamp: newUserTs },
+			],
+		} as any));
+
+		const secondPrompt = MockClaudeNativeProcess.instances[0].prompts[1] as Array<{ type: string; text: string }>;
+		expect(secondPrompt).toEqual([{ type: "text", text: "commit the changes please" }]);
+	});
+
+	it("still includes both messages when timestamps cluster (extension-injected mode tag on the same turn)", async () => {
+		MockClaudeNativeProcess.scenarios.push(
+			{ messages: [{ type: "result", subtype: "success", is_error: false, session_id: "claude-1", result: "first" }] },
+			{ messages: [{ type: "result", subtype: "success", is_error: false, result: "second" }] },
+		);
+
+		const { streamClaudeNative } = await loadModule();
+		await collectEvents(streamClaudeNative(createModel("sonnet"), {
+			messages: [{ role: "user", content: [{ type: "text", text: "warmup" }], timestamp: 1_000_000 }],
+		} as any));
+
+		const userTs = 2_000_000;
+		await collectEvents(streamClaudeNative(createModel("sonnet"), {
+			messages: [
+				{ role: "user", content: [{ type: "text", text: "lets brainstorm checkout" }], timestamp: userTs },
+				// Extension-injected tag — same turn, timestamp microseconds later.
+				{ role: "user", content: [{ type: "text", text: "[BRAINSTORM MODE]" }], timestamp: userTs + 3 },
+			],
+		} as any));
+
+		const secondPrompt = MockClaudeNativeProcess.instances[0].prompts[1] as Array<{ type: string; text: string }>;
+		expect(secondPrompt).toEqual([
+			{ type: "text", text: "lets brainstorm checkout" },
+			{ type: "text", text: "[BRAINSTORM MODE]" },
+		]);
+	});
+
 	it("prepends context.systemPrompt to the first user message on a fresh session", async () => {
 		MockClaudeNativeProcess.scenarios.push({
 			messages: [{ type: "result", subtype: "success", is_error: false, result: "ok" }],
