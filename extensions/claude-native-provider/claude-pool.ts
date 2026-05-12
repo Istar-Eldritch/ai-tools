@@ -24,7 +24,16 @@ export interface ClaudeConversationKey {
 
 interface RememberedClaudeSession {
 	id: string;
-	initialized: boolean;
+	/**
+	 * True only after the Claude CLI has echoed this session id back via
+	 * `rememberClaudeSessionId` (i.e. emitted any stream-json event carrying
+	 * `session_id`). Until then the id is a ghost: we passed it via
+	 * `--session-id` at spawn, but the CLI may have died before persisting
+	 * the session to disk. Resuming a ghost session with `--resume` would
+	 * fail or silently start fresh, so on process exit we drop unconfirmed
+	 * sessions instead of leaving them remembered.
+	 */
+	confirmed: boolean;
 }
 
 export interface ClaudeProcessPoolEntry {
@@ -258,12 +267,15 @@ export class ClaudeNativeProcessPool {
 			if (sessionContinuityEnabled) {
 				let rememberedSession = this.claudeSessions.get(conversationKeyId);
 				if (!rememberedSession) {
-					rememberedSession = { id: randomUUID(), initialized: false };
+					rememberedSession = { id: randomUUID(), confirmed: false };
 					this.claudeSessions.set(conversationKeyId, rememberedSession);
 				}
 				sessionId = rememberedSession.id;
-				isFirstSessionUse = !rememberedSession.initialized;
-				rememberedSession.initialized = true;
+				// Pass --session-id (not --resume) while the id is unconfirmed:
+				// either it was just minted, or a prior spawn died before the
+				// CLI ever echoed it back. The flag flips to confirmed only
+				// when `rememberClaudeSessionId` fires from a real CLI event.
+				isFirstSessionUse = !rememberedSession.confirmed;
 			}
 			const args = buildClaudeArgs(model, { sessionId, isFirstSessionUse, env, effort, disableThinking });
 			resumedClaudeSession = args.includes("--resume");
@@ -315,7 +327,7 @@ export class ClaudeNativeProcessPool {
 		if ((this.config.env ?? process.env).CLAUDE_NATIVE_NO_RESUME === "1") return;
 		const conversationKeyId = serializeClaudeConversationKey(conversationKeyFromProcessKey(key));
 		const previous = this.claudeSessions.get(conversationKeyId);
-		this.claudeSessions.set(conversationKeyId, { id: sessionId, initialized: true });
+		this.claudeSessions.set(conversationKeyId, { id: sessionId, confirmed: true });
 		if (previous && previous.id !== sessionId) {
 			// Session-id change for the same conversation key. The next turn's
 			// cache hit will reset because we're now resuming a different Claude
@@ -377,7 +389,24 @@ export class ClaudeNativeProcessPool {
 		for (const runtime of this.processes.values()) runtime.terminate(reason);
 		this.processes.clear();
 		this.liveTasks.clear();
-		if (options.clearSessions) this.claudeSessions.clear();
+		if (options.clearSessions) {
+			this.claudeSessions.clear();
+		} else {
+			// retireAll: drop unconfirmed ghost sessions. With every process now
+			// dead, any still-unconfirmed id has zero chance of being made real
+			// by a future event from the old runtime — keeping it would force
+			// the next spawn to `--resume` a non-existent session.
+			for (const [conversationKeyId, session] of [...this.claudeSessions.entries()]) {
+				if (!session.confirmed) {
+					this.claudeSessions.delete(conversationKeyId);
+					logClaudeNativeDiagnostic("pool.drop_unconfirmed_session", {
+						conversationKeyId,
+						sessionId: redactSessionId(session.id),
+						reason: `terminate_all: ${reason}`,
+					}, this.config.env ?? process.env);
+				}
+			}
+		}
 		return before;
 	}
 
@@ -419,9 +448,37 @@ export class ClaudeNativeProcessPool {
 			this.processes.delete(keyId);
 		}
 		this.liveTasks.delete(keyId);
+		const conversationKeyId = serializeClaudeConversationKey(conversationKeyFromProcessKey(key));
 		if (event.unsafeSession) {
-			this.claudeSessions.delete(serializeClaudeConversationKey(conversationKeyFromProcessKey(key)));
+			this.claudeSessions.delete(conversationKeyId);
+			return;
 		}
+		this.dropUnconfirmedSessionIfOrphaned(conversationKeyId, "process_exit");
+	}
+
+	/**
+	 * Drop the remembered session for `conversationKeyId` iff it was never
+	 * confirmed by the CLI (no stream event ever echoed its session_id back)
+	 * AND no other live process still holds it. An unconfirmed id is a ghost:
+	 * the CLI may have died before persisting it, so resuming with `--resume`
+	 * would either error or silently reset. Leaving a ghost remembered is
+	 * exactly what produced the "fresh session keeps respawning" loop in
+	 * pi-session-2026-05-12T01-37-34-527Z (idx 6→8→10).
+	 */
+	private dropUnconfirmedSessionIfOrphaned(conversationKeyId: string, reason: string): void {
+		const session = this.claudeSessions.get(conversationKeyId);
+		if (!session || session.confirmed) return;
+		for (const [processKeyId, runtime] of this.processes.entries()) {
+			const [, , cwd, sessionIdentity] = JSON.parse(processKeyId) as [string, string, string, string];
+			if (serializeClaudeConversationKey({ cwd, sessionIdentity }) !== conversationKeyId) continue;
+			if (runtime.isLive()) return;
+		}
+		this.claudeSessions.delete(conversationKeyId);
+		logClaudeNativeDiagnostic("pool.drop_unconfirmed_session", {
+			conversationKeyId,
+			sessionId: redactSessionId(session.id),
+			reason,
+		}, this.config.env ?? process.env);
 	}
 
 	invalidateKey(key: ClaudeProcessKey, reason: string, options: { clearSession?: boolean } = {}): void {
@@ -438,7 +495,12 @@ export class ClaudeNativeProcessPool {
 		if (runtime) runtime.terminate(reason);
 		this.processes.delete(keyId);
 		this.liveTasks.delete(keyId);
-		if (options.clearSession) this.claudeSessions.delete(serializeClaudeConversationKey(conversationKeyFromProcessKey(key)));
+		const conversationKeyId = serializeClaudeConversationKey(conversationKeyFromProcessKey(key));
+		if (options.clearSession) {
+			this.claudeSessions.delete(conversationKeyId);
+			return;
+		}
+		this.dropUnconfirmedSessionIfOrphaned(conversationKeyId, `invalidate_key: ${reason}`);
 	}
 
 	stats(): ClaudeProcessPoolStats {
