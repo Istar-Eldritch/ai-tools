@@ -5,9 +5,13 @@
  *   - global  ~/.pi/agent/memory/global/MEMORY.md          (user-level, cross-project)
  *   - project ~/.pi/agent/memory/<slug>/MEMORY.md          (per-cwd)
  *
- * Each file holds entries separated by a literal `§` line. Both files are
- * loaded once at session_start, injected verbatim into the system prompt,
+ * Each file is loaded once at session_start, injected verbatim into the system prompt,
  * and never re-read for the rest of the session (prefix-cache stability).
+ *
+ * Background review runs fire-and-forget after every N turns or M tool calls via a
+ * one-shot `pi -p --no-session` subprocess. Writes land on disk immediately; the main
+ * session sees them on the next session_start (or after compaction, which rebuilds the
+ * system prompt and re-reads from disk).
  *
  * Writes go through the `memory` tool: { scope, action: add|replace|remove, ... }.
  * Hard char caps; `add` errors and returns current entries when the file is full,
@@ -30,6 +34,12 @@ const CAPS: Record<Scope, number> = {
 	global: 1375,
 	project: 2200,
 };
+
+// Background review triggers
+const REVIEW_TURN_INTERVAL = 10;   // review every N assistant turns
+const REVIEW_TOOL_CALLS = 15;      // or every M tool calls in a turn
+const REVIEW_MIN_USER_TURNS = 3;   // skip review in short sessions
+const REVIEW_TIMEOUT_MS = 120_000;
 
 function slugForCwd(cwd: string): string {
 	const abs = path.resolve(cwd);
@@ -131,6 +141,25 @@ When the file is above 80% capacity, consolidate before adding: prefer
 merging or rewriting existing entries over piling on new ones.
 `;
 
+const REVIEW_PROMPT_PREFIX = `Review the conversation below and decide what is worth persisting to long-term memory.
+
+**Memory**: Has the user revealed preferences, identity, communication style, or recurring habits? Save these.
+
+**Failures & Corrections**: Did something fail or get corrected? Capture:
+- [failure] What was tried but didn't work
+- [correction] How the user corrected you
+- [insight] What was learned
+- [convention] Project conventions discovered
+- [tool-quirk] Surprising tool behavior
+
+**Project facts**: Non-obvious architecture decisions, directory layouts, sharp edges.
+
+Use the memory tool (scopes: global|project, actions: add|replace|remove) to persist worthwhile items.
+If nothing stands out, reply with exactly: Nothing to save.
+
+--- Current global memory ---
+`;
+
 function buildInjection(scope: Scope, filePath: string, body: string): string {
 	const entries = splitEntries(body);
 	const used = body.length;
@@ -143,10 +172,30 @@ function buildInjection(scope: Scope, filePath: string, body: string): string {
 	return `${header}\n\n${formatEntriesForList(entries)}`;
 }
 
+/** Extract text content from a session entry's message, handling string and array content. */
+function getMessageText(message: unknown): string {
+	if (!message || typeof message !== "object") return "";
+	const m = message as { content?: unknown };
+	if (typeof m.content === "string") return m.content;
+	if (Array.isArray(m.content)) {
+		return m.content
+			.filter((c): c is { type: string; text: string } => c?.type === "text" && typeof c.text === "string")
+			.map((c) => c.text)
+			.join("\n");
+	}
+	return "";
+}
+
 export default function piMemoryExtension(pi: ExtensionAPI) {
 	let frozenSnapshot: { global: string; project: string } = { global: "", project: "" };
 	let projectFile = "";
 	let globalFile = "";
+
+	// Background review state
+	let turnsSinceReview = 0;
+	let toolCallsSinceReview = 0;
+	let userTurnCount = 0;
+	let reviewInProgress = false;
 
 	pi.on("session_start", async (_event, ctx) => {
 		globalFile = fileFor("global", ctx.cwd);
@@ -155,6 +204,12 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 			global: readFileOrEmpty(globalFile),
 			project: readFileOrEmpty(projectFile),
 		};
+		// Reset background review counters on each session start
+		turnsSinceReview = 0;
+		toolCallsSinceReview = 0;
+		userTurnCount = 0;
+		reviewInProgress = false;
+
 		const globalEntries = splitEntries(frozenSnapshot.global).length;
 		const projectEntries = splitEntries(frozenSnapshot.project).length;
 		ctx.ui.setStatus(
@@ -181,6 +236,100 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 				projectBlock +
 				"\n",
 		};
+	});
+
+	// Count user turns for the min-turns gate
+	pi.on("message_end", (event) => {
+		if ((event.message as { role?: string })?.role === "user") {
+			userTurnCount++;
+		}
+	});
+
+	pi.on("turn_end", async (event, ctx) => {
+		turnsSinceReview++;
+
+		// Count tool calls from this turn only (not cumulative)
+		try {
+			const content = (event.message as { role?: string; content?: unknown })?.content;
+			if (Array.isArray(content)) {
+				for (const block of content) {
+					if (block && typeof block === "object" && (block as { type?: string }).type === "toolCall") {
+						toolCallsSinceReview++;
+					}
+				}
+			}
+		} catch {
+			// Ignore — fall back to turn-based threshold only
+		}
+
+		const turnThresholdMet = turnsSinceReview >= REVIEW_TURN_INTERVAL;
+		const toolCallThresholdMet = toolCallsSinceReview >= REVIEW_TOOL_CALLS;
+
+		if ((!turnThresholdMet && !toolCallThresholdMet) || reviewInProgress || userTurnCount < REVIEW_MIN_USER_TURNS) {
+			return;
+		}
+
+		turnsSinceReview = 0;
+		toolCallsSinceReview = 0;
+		reviewInProgress = true;
+
+		// Build a conversation snapshot from the current branch
+		let conversationSnippet = "";
+		try {
+			const entries = ctx.sessionManager.getBranch();
+			const parts: string[] = [];
+			for (const entry of entries) {
+				if (typeof entry !== "object" || entry === null) continue;
+				if ((entry as { type?: string }).type !== "message") continue;
+				const msg = (entry as { message?: unknown }).message;
+				const text = getMessageText(msg);
+				if (!text) continue;
+				const role = (msg as { role?: string } | null)?.role;
+				parts.push(`[${role === "user" ? "USER" : "ASSISTANT"}]: ${text}`);
+			}
+			// Keep last 40 parts to stay within subprocess context
+			conversationSnippet = parts.slice(-40).join("\n\n");
+		} catch {
+			reviewInProgress = false;
+			return;
+		}
+
+		if (!conversationSnippet) {
+			reviewInProgress = false;
+			return;
+		}
+
+		const reviewPrompt =
+			REVIEW_PROMPT_PREFIX +
+			(readFileOrEmpty(globalFile) || "(empty)") +
+			"\n\n--- Current project memory ---\n" +
+			(readFileOrEmpty(projectFile) || "(empty)") +
+			"\n\n--- Conversation ---\n" +
+			conversationSnippet;
+
+		// Fire-and-forget: do NOT await. Review runs in a subprocess so it doesn't
+		// block the interactive session. We intentionally omit ctx.signal — it's
+		// tied to the turn lifetime and would abort the subprocess prematurely.
+		const reviewPromise = pi.exec("pi", ["-p", "--no-session", reviewPrompt], {
+			signal: undefined,
+			timeout: REVIEW_TIMEOUT_MS,
+		});
+
+		reviewPromise
+			.then((result) => {
+				reviewInProgress = false;
+				if (result.code === 0 && result.stdout) {
+					const output = result.stdout.trim();
+					if (output && !output.toLowerCase().startsWith("nothing to save")) {
+						ctx.ui.notify("memory: background review saved new entries", "info");
+					}
+				}
+			})
+			.catch(() => {
+				// Best-effort: silently ignore subprocess failures (timeout, spawn errors).
+				// The next review cycle will retry.
+				reviewInProgress = false;
+			});
 	});
 
 	pi.registerTool({
