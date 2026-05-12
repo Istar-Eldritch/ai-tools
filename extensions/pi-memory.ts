@@ -220,6 +220,12 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 	let userTurnCount = 0;
 	let reviewInProgress = false;
 
+	function updateStatus(uiCtx: { ui: { setStatus: (key: string, val: string | undefined) => void } }) {
+		const globalEntries = splitEntries(readFileOrEmpty(globalFile)).length;
+		const projectEntries = splitEntries(readFileOrEmpty(projectFile)).length;
+		uiCtx.ui.setStatus("pi-memory", `memory: ${globalEntries}g / ${projectEntries}p`);
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		cfg = loadConfig();
 		globalFile = fileFor("global", ctx.cwd);
@@ -234,12 +240,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		userTurnCount = 0;
 		reviewInProgress = false;
 
-		const globalEntries = splitEntries(frozenSnapshot.global).length;
-		const projectEntries = splitEntries(frozenSnapshot.project).length;
-		ctx.ui.setStatus(
-			"pi-memory",
-			`memory: ${globalEntries}g / ${projectEntries}p`,
-		);
+		updateStatus(ctx);
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
@@ -337,6 +338,9 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		const reviewArgs = ["-p", "--no-session"];
 		if (cfg.reviewModel) reviewArgs.push("--model", cfg.reviewModel);
 		reviewArgs.push(reviewPrompt);
+
+		ctx.ui.setStatus("pi-memory", "memory: reviewing…");
+
 		const reviewPromise = pi.exec("pi", reviewArgs, {
 			signal: undefined,
 			timeout: cfg.reviewTimeoutMs,
@@ -345,6 +349,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 		reviewPromise
 			.then((result) => {
 				reviewInProgress = false;
+				updateStatus(ctx);
 				if (result.code === 0 && result.stdout) {
 					const output = result.stdout.trim();
 					if (output && !output.toLowerCase().startsWith("nothing to save")) {
@@ -356,6 +361,7 @@ export default function piMemoryExtension(pi: ExtensionAPI) {
 				// Best-effort: silently ignore subprocess failures (timeout, spawn errors).
 				// The next review cycle will retry.
 				reviewInProgress = false;
+				updateStatus(ctx);
 			});
 	});
 
