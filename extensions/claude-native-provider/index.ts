@@ -416,6 +416,25 @@ function appendThinking(stream: AssistantMessageEventStream, output: AssistantMe
 	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
 }
 
+function formatToolUse(block: any): string {
+	const name = typeof block.name === "string" ? block.name : "tool";
+	const input = block.input;
+	if (input && typeof input === "object" && !Array.isArray(input)) {
+		const keys = Object.keys(input);
+		if (keys.length === 0) return name;
+		const preview = keys.slice(0, 2).map((key) => {
+			const raw = input[key];
+			const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+			const value = str ?? "";
+			const truncated = value.length > 80 ? `${value.slice(0, 77)}...` : value;
+			return `${key}=${truncated}`;
+		}).join(", ");
+		const suffix = keys.length > 2 ? `, +${keys.length - 2} more` : "";
+		return `${name}(${preview}${suffix})`;
+	}
+	return name;
+}
+
 function appendStatus(stream: AssistantMessageEventStream, output: AssistantMessage, status: string) {
 	if (!status || process.env.CLAUDE_NATIVE_STATUS_UPDATES === "0") return;
 	appendThinking(stream, output, status);
@@ -451,25 +470,6 @@ function formatTaskEvent(event: ClaudeBackgroundTaskEvent): string {
 	}
 }
 
-function formatToolUse(block: any): string {
-	const name = typeof block.name === "string" ? block.name : "tool";
-	const input = block.input;
-	if (input && typeof input === "object" && !Array.isArray(input)) {
-		const keys = Object.keys(input);
-		if (keys.length === 0) return name;
-		const preview = keys.slice(0, 2).map((key) => {
-			const raw = input[key];
-			const str = typeof raw === "string" ? raw : JSON.stringify(raw);
-			const value = str ?? "";
-			const truncated = value.length > 80 ? `${value.slice(0, 77)}...` : value;
-			return `${key}=${truncated}`;
-		}).join(", ");
-		const suffix = keys.length > 2 ? `, +${keys.length - 2} more` : "";
-		return `${name}(${preview}${suffix})`;
-	}
-	return name;
-}
-
 function appendAssistantBlocks(stream: AssistantMessageEventStream, output: AssistantMessage, message: any, showThinking: boolean): boolean {
 	const content = message?.message?.content;
 	if (!Array.isArray(content)) return false;
@@ -484,7 +484,7 @@ function appendAssistantBlocks(stream: AssistantMessageEventStream, output: Assi
 				saw = true;
 			}
 		} else if (block?.type === "tool_use") {
-			appendText(stream, output, `\n[Claude Code: ${formatToolUse(block)}]\n`);
+			appendThinking(stream, output, `[Claude Code: ${formatToolUse(block)}]`);
 			saw = true;
 		}
 	}
@@ -653,7 +653,7 @@ export function streamClaudeNative(
 				appendText(stream, output, msg.text);
 			} else if (msg.type === "streamlined_tool_use_summary" && typeof msg.tool_summary === "string") {
 				// Surface tool activity as lightweight text for now. Later this can become a custom renderer/status update.
-				appendText(stream, output, `\n[Claude Code: ${msg.tool_summary}]\n`);
+				appendThinking(stream, output, `[Claude Code: ${msg.tool_summary}]`);
 			} else if (msg.type === "result") {
 				if (typeof msg.result === "string") finalResult = msg.result;
 				if (msg.is_error || msg.subtype !== "success") {
