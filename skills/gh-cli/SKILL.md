@@ -304,6 +304,38 @@ gh issue list --json number,title --jq '.[].title'
 gh pr list --json number,mergeable --jq '.[] | select(.mergeable == "MERGEABLE")'
 ```
 
+## Pitfalls
+
+### Creating a Pending PR Review with Inline Comments
+
+`gh pr review` only supports `--approve`, `--request-changes`, and `--comment` — it cannot create a **pending** (draft) review or attach **inline file comments** in a single call.
+
+To create a pending review with inline comments, use the REST API:
+
+```bash
+# Step 1: Create a pending review — omit the "event" field to leave it in draft
+gh api repos/OWNER/REPO/pulls/PR_NUMBER/reviews \
+  --method POST \
+  --field body="Top-level review summary" \
+  --field 'comments[][path]=src/Foo.java' \
+  --field 'comments[][position]=10' \
+  --field 'comments[][body]=Inline comment text'
+
+# Step 2: Submit (publish) when ready
+gh api repos/OWNER/REPO/pulls/PR_NUMBER/reviews/REVIEW_ID/events \
+  --method POST \
+  --field event="COMMENT"   # or APPROVE / REQUEST_CHANGES
+```
+
+**Key gotchas:**
+- Passing `event=PENDING` returns **422 "invalid value for PullRequestReviewEvent"**. `PENDING` is a read-only state — **omit the `event` field** entirely to create a draft review.
+- `position` is the line offset within the diff hunk (not the source line number). Run `gh pr diff PR_NUMBER --patch` and count from the first `@@` line of each hunk.
+- The GraphQL `addPullRequestReview` mutation has the same constraint — do not pass `PENDING` as the event.
+- `--field` with array-of-object syntax (`comments[][]`) does not work reliably; prefer `--input` with a JSON file:
+  ```bash
+  gh api repos/OWNER/REPO/pulls/PR_NUMBER/reviews --method POST --input review.json
+  ```
+
 ## Tips
 
 1. **Set default repo**: `gh repo set-default OWNER/REPO`

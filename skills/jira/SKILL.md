@@ -1,6 +1,6 @@
 ---
 name: jira
-description: Project management via Atlassian Jira using acli CLI. Use for creating, updating, and tracking work items (issues/tasks/bugs/stories/epics), managing sprints, organizing with boards, filtering and searching issues, transitioning workflow states, adding comments, linking issues, managing labels, and querying project status. Invoke when user mentions Jira, issues, tickets, bugs, stories, epics, tasks, sprints, boards, JQL, Atlassian, or Jira project management.
+description: Project management via Atlassian Jira using acli CLI. Use ONLY when the user explicitly mentions Jira, Atlassian, JQL, or a Jira-specific project key from the ENA/TTENA workspaces. Do NOT use for Linear issues, GitHub issues, or any other tracker — only for Atlassian Jira.
 ---
 
 # Jira Project Management via ACLI
