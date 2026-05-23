@@ -98,7 +98,7 @@ export function loadSpecState(cwd: string, id: string): SpecState | null {
 		let needsSave = false;
 		if (state.specPath && path.isAbsolute(state.specPath)) {
 			const relativePath = path.relative(cwd, state.specPath);
-			if (!relativePath.startsWith('..')) {
+			if (!relativePath.startsWith("..")) {
 				state.specPath = relativePath;
 				needsSave = true;
 			}
@@ -150,7 +150,11 @@ export function saveSpecState(cwd: string, state: SpecState): void {
 		fs.mkdirSync(stateDir, { recursive: true });
 	}
 	state.updatedAt = new Date().toISOString();
-	fs.writeFileSync(getSpecStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+	fs.writeFileSync(
+		getSpecStatePath(cwd, state.id),
+		JSON.stringify(state, null, 2),
+		"utf-8",
+	);
 }
 
 /**
@@ -161,7 +165,7 @@ export function listSpecStates(cwd: string): SpecState[] {
 	if (!fs.existsSync(stateDir)) {
 		return [];
 	}
-	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
+	const files = fs.readdirSync(stateDir).filter((f) => f.endsWith(".json"));
 	const states: SpecState[] = [];
 	for (const file of files) {
 		const id = file.replace(/\.json$/, "");
@@ -170,7 +174,9 @@ export function listSpecStates(cwd: string): SpecState[] {
 			states.push(state);
 		}
 	}
-	return states.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+	return states.sort(
+		(a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+	);
 }
 
 /**
@@ -178,7 +184,10 @@ export function listSpecStates(cwd: string): SpecState[] {
  */
 export function getLatestActiveSpecPipeline(cwd: string): SpecState | null {
 	const states = listSpecStates(cwd);
-	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
+	return (
+		states.find((s) => s.stage !== "completed" && s.stage !== "cancelled") ||
+		null
+	);
 }
 
 // ============================================
@@ -188,13 +197,18 @@ export function getLatestActiveSpecPipeline(cwd: string): SpecState | null {
 /**
  * Load implementation state by ID
  */
-export function loadImplState(cwd: string, id: string): ImplementationState | null {
+export function loadImplState(
+	cwd: string,
+	id: string,
+): ImplementationState | null {
 	const statePath = getImplStatePath(cwd, id);
 	if (!fs.existsSync(statePath)) {
 		return null;
 	}
 	try {
-		const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as ImplementationState;
+		const state = JSON.parse(
+			fs.readFileSync(statePath, "utf-8"),
+		) as ImplementationState;
 
 		let needsSave = false;
 
@@ -247,7 +261,11 @@ export function saveImplState(cwd: string, state: ImplementationState): void {
 		fs.mkdirSync(stateDir, { recursive: true });
 	}
 	state.updatedAt = new Date().toISOString();
-	fs.writeFileSync(getImplStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+	fs.writeFileSync(
+		getImplStatePath(cwd, state.id),
+		JSON.stringify(state, null, 2),
+		"utf-8",
+	);
 }
 
 /**
@@ -258,7 +276,7 @@ export function listImplStates(cwd: string): ImplementationState[] {
 	if (!fs.existsSync(stateDir)) {
 		return [];
 	}
-	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
+	const files = fs.readdirSync(stateDir).filter((f) => f.endsWith(".json"));
 	const states: ImplementationState[] = [];
 	for (const file of files) {
 		const id = file.replace(/\.json$/, "");
@@ -267,15 +285,22 @@ export function listImplStates(cwd: string): ImplementationState[] {
 			states.push(state);
 		}
 	}
-	return states.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+	return states.sort(
+		(a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+	);
 }
 
 /**
  * Get the most recent active implementation pipeline
  */
-export function getLatestActiveImplPipeline(cwd: string): ImplementationState | null {
+export function getLatestActiveImplPipeline(
+	cwd: string,
+): ImplementationState | null {
 	const states = listImplStates(cwd);
-	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
+	return (
+		states.find((s) => s.stage !== "completed" && s.stage !== "cancelled") ||
+		null
+	);
 }
 
 // ============================================
@@ -312,26 +337,34 @@ export const generateSpecTimestamp = generateTimestamp;
 /**
  * Create initial discovery state
  */
-export function createInitialDiscoveryState(skipped: boolean = false): DiscoveryState {
+export function createInitialDiscoveryState(
+	skipped: boolean = false,
+): DiscoveryState {
 	return {
 		skipped,
 		discoverySummary: "",
 		completed: skipped,
 		conversationHistory: [],
+		topics: [],
+		activeTopic: null,
 	};
 }
 
 /**
  * Generate a discovery summary from conversational exchanges
  */
-export function generateConversationalDiscoverySummary(exchanges: ConversationalExchange[]): string {
+export function generateConversationalDiscoverySummary(
+	exchanges: ConversationalExchange[],
+): string {
 	if (exchanges.length === 0) {
 		return "";
 	}
 
 	const sections: string[] = [];
 	sections.push("## Discovery Summary\n");
-	sections.push("The following information was gathered during an interactive discovery conversation:\n");
+	sections.push(
+		"The following information was gathered during an interactive discovery conversation:\n",
+	);
 
 	for (let i = 0; i < exchanges.length; i++) {
 		const exchange = exchanges[i];
@@ -355,7 +388,7 @@ export function createInitialSpecState(
 	shortName: string,
 	specsDir: string,
 	skipDiscovery: boolean = false,
-	specFormat: string = "md"
+	specFormat: string = "md",
 ): SpecState {
 	const specFilename = `${specTimestamp}_spec_${shortName}.${specFormat}`;
 	const specPath = path.join(specsDir, specFilename);
@@ -369,7 +402,7 @@ export function createInitialSpecState(
 		updatedAt: now,
 
 		discovery: createInitialDiscoveryState(skipDiscovery),
-	
+
 		specTimestamp,
 		specFilename,
 		specPath,
@@ -386,7 +419,7 @@ export function createInitialImplState(
 	specPath: string,
 	specContent: string,
 	implTimestamp: string,
-	skipPlanGeneration: boolean = false
+	skipPlanGeneration: boolean = false,
 ): ImplementationState {
 	const now = new Date().toISOString();
 
@@ -439,7 +472,9 @@ export function loadRoadmapState(cwd: string, id: string): RoadmapState | null {
 		return null;
 	}
 	try {
-		const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as RoadmapState;
+		const state = JSON.parse(
+			fs.readFileSync(statePath, "utf-8"),
+		) as RoadmapState;
 
 		// Ensure level is set
 		if (!state.level) {
@@ -469,7 +504,11 @@ export function saveRoadmapState(cwd: string, state: RoadmapState): void {
 		fs.mkdirSync(stateDir, { recursive: true });
 	}
 	state.updatedAt = new Date().toISOString();
-	fs.writeFileSync(getRoadmapStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+	fs.writeFileSync(
+		getRoadmapStatePath(cwd, state.id),
+		JSON.stringify(state, null, 2),
+		"utf-8",
+	);
 }
 
 /**
@@ -480,7 +519,7 @@ export function listRoadmapStates(cwd: string): RoadmapState[] {
 	if (!fs.existsSync(stateDir)) {
 		return [];
 	}
-	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
+	const files = fs.readdirSync(stateDir).filter((f) => f.endsWith(".json"));
 	const states: RoadmapState[] = [];
 	for (const file of files) {
 		const id = file.replace(/\.json$/, "");
@@ -489,15 +528,22 @@ export function listRoadmapStates(cwd: string): RoadmapState[] {
 			states.push(state);
 		}
 	}
-	return states.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+	return states.sort(
+		(a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+	);
 }
 
 /**
  * Get the most recent active roadmap pipeline
  */
-export function getLatestActiveRoadmapPipeline(cwd: string): RoadmapState | null {
+export function getLatestActiveRoadmapPipeline(
+	cwd: string,
+): RoadmapState | null {
 	const states = listRoadmapStates(cwd);
-	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
+	return (
+		states.find((s) => s.stage !== "completed" && s.stage !== "cancelled") ||
+		null
+	);
 }
 
 // ============================================
@@ -557,7 +603,11 @@ export function saveEpicState(cwd: string, state: EpicState): void {
 		fs.mkdirSync(stateDir, { recursive: true });
 	}
 	state.updatedAt = new Date().toISOString();
-	fs.writeFileSync(getEpicStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+	fs.writeFileSync(
+		getEpicStatePath(cwd, state.id),
+		JSON.stringify(state, null, 2),
+		"utf-8",
+	);
 }
 
 /**
@@ -568,7 +618,7 @@ export function listEpicStates(cwd: string): EpicState[] {
 	if (!fs.existsSync(stateDir)) {
 		return [];
 	}
-	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
+	const files = fs.readdirSync(stateDir).filter((f) => f.endsWith(".json"));
 	const states: EpicState[] = [];
 	for (const file of files) {
 		const id = file.replace(/\.json$/, "");
@@ -577,7 +627,9 @@ export function listEpicStates(cwd: string): EpicState[] {
 			states.push(state);
 		}
 	}
-	return states.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+	return states.sort(
+		(a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+	);
 }
 
 /**
@@ -585,7 +637,10 @@ export function listEpicStates(cwd: string): EpicState[] {
  */
 export function getLatestActiveEpicPipeline(cwd: string): EpicState | null {
 	const states = listEpicStates(cwd);
-	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
+	return (
+		states.find((s) => s.stage !== "completed" && s.stage !== "cancelled") ||
+		null
+	);
 }
 
 // ============================================
@@ -601,7 +656,7 @@ export function createInitialRoadmapState(
 	shortName: string,
 	specsDir: string,
 	skipDiscovery: boolean = false,
-	docFormat: string = "md"
+	docFormat: string = "md",
 ): RoadmapState {
 	const docFilename = `${docTimestamp}_roadmap_${shortName}.${docFormat}`;
 	const docPath = path.join(specsDir, docFilename);
@@ -639,7 +694,7 @@ export function createInitialEpicState(
 	skipDiscovery: boolean = false,
 	docFormat: string = "md",
 	parentId?: string,
-	parentType?: "roadmap"
+	parentType?: "roadmap",
 ): EpicState {
 	const docFilename = `${docTimestamp}_epic_${shortName}.${docFormat}`;
 	const docPath = path.join(specsDir, docFilename);
@@ -690,13 +745,18 @@ export function getBrainstormStatePath(cwd: string, id: string): string {
 /**
  * Load brainstorm state by ID
  */
-export function loadBrainstormState(cwd: string, id: string): BrainstormState | null {
+export function loadBrainstormState(
+	cwd: string,
+	id: string,
+): BrainstormState | null {
 	const statePath = getBrainstormStatePath(cwd, id);
 	if (!fs.existsSync(statePath)) {
 		return null;
 	}
 	try {
-		const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as BrainstormState;
+		const state = JSON.parse(
+			fs.readFileSync(statePath, "utf-8"),
+		) as BrainstormState;
 
 		// Initialize missing fields
 		if (state.checkpoints === undefined) {
@@ -721,7 +781,11 @@ export function saveBrainstormState(cwd: string, state: BrainstormState): void {
 		fs.mkdirSync(stateDir, { recursive: true });
 	}
 	state.updatedAt = new Date().toISOString();
-	fs.writeFileSync(getBrainstormStatePath(cwd, state.id), JSON.stringify(state, null, 2), "utf-8");
+	fs.writeFileSync(
+		getBrainstormStatePath(cwd, state.id),
+		JSON.stringify(state, null, 2),
+		"utf-8",
+	);
 }
 
 /**
@@ -732,7 +796,7 @@ export function listBrainstormStates(cwd: string): BrainstormState[] {
 	if (!fs.existsSync(stateDir)) {
 		return [];
 	}
-	const files = fs.readdirSync(stateDir).filter(f => f.endsWith(".json"));
+	const files = fs.readdirSync(stateDir).filter((f) => f.endsWith(".json"));
 	const states: BrainstormState[] = [];
 	for (const file of files) {
 		const id = file.replace(/\.json$/, "");
@@ -741,15 +805,22 @@ export function listBrainstormStates(cwd: string): BrainstormState[] {
 			states.push(state);
 		}
 	}
-	return states.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+	return states.sort(
+		(a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+	);
 }
 
 /**
  * Get the most recent active brainstorm pipeline (not completed or cancelled)
  */
-export function getLatestActiveBrainstormPipeline(cwd: string): BrainstormState | null {
+export function getLatestActiveBrainstormPipeline(
+	cwd: string,
+): BrainstormState | null {
 	const states = listBrainstormStates(cwd);
-	return states.find(s => s.stage !== "completed" && s.stage !== "cancelled") || null;
+	return (
+		states.find((s) => s.stage !== "completed" && s.stage !== "cancelled") ||
+		null
+	);
 }
 
 /**
@@ -760,7 +831,7 @@ export function createInitialBrainstormState(
 	docTimestamp: string,
 	shortName: string,
 	specsDir: string,
-	specFormat: string = "md"
+	specFormat: string = "md",
 ): BrainstormState {
 	const docFilename = `${docTimestamp}_brainstorm_${shortName}.${specFormat}`;
 	const docPath = path.join(specsDir, docFilename);
@@ -833,7 +904,10 @@ export function extractChildItems(docContent: string): ChildItem[] {
 			}
 
 			// Split by pipe, trim, filter empties
-			const cells = trimmed.split("|").map(c => c.trim()).filter(c => c.length > 0);
+			const cells = trimmed
+				.split("|")
+				.map((c) => c.trim())
+				.filter((c) => c.length > 0);
 			if (cells.length < 5) continue;
 
 			const num = parseInt(cells[0], 10);
@@ -852,7 +926,12 @@ export function extractChildItems(docContent: string): ChildItem[] {
 
 			// Parse dependencies
 			const dependencies: number[] = [];
-			if (depsRaw !== "-" && depsRaw !== "" && depsRaw !== "None" && depsRaw !== "none") {
+			if (
+				depsRaw !== "-" &&
+				depsRaw !== "" &&
+				depsRaw !== "None" &&
+				depsRaw !== "none"
+			) {
 				const parts = depsRaw.split(/[,\s]+/);
 				for (const part of parts) {
 					const depNum = parseInt(part.trim(), 10);

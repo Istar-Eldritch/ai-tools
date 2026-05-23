@@ -82,6 +82,7 @@ import type {
 	HierarchyState,
 	HierarchyLevel,
 	ConversationalExchange,
+	DiscoveryTopic,
 	ProjectConfig,
 	PipelineMode,
 	ScopingState,
@@ -456,15 +457,61 @@ export default function (pi: ExtensionAPI) {
 	/** Number of conversation exchanges in current mode */
 	let exchangeCount = 0;
 
-	// Extension-driven discovery Q&A loop state
+	// Extension-driven discovery topic loop state
 	/** True while the extension is running the structured Q&A loop for discovery */
 	let discoveryLoopActive = false;
-	/** Accumulated Q&A pairs for the current discovery loop */
-	let discoveryQAPairs: Array<{ question: string; answer: string }> = [];
-	/** The question the extension just injected — waiting for the user's answer */
-	let pendingDiscoveryQuestion: string | null = null;
+	/** Closed topics accumulated during the current extension-driven discovery loop */
+	let discoveryTopics: DiscoveryTopic[] = [];
+	/** The active topic the extension just injected — waiting for the user's decision/follow-up */
+	let activeDiscoveryTopic: DiscoveryTopic | null = null;
 	/** AbortController for the in-flight discovery subagent call */
 	let discoveryLoopAbort: AbortController | null = null;
+
+	function discoveryTopicToExchange(
+		topic: DiscoveryTopic,
+	): ConversationalExchange {
+		return {
+			userMessage: topic.decision ?? "(No final decision recorded)",
+			assistantResponse: topic.question,
+			timestamp: topic.timestamp,
+		};
+	}
+
+	function persistDiscoveryLoopState(): void {
+		if (!activePipelineState?.discovery) return;
+		activePipelineState.discovery.topics = discoveryTopics;
+		activePipelineState.discovery.activeTopic = activeDiscoveryTopic;
+		activeStateSaveFn?.();
+	}
+
+	function syncDiscoveryTopicsToState(
+		includeActiveTopic: boolean = false,
+	): void {
+		if (!activePipelineState?.discovery) return;
+
+		const topicsToPersist = [...discoveryTopics];
+		if (includeActiveTopic && activeDiscoveryTopic) {
+			topicsToPersist.push(activeDiscoveryTopic);
+		}
+
+		activePipelineState.discovery.topics = topicsToPersist;
+		activePipelineState.discovery.activeTopic = null;
+		activePipelineState.discovery.conversationHistory = topicsToPersist.map(
+			discoveryTopicToExchange,
+		);
+		exchangeCount = activePipelineState.discovery.conversationHistory.length;
+		activeStateSaveFn?.();
+	}
+
+	function resetDiscoveryLoopState(): void {
+		discoveryLoopActive = false;
+		discoveryTopics = [];
+		activeDiscoveryTopic = null;
+		if (discoveryLoopAbort) {
+			discoveryLoopAbort.abort();
+			discoveryLoopAbort = null;
+		}
+	}
 
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
 	let pendingScopingContext: string | undefined;
@@ -654,13 +701,7 @@ export default function (pi: ExtensionAPI) {
 		pendingImplementShortName = null;
 		pendingImplementTimestamp = null;
 		// Clear discovery loop state
-		discoveryLoopActive = false;
-		discoveryQAPairs = [];
-		pendingDiscoveryQuestion = null;
-		if (discoveryLoopAbort) {
-			discoveryLoopAbort.abort();
-			discoveryLoopAbort = null;
-		}
+		resetDiscoveryLoopState();
 		return result;
 	}
 
@@ -747,14 +788,22 @@ IMPORTANT: You are in DISCOVERY MODE.
 	function buildDiscoveryQuestionSystemPrompt(
 		state: ConversationalPipelineState,
 		projectConfig: ProjectConfig,
-		qaPairs: Array<{ question: string; answer: string }>,
+		topics: DiscoveryTopic[],
 		parentContext?: string,
 	): string {
 		const { projectContext } = projectConfig;
 
 		const historyBlock =
-			qaPairs.length > 0
-				? `\n## Discovery So Far\n\n${qaPairs.map((p, i) => `Q${i + 1}: ${p.question}\nA${i + 1}: ${p.answer}`).join("\n\n")}\n`
+			topics.length > 0
+				? `\n## Discovery So Far\n\n${topics
+						.map((topic, i) => {
+							const followUps =
+								topic.followUps.length > 0
+									? `\nFollow-ups:\n${topic.followUps.map((f, j) => `- F${j + 1} Q: ${f.userQuestion}\n  F${j + 1} A: ${f.agentAnswer}`).join("\n")}`
+									: "";
+							return `Topic ${i + 1}: ${topic.question}\nDecision ${i + 1}: ${topic.decision ?? "(open)"}${followUps}`;
+						})
+						.join("\n\n")}\n`
 				: "";
 
 		const scopingBlock = state.discovery?.discoverySummary
@@ -790,7 +839,7 @@ IMPORTANT: You are in DISCOVERY MODE.
 		const systemPrompt = buildDiscoveryQuestionSystemPrompt(
 			state,
 			projectConfig,
-			discoveryQAPairs,
+			discoveryTopics,
 			activeParentContext,
 		);
 
@@ -816,26 +865,14 @@ IMPORTANT: You are in DISCOVERY MODE.
 		const output = result.output.trim();
 
 		if (output === "READY_TO_DRAFT") {
-			// Sync Q&A pairs into the state's conversation history so /discovery-done works
-			if (!state.discovery!.conversationHistory) {
-				state.discovery!.conversationHistory = [];
-			}
-			for (const pair of discoveryQAPairs) {
-				state.discovery!.conversationHistory.push({
-					userMessage: pair.answer,
-					assistantResponse: pair.question,
-					timestamp: new Date().toISOString(),
-				});
-			}
-			exchangeCount = state.discovery!.conversationHistory.length;
-			activeStateSaveFn?.();
+			syncDiscoveryTopicsToState(false);
 
 			ctx.ui.notify(
-				`✅ Discovery complete (${discoveryQAPairs.length} questions). Transitioning to ${nextStep}...`,
+				`✅ Discovery complete (${discoveryTopics.length} questions). Transitioning to ${nextStep}...`,
 				"success",
 			);
 			discoveryLoopActive = false;
-			pendingDiscoveryQuestion = null;
+			activeDiscoveryTopic = null;
 
 			// Trigger the same transition that /discovery-done uses
 			await handleDiscoveryDone(ctx, sessionLabel);
@@ -844,9 +881,16 @@ IMPORTANT: You are in DISCOVERY MODE.
 
 		// It's a question — display via notify only (no pi.sendUserMessage, which
 		// would trigger a host agent turn to reply to it).
-		pendingDiscoveryQuestion = output;
+		activeDiscoveryTopic = {
+			question: output,
+			followUps: [],
+			decision: null,
+			timestamp: new Date().toISOString(),
+		};
+		persistDiscoveryLoopState();
+
 		ctx.ui.notify(
-			`\n💬 Question ${discoveryQAPairs.length + 1}\n\n${output}\n\n➔ Type your answer below:`,
+			`\n💬 Question ${discoveryTopics.length + 1}\n\n${output}\n\n➔ Type your answer below:`,
 			"info",
 		);
 	}
@@ -871,7 +915,7 @@ IMPORTANT: You are in DISCOVERY MODE.
 		}
 
 		discoveryLoopActive = false;
-		pendingDiscoveryQuestion = null;
+		activeDiscoveryTopic = null;
 		if (discoveryLoopAbort) {
 			discoveryLoopAbort.abort();
 			discoveryLoopAbort = null;
@@ -1834,16 +1878,18 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		}
 
 		// Extension-driven discovery loop: capture answer and run next step
-		if (discoveryLoopActive && pendingDiscoveryQuestion !== null) {
+		if (discoveryLoopActive && activeDiscoveryTopic !== null) {
 			const answer = event.text.trim();
 
 			// Allow /discovery-done to break out even during the loop
 			if (!answer.startsWith("/")) {
-				discoveryQAPairs.push({
-					question: pendingDiscoveryQuestion,
-					answer,
-				});
-				pendingDiscoveryQuestion = null;
+				const closedTopic: DiscoveryTopic = {
+					...activeDiscoveryTopic,
+					decision: answer,
+				};
+				discoveryTopics.push(closedTopic);
+				activeDiscoveryTopic = null;
+				persistDiscoveryLoopState();
 
 				let sessionLabel = "Spec";
 				let nextStep = "spec drafting";
@@ -1993,28 +2039,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				return;
 			}
 
-			// Stop the extension-driven loop and flush any partial Q&A into history
+			// Stop the extension-driven loop and flush any partial topic into history
 			if (discoveryLoopActive) {
 				discoveryLoopActive = false;
-				pendingDiscoveryQuestion = null;
 				if (discoveryLoopAbort) {
 					discoveryLoopAbort.abort();
 					discoveryLoopAbort = null;
 				}
-				if (!activePipelineState!.discovery!.conversationHistory) {
-					activePipelineState!.discovery!.conversationHistory = [];
-				}
-				for (const pair of discoveryQAPairs) {
-					activePipelineState!.discovery!.conversationHistory.push({
-						userMessage: pair.answer,
-						assistantResponse: pair.question,
-						timestamp: new Date().toISOString(),
-					});
-				}
-				exchangeCount =
-					activePipelineState!.discovery!.conversationHistory.length;
-				discoveryQAPairs = [];
-				activeStateSaveFn?.();
+				syncDiscoveryTopicsToState(true);
+				discoveryTopics = [];
+				activeDiscoveryTopic = null;
 			}
 
 			if (exchangeCount === 0) {
@@ -2417,10 +2451,11 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					"info",
 				);
 
-				// Start the extension-driven Q&A loop
+				// Start the extension-driven topic loop
 				discoveryLoopActive = true;
-				discoveryQAPairs = [];
-				pendingDiscoveryQuestion = null;
+				discoveryTopics = state.discovery?.topics ?? [];
+				activeDiscoveryTopic = state.discovery?.activeTopic ?? null;
+				persistDiscoveryLoopState();
 				setImmediate(() => runDiscoveryStep(ctx, "Spec", "spec drafting"));
 			} else {
 				// --quick mode: enter conversational drafting directly

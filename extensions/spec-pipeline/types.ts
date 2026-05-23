@@ -255,6 +255,32 @@ export interface ConversationalExchange {
 }
 
 /**
+ * A follow-up exchange inside a single discovery topic thread.
+ */
+export interface DiscoveryFollowUp {
+	/** User's follow-up question about the active topic */
+	userQuestion: string;
+	/** Discovery agent's answer to that follow-up */
+	agentAnswer: string;
+	/** ISO timestamp for when the follow-up was recorded */
+	timestamp: string;
+}
+
+/**
+ * One complete or in-progress extension-driven discovery topic.
+ */
+export interface DiscoveryTopic {
+	/** The original subagent assumption/question */
+	question: string;
+	/** Follow-up exchanges within this topic; empty for one-shot answers */
+	followUps: DiscoveryFollowUp[];
+	/** User's final confirmation/correction; null while the topic is open */
+	decision: string | null;
+	/** ISO timestamp for when the topic was opened */
+	timestamp: string;
+}
+
+/**
  * Discovery stage state
  */
 export interface DiscoveryState {
@@ -264,8 +290,12 @@ export interface DiscoveryState {
 	discoverySummary: string;
 	/** Whether discovery is complete (user chose to proceed) */
 	completed: boolean;
-	/** Conversational discovery exchanges */
+	/** Conversational discovery exchanges; kept for legacy summary paths */
 	conversationHistory?: ConversationalExchange[];
+	/** Closed topics from the extension-driven discovery loop */
+	topics?: DiscoveryTopic[];
+	/** In-progress topic thread; null when no topic is pending */
+	activeTopic?: DiscoveryTopic | null;
 }
 
 /**

@@ -12,6 +12,8 @@ import {
 	createInitialRoadmapState,
 	createInitialEpicState,
 	createInitialBrainstormState,
+	saveSpecState,
+	loadSpecState,
 	saveBrainstormState,
 	loadBrainstormState,
 	listBrainstormStates,
@@ -47,7 +49,7 @@ describe("generatePipelineId", () => {
 		vi.setSystemTime(mockDate);
 
 		const id = generatePipelineId();
-		
+
 		// Should start with 20260201_123045
 		expect(id).toMatch(/^20260201_123045_\w{4}$/);
 
@@ -106,6 +108,12 @@ describe("createInitialDiscoveryState", () => {
 		const state = createInitialDiscoveryState();
 		expect(state.discoverySummary).toBe("");
 	});
+
+	it("initializes with empty topics and no active topic", () => {
+		const state = createInitialDiscoveryState();
+		expect(state.topics).toEqual([]);
+		expect(state.activeTopic).toBeNull();
+	});
 });
 
 describe("createInitialSpecState", () => {
@@ -123,7 +131,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state.description).toBe("Build a feature");
 	});
@@ -133,7 +141,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state.specFilename).toBe("2602011200_spec_feature.md");
 	});
@@ -143,7 +151,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state.specPath).toBe("docs/specs/2602011200_spec_feature.md");
 	});
@@ -154,7 +162,7 @@ describe("createInitialSpecState", () => {
 			"2602011200",
 			"feature",
 			"docs/specs",
-			false // skipDiscovery
+			false, // skipDiscovery
 		);
 		expect(state.stage).toBe("discovery");
 	});
@@ -165,7 +173,7 @@ describe("createInitialSpecState", () => {
 			"2602011200",
 			"feature",
 			"docs/specs",
-			true // skipDiscovery
+			true, // skipDiscovery
 		);
 		expect(state.stage).toBe("spec_drafting");
 	});
@@ -176,7 +184,7 @@ describe("createInitialSpecState", () => {
 			"2602011200",
 			"feature",
 			"docs/specs",
-			true // skipDiscovery
+			true, // skipDiscovery
 		);
 		expect(state.stage).toBe("spec_drafting");
 		expect(state.discovery?.skipped).toBe(true);
@@ -187,7 +195,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state.specApproved).toBe(false);
 		expect(state.specIteration).toBe(0);
@@ -198,7 +206,7 @@ describe("createInitialSpecState", () => {
 			"Build a feature",
 			"2602011200",
 			"feature",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state.createdAt).toBe("2026-02-01T12:00:00.000Z");
 		expect(state.updatedAt).toBe("2026-02-01T12:00:00.000Z");
@@ -209,17 +217,62 @@ describe("createInitialSpecState", () => {
 			"Feature 1",
 			"2602011200",
 			"f1",
-			"docs/specs"
+			"docs/specs",
 		);
 		const state2 = createInitialSpecState(
 			"Feature 2",
 			"2602011201",
 			"f2",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state1.id).not.toBe(state2.id);
 	});
 
+	it("persists discovery topics and active topic on spec state", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "spec-pipeline-topic-test-"),
+		);
+		try {
+			const state = createInitialSpecState(
+				"Build threaded discovery",
+				"2605230739",
+				"threaded_discovery",
+				"docs/specs",
+			);
+
+			state.discovery!.topics = [
+				{
+					question: "Should discovery support follow-ups?",
+					followUps: [],
+					decision: "Yes, support natural follow-ups.",
+					timestamp: "2026-05-23T07:39:00.000Z",
+				},
+			];
+			state.discovery!.activeTopic = {
+				question: "How should active threads resume?",
+				followUps: [
+					{
+						userQuestion: "Can this survive restart?",
+						agentAnswer: "It should be saved in DiscoveryState.",
+						timestamp: "2026-05-23T07:40:00.000Z",
+					},
+				],
+				decision: null,
+				timestamp: "2026-05-23T07:39:30.000Z",
+			};
+
+			saveSpecState(tempDir, state);
+			const loaded = loadSpecState(tempDir, state.id);
+
+			expect(loaded).not.toBeNull();
+			expect(loaded!.discovery!.topics).toEqual(state.discovery!.topics);
+			expect(loaded!.discovery!.activeTopic).toEqual(
+				state.discovery!.activeTopic,
+			);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
 });
 
 // ============================================
@@ -238,7 +291,7 @@ describe("createInitialRoadmapState", () => {
 			"Warm machine pools initiative",
 			"2602071200",
 			"warm_pools",
-			"docs"
+			"docs",
 		);
 		expect(state.level).toBe("roadmap");
 		expect(state.description).toBe("Warm machine pools initiative");
@@ -255,7 +308,7 @@ describe("createInitialRoadmapState", () => {
 			"2602071200",
 			"quick",
 			"docs",
-			true
+			true,
 		);
 		expect(state.stage).toBe("drafting");
 		expect(state.discovery?.skipped).toBe(true);
@@ -274,7 +327,7 @@ describe("createInitialEpicState", () => {
 			"Pool configuration",
 			"2602071200",
 			"pool_config",
-			"docs"
+			"docs",
 		);
 		expect(state.level).toBe("epic");
 		expect(state.description).toBe("Pool configuration");
@@ -291,7 +344,7 @@ describe("createInitialEpicState", () => {
 			false,
 			"md",
 			"parent123",
-			"roadmap"
+			"roadmap",
 		);
 		expect(state.parentId).toBe("parent123");
 		expect(state.parentType).toBe("roadmap");
@@ -395,12 +448,14 @@ describe("createInitialBrainstormState", () => {
 			"Redesign the billing system",
 			"2602171119",
 			"billing_redesign",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state.description).toBe("Redesign the billing system");
 		expect(state.stage).toBe("brainstorming");
 		expect(state.docFilename).toBe("2602171119_brainstorm_billing_redesign.md");
-		expect(state.docPath).toBe("docs/specs/2602171119_brainstorm_billing_redesign.md");
+		expect(state.docPath).toBe(
+			"docs/specs/2602171119_brainstorm_billing_redesign.md",
+		);
 		expect(state.docContent).toBe("");
 		expect(state.conversationHistory).toEqual([]);
 	});
@@ -411,7 +466,7 @@ describe("createInitialBrainstormState", () => {
 			"2602171119",
 			"billing",
 			"docs",
-			"typ"
+			"typ",
 		);
 		expect(state.docFilename).toBe("2602171119_brainstorm_billing.typ");
 	});
@@ -421,7 +476,7 @@ describe("createInitialBrainstormState", () => {
 			"Test",
 			"2602171119",
 			"test",
-			"docs/specs"
+			"docs/specs",
 		);
 		expect(state.createdAt).toBe("2026-02-17T11:19:00.000Z");
 		expect(state.updatedAt).toBe("2026-02-17T11:19:00.000Z");
@@ -453,7 +508,7 @@ describe("brainstorm state CRUD", () => {
 			"Test brainstorm",
 			"2602171119",
 			"test",
-			"docs"
+			"docs",
 		);
 		saveBrainstormState(tmpDir, state);
 
@@ -473,14 +528,24 @@ describe("brainstorm state CRUD", () => {
 		const stateDir = getBrainstormStateDir(tmpDir);
 		expect(fs.existsSync(stateDir)).toBe(false);
 
-		const state = createInitialBrainstormState("Test", "2602171119", "test", "docs");
+		const state = createInitialBrainstormState(
+			"Test",
+			"2602171119",
+			"test",
+			"docs",
+		);
 		saveBrainstormState(tmpDir, state);
 
 		expect(fs.existsSync(stateDir)).toBe(true);
 	});
 
 	it("updates updatedAt on save", () => {
-		const state = createInitialBrainstormState("Test", "2602171119", "test", "docs");
+		const state = createInitialBrainstormState(
+			"Test",
+			"2602171119",
+			"test",
+			"docs",
+		);
 		saveBrainstormState(tmpDir, state);
 
 		vi.setSystemTime(new Date("2026-02-17T12:00:00Z"));
@@ -491,13 +556,23 @@ describe("brainstorm state CRUD", () => {
 	});
 
 	it("lists brainstorm states sorted by createdAt descending", () => {
-		const state1 = createInitialBrainstormState("First", "2602171100", "first", "docs");
+		const state1 = createInitialBrainstormState(
+			"First",
+			"2602171100",
+			"first",
+			"docs",
+		);
 		vi.setSystemTime(new Date("2026-02-17T11:00:00Z"));
 		state1.createdAt = new Date().toISOString();
 		saveBrainstormState(tmpDir, state1);
 
 		vi.setSystemTime(new Date("2026-02-17T12:00:00Z"));
-		const state2 = createInitialBrainstormState("Second", "2602171200", "second", "docs");
+		const state2 = createInitialBrainstormState(
+			"Second",
+			"2602171200",
+			"second",
+			"docs",
+		);
 		state2.createdAt = new Date().toISOString();
 		saveBrainstormState(tmpDir, state2);
 
@@ -513,7 +588,12 @@ describe("brainstorm state CRUD", () => {
 	});
 
 	it("getLatestActiveBrainstormPipeline returns active state", () => {
-		const state = createInitialBrainstormState("Active", "2602171119", "active", "docs");
+		const state = createInitialBrainstormState(
+			"Active",
+			"2602171119",
+			"active",
+			"docs",
+		);
 		saveBrainstormState(tmpDir, state);
 
 		const active = getLatestActiveBrainstormPipeline(tmpDir);
@@ -522,7 +602,12 @@ describe("brainstorm state CRUD", () => {
 	});
 
 	it("getLatestActiveBrainstormPipeline skips completed states", () => {
-		const state = createInitialBrainstormState("Done", "2602171119", "done", "docs");
+		const state = createInitialBrainstormState(
+			"Done",
+			"2602171119",
+			"done",
+			"docs",
+		);
 		state.stage = "completed";
 		saveBrainstormState(tmpDir, state);
 
@@ -531,7 +616,12 @@ describe("brainstorm state CRUD", () => {
 	});
 
 	it("getLatestActiveBrainstormPipeline skips cancelled states", () => {
-		const state = createInitialBrainstormState("Cancelled", "2602171119", "cancelled", "docs");
+		const state = createInitialBrainstormState(
+			"Cancelled",
+			"2602171119",
+			"cancelled",
+			"docs",
+		);
 		state.stage = "cancelled";
 		saveBrainstormState(tmpDir, state);
 
@@ -541,7 +631,9 @@ describe("brainstorm state CRUD", () => {
 
 	it("getBrainstormStatePath returns correct path", () => {
 		const p = getBrainstormStatePath(tmpDir, "test-id");
-		expect(p).toBe(path.join(tmpDir, ".pi/spec-pipeline/brainstorms/test-id.json"));
+		expect(p).toBe(
+			path.join(tmpDir, ".pi/spec-pipeline/brainstorms/test-id.json"),
+		);
 	});
 
 	it("initializes missing fields on load", () => {
@@ -561,7 +653,7 @@ describe("brainstorm state CRUD", () => {
 		fs.writeFileSync(
 			path.join(stateDir, "minimal-test.json"),
 			JSON.stringify(minimalState),
-			"utf-8"
+			"utf-8",
 		);
 
 		const loaded = loadBrainstormState(tmpDir, "minimal-test");
