@@ -314,4 +314,50 @@ describe("chunk-store", () => {
 		expect(counts.codebase).toBe(0);
 		expect(counts.total).toBe(1);
 	});
+
+	it("getCodebaseFilePaths returns distinct source files with latest mtime", async () => {
+		const db = await getDb();
+		const mtime1 = new Date("2025-01-01T10:00:00Z");
+		const mtime2 = new Date("2025-01-02T10:00:00Z");
+		await ingestChunks(db, [
+			{
+				sourceType: "codebase",
+				chunkIndex: 0,
+				content: "a",
+				contentHash: "ha",
+				modelName: "m",
+				sourceFile: "f1.ts",
+				project: "p",
+				fileMtime: mtime1,
+			},
+			{
+				sourceType: "codebase",
+				chunkIndex: 1,
+				content: "a2",
+				contentHash: "ha2",
+				modelName: "m",
+				sourceFile: "f1.ts",
+				project: "p",
+				fileMtime: mtime2,
+			},
+			{
+				sourceType: "codebase",
+				chunkIndex: 0,
+				content: "b",
+				contentHash: "hb",
+				modelName: "m",
+				sourceFile: "f2.ts",
+				project: "p",
+				fileMtime: mtime1,
+			},
+		] as Chunk[]);
+		const { getCodebaseFilePaths }: any = await import("./chunk-store.ts");
+		const files: any[] = await getCodebaseFilePaths(db, "p");
+		const f1 = files.find((f: any) => f.sourceFile === "f1.ts");
+		const f2 = files.find((f: any) => f.sourceFile === "f2.ts");
+		expect(f1).toBeDefined();
+		expect(f2).toBeDefined();
+		expect(new Date(f1!.fileMtime!).getTime()).toBe(mtime2.getTime());
+		expect(new Date(f2!.fileMtime!).getTime()).toBe(mtime1.getTime());
+	});
 });

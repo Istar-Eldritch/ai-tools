@@ -169,6 +169,26 @@ export async function updateChunkEmbedding(
 	);
 }
 
+export async function getCodebaseFilePaths(
+	db: PGlite,
+	project: string,
+): Promise<Array<{ sourceFile: string; fileMtime: Date | null }>> {
+	const result = await db.query<{
+		source_file: string;
+		file_mtime: Date | null;
+	}>(
+		`SELECT source_file, MAX(file_mtime) as file_mtime
+     FROM huginn_chunks
+     WHERE project = $1 AND source_type = 'codebase'
+     GROUP BY source_file`,
+		[project],
+	);
+	return result.rows.map((r) => ({
+		sourceFile: r.source_file,
+		fileMtime: r.file_mtime,
+	}));
+}
+
 export async function getCounts(db: PGlite): Promise<{
 	conversations: number;
 	codebase: number;

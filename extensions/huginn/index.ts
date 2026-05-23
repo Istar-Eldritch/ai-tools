@@ -12,6 +12,7 @@ import { registerAutoRetrievalHandlers } from "./handlers/auto-retrieval.ts";
 import { registerMemorySearchTool } from "./tools/memory-search-tool.ts";
 import { registerReindexCommand } from "./commands/reindex.ts";
 import { registerStatusCommand } from "./commands/status.ts";
+import { registerCodebaseIndexer } from "./handlers/codebase-indexer.ts";
 
 export default function (pi: ExtensionAPI) {
 	let provider: EmbeddingProvider | null = null;
@@ -76,4 +77,5 @@ export default function (pi: ExtensionAPI) {
 	registerMemorySearchTool(pi, getConfig, getProvider);
 	registerReindexCommand(pi, getConfig, getProvider);
 	registerStatusCommand(pi, getConfig);
+	registerCodebaseIndexer(pi, getConfig, getProvider);
 }

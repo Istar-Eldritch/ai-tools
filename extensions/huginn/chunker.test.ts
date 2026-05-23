@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chunkText, type ChunkerOptions } from "./chunker.ts";
+import { chunkText, chunkCode, type ChunkerOptions } from "./chunker.ts";
 
 const defaults: ChunkerOptions = {
 	chunkSize: 512,
@@ -110,5 +110,45 @@ describe("chunkText", () => {
 		expect(all).toContain("console.log(1);");
 		expect(all).toContain("## Subsection");
 		expect(all).toContain("Final paragraph");
+	});
+
+	describe("chunkCode", () => {
+		it("falls back to text chunking for unknown extensions", async () => {
+			const text = "line1\nline2\nline3\n".repeat(20);
+			const chunks = await chunkCode(text, "file.txt", defaults);
+			expect(chunks.length).toBeGreaterThan(0);
+			for (const c of chunks) {
+				expect(c.startLine).toBeGreaterThan(0);
+				expect(c.endLine).toBeGreaterThanOrEqual(c.startLine);
+			}
+		});
+
+		it("returns empty array for empty source", async () => {
+			const chunks = await chunkCode("", "file.ts", defaults);
+			expect(chunks.length).toBe(0);
+		});
+
+		it("chunks TypeScript with tree-sitter when available", async () => {
+			const source = `function hello() {\n  return 1;\n}\n\nclass A {\n  greet() {\n    return "hi";\n  }\n}\n`;
+			const chunks = await chunkCode(source, "file.ts", defaults);
+			expect(chunks.length).toBeGreaterThan(0);
+			const allText = chunks.map((c) => c.content).join("\n");
+			expect(allText).toContain("function");
+			for (const c of chunks) {
+				expect(c.startLine).toBeGreaterThan(0);
+				expect(c.endLine).toBeGreaterThanOrEqual(c.startLine);
+			}
+		});
+
+		it("deduplicates nested captures (class + method)", async () => {
+			const source =
+				'class Foo {\n  bar() {\n    console.log("hello world");\n    return 42;\n  }\n}\n';
+			const chunks = await chunkCode(source, "file.ts", {
+				...defaults,
+				chunkSize: 512,
+			});
+			expect(chunks.length).toBeGreaterThanOrEqual(1);
+			expect(chunks.length).toBeLessThanOrEqual(2);
+		});
 	});
 });
