@@ -251,7 +251,7 @@ export default function (pi: ExtensionAPI) {
 	let activeHierarchyLevel: HierarchyLevel | null = null;
 
 	/** Parent context string for hierarchy pipelines (roadmap context, scoping context, etc.) */
-	let activeParentContext: string | undefined = undefined;
+	let activeParentContext: string | undefined ;
 
 	/** Function to persist the active pipeline state */
 	let activeStateSaveFn: (() => void) | null = null;
@@ -275,7 +275,7 @@ export default function (pi: ExtensionAPI) {
 	let exchangeCount = 0;
 
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
-	let pendingScopingContext: string | undefined = undefined;
+	let pendingScopingContext: string | undefined ;
 
 	/** Flags for implement-discovery sessions (--no-plan, --no-review)
 	 * NOTE: Ephemeral (not persisted to disk) because discovery is conversational.
@@ -1014,7 +1014,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		), "info");
 
 		const choices = [
-			"Approve spec",
+			"Approve spec and start implementation now",
+			"Approve spec (implement later with /implement)",
 			"Revise spec conversationally",
 			"Cancel pipeline",
 		];
@@ -1023,7 +1024,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			choices
 		);
 
-		if (choice === choices[0]) {
+		if (choice === choices[0] || choice === choices[1]) {
 			// Approve
 			state.specApproved = true;
 			state.stage = "completed";
@@ -1035,11 +1036,35 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				`Spec: ${state.specPath}`,
 				"✅"
 			), "success");
-			ctx.ui.notify(`Next: /implement ${state.specPath}`, "info");
+
+			if (choice === choices[1]) {
+				ctx.ui.notify(`Run: /implement ${state.specPath}`, "info");
+				return;
+			}
+
+			// Launch implementation directly from the extension — no agent free-running
+			const implTimestamp = generateTimestamp();
+			const implState = createInitialImplState(
+				state.specPath,
+				state.specDraft,
+				implTimestamp,
+				projectConfig.skipPlanGeneration,
+			);
+			implState.checkpoints = [];
+			saveImplState(cwd, implState);
+
+			ctx.ui.notify(formatStepBanner(
+				"IMPLEMENTATION STARTED",
+				`ID: ${implState.id}`,
+				"🚀"
+			), "info");
+			updateImplWidget(ctx, implState, "Initializing...");
+
+			await runImplementPipeline(implState, cwd, projectConfig, ctx);
 			return;
 		}
 
-		if (choice === choices[2]) {
+		if (choice === choices[3]) {
 			// Cancel
 			state.stage = "cancelled";
 			saveSpecState(cwd, state);
