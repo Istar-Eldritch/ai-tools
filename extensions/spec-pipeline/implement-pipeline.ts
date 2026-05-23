@@ -1,8 +1,8 @@
 /**
  * Implementation pipeline execution logic
- * 
+ *
  * Handles: Phase Extraction → Plan Generation → Plan Review → Implementation → Code Review
- * 
+ *
  * Note: Plan files are stored in a temporary directory and cleaned up after implementation
  * completes to avoid polluting the repository. Only the final implementation code is committed.
  */
@@ -46,27 +46,49 @@ const MIN_IMPLEMENTER_OUTPUT_CHARS = 80;
 
 /** Stop words to skip when generating phase directory names from descriptions */
 const PHASE_STOP_WORDS = new Set([
-	"a", "an", "the", "and", "or", "for", "of", "in", "on", "to", "with",
-	"is", "are", "be", "its", "this", "that", "from", "by", "at",
+	"a",
+	"an",
+	"the",
+	"and",
+	"or",
+	"for",
+	"of",
+	"in",
+	"on",
+	"to",
+	"with",
+	"is",
+	"are",
+	"be",
+	"its",
+	"this",
+	"that",
+	"from",
+	"by",
+	"at",
 ]);
 
 /** Sanitize a phase focus description into a filesystem-safe slug (max 4 words) */
 function sanitizePhaseDescription(description: string): string {
-	return description
-		.toLowerCase()
-		.replace(/[^a-z0-9\s]/g, "")
-		.trim()
-		.split(/\s+/)
-		.filter(w => w.length > 1 && !PHASE_STOP_WORDS.has(w))
-		.slice(0, 4)
-		.join("_") || "phase";
+	return (
+		description
+			.toLowerCase()
+			.replace(/[^a-z0-9\s]/g, "")
+			.trim()
+			.split(/\s+/)
+			.filter((w) => w.length > 1 && !PHASE_STOP_WORDS.has(w))
+			.slice(0, 4)
+			.join("_") || "phase"
+	);
 }
 
 // ============================================
 // Metrics Helpers
 // ============================================
 
-function initializeImplMetrics(skipPlanGeneration: boolean): ImplementationMetrics {
+function initializeImplMetrics(
+	skipPlanGeneration: boolean,
+): ImplementationMetrics {
 	return {
 		pipelineStartTime: new Date().toISOString(),
 		agentCalls: [],
@@ -85,7 +107,7 @@ function recordAgentCall(
 	exitCode: number,
 	phase?: number,
 	cycle?: number,
-	usage?: AgentCallMetrics["usage"]
+	usage?: AgentCallMetrics["usage"],
 ): void {
 	const endTime = new Date();
 	const call: AgentCallMetrics = {
@@ -121,14 +143,27 @@ function recordAgentCall(
 function writeReviewLog(
 	cwd: string,
 	implId: string,
-	info: { role: RoleName; phase?: number; cycle: number; verdict: string; output: string },
-	notify?: (msg: string, type: "info" | "error" | "success" | "warning") => void
+	info: {
+		role: RoleName;
+		phase?: number;
+		cycle: number;
+		verdict: string;
+		output: string;
+	},
+	notify?: (
+		msg: string,
+		type: "info" | "error" | "success" | "warning",
+	) => void,
 ): void {
 	try {
 		const dir = path.join(cwd, ".pi/spec-pipeline/reviews", implId);
 		fs.mkdirSync(dir, { recursive: true });
-		const phaseLabel = info.phase !== undefined ? `phase${info.phase}` : "no_phase";
-		const file = path.join(dir, `${phaseLabel}_cycle${info.cycle}_${info.role}.md`);
+		const phaseLabel =
+			info.phase !== undefined ? `phase${info.phase}` : "no_phase";
+		const file = path.join(
+			dir,
+			`${phaseLabel}_cycle${info.cycle}_${info.role}.md`,
+		);
 		const header = [
 			`# Review log`,
 			``,
@@ -143,18 +178,26 @@ function writeReviewLog(
 		].join("\n");
 		fs.writeFileSync(file, header + info.output, "utf-8");
 	} catch (err) {
-		notify?.(`Failed to write review log: ${err instanceof Error ? err.message : String(err)}`, "warning");
+		notify?.(
+			`Failed to write review log: ${err instanceof Error ? err.message : String(err)}`,
+			"warning",
+		);
 	}
 }
 
-function finalizeImplMetrics(metrics: ImplementationMetrics, phasesCount: number, phasesApprovedFirstPass: number): void {
+function finalizeImplMetrics(
+	metrics: ImplementationMetrics,
+	phasesCount: number,
+	phasesApprovedFirstPass: number,
+): void {
 	metrics.pipelineEndTime = new Date().toISOString();
 	const startTime = new Date(metrics.pipelineStartTime).getTime();
 	const endTime = new Date(metrics.pipelineEndTime).getTime();
 	metrics.totalDurationMs = endTime - startTime;
-	metrics.codeReviewFirstPassRate = phasesCount > 0 
-		? Math.round((phasesApprovedFirstPass / phasesCount) * 100)
-		: 0;
+	metrics.codeReviewFirstPassRate =
+		phasesCount > 0
+			? Math.round((phasesApprovedFirstPass / phasesCount) * 100)
+			: 0;
 }
 
 // ============================================
@@ -163,69 +206,81 @@ function finalizeImplMetrics(metrics: ImplementationMetrics, phasesCount: number
 
 /**
  * Extract phases from a spec document.
- * 
+ *
  * Supports four formats:
  * 1. Table format without links (preferred): | Phase 1 | Focus description | Effort |
  * 2. Table format with links (legacy): | Phase 1 | Focus | Effort | [name](./path/phase1.md) |
  * 3. Typst table format: [Phase 1], [Focus description], [Effort],
- * 4. Inline format (fallback): ### Phase 1: Name
+ * 4. Inline format (fallback): ### Phase 1: Name  (also accepts — – - as separator)
  */
-export function extractPhases(specContent: string, specTimestamp: string, shortName: string): { paths: string[]; isInline: boolean } {
+export function extractPhases(
+	specContent: string,
+	specTimestamp: string,
+	shortName: string,
+): { paths: string[]; isInline: boolean } {
 	// First try table format with links (legacy support)
 	const linkedPhases: string[] = [];
-	const linkedRegex = /\|\s*Phase\s*\d+\s*\|[^|]+\|[^|]+\|\s*\[([^\]]+)\]\(([^)]+)\)/g;
+	const linkedRegex =
+		/\|\s*Phase\s*\d+\s*\|[^|]+\|[^|]+\|\s*\[([^\]]+)\]\(([^)]+)\)/g;
 	let match;
 	while ((match = linkedRegex.exec(specContent)) !== null) {
 		linkedPhases.push(match[2]);
 	}
-	
+
 	if (linkedPhases.length > 0) {
 		return { paths: linkedPhases, isInline: false };
 	}
-	
+
 	// Try new table format without links: | Phase N | Focus description | Effort |
 	const tablePhases: string[] = [];
 	const tableRegex = /\|\s*Phase\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*[^|]+?\s*\|/g;
 	while ((match = tableRegex.exec(specContent)) !== null) {
 		const phaseNum = match[1];
 		const focusDescription = match[2].trim();
-		
+
 		// Generate phase name from focus description (first 4 words, sanitized)
 		const phaseName = sanitizePhaseDescription(focusDescription);
-		
-		tablePhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
+
+		tablePhases.push(
+			`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`,
+		);
 	}
-	
+
 	if (tablePhases.length > 0) {
 		return { paths: tablePhases, isInline: false };
 	}
-	
+
 	// Try Typst table format: [Phase N], [Focus description], [Effort],
 	const typstPhases: string[] = [];
 	const typstRegex = /\[Phase\s+(\d+)\],\s*\[([^\]]+)\]/g;
 	while ((match = typstRegex.exec(specContent)) !== null) {
 		const phaseNum = match[1];
 		const focusDescription = match[2].trim();
-		
+
 		// Generate phase name from focus description (first 4 words, sanitized)
 		const phaseName = sanitizePhaseDescription(focusDescription);
-		
-		typstPhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
+
+		typstPhases.push(
+			`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`,
+		);
 	}
-	
+
 	if (typstPhases.length > 0) {
 		return { paths: typstPhases, isInline: false };
 	}
-	
+
 	// Fallback: detect inline phases
 	const inlinePhases: string[] = [];
-	const inlineRegex = /^###\s*Phase\s*(\d+)\s*:\s*(.+?)(?:\s*\([^)]*\))?\s*$/gm;
+	const inlineRegex =
+		/^###\s*Phase\s*(\d+)\s*[:\-\u2013\u2014]\s*(.+?)(?:\s*\([^)]*\))?\s*$/gm;
 	while ((match = inlineRegex.exec(specContent)) !== null) {
 		const phaseNum = match[1];
 		const phaseName = sanitizePhaseDescription(match[2]);
-		inlinePhases.push(`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`);
+		inlinePhases.push(
+			`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`,
+		);
 	}
-	
+
 	return { paths: inlinePhases, isInline: true };
 }
 
@@ -240,7 +295,7 @@ export async function runImplementPipeline(
 	state: ImplementationState,
 	cwd: string,
 	projectConfig: ProjectConfig,
-	ctx: PipelineUIContext
+	ctx: PipelineUIContext,
 ): Promise<void> {
 	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 
@@ -248,7 +303,9 @@ export async function runImplementPipeline(
 	const save = () => saveImplState(cwd, state);
 
 	// Create temporary directory for spec and plan files
-	const pipelineTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
+	const pipelineTmpDir = fs.mkdtempSync(
+		path.join(os.tmpdir(), "spec-pipeline-"),
+	);
 	const specTmpPath = path.join(pipelineTmpDir, "spec.md");
 	const plansTmpDir = path.join(pipelineTmpDir, "plans");
 	fs.mkdirSync(plansTmpDir, { recursive: true });
@@ -259,11 +316,23 @@ export async function runImplementPipeline(
 	const cleanupTmpDir = () => {
 		try {
 			fs.rmSync(pipelineTmpDir, { recursive: true, force: true });
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 	};
 
 	try {
-		return await _runImplementPipelineInner(state, cwd, projectConfig, ctx, plansTmpDir, SYSTEM_PROMPTS, save, specTmpPath, specFileRef);
+		return await _runImplementPipelineInner(
+			state,
+			cwd,
+			projectConfig,
+			ctx,
+			plansTmpDir,
+			SYSTEM_PROMPTS,
+			save,
+			specTmpPath,
+			specFileRef,
+		);
 	} finally {
 		cleanupTmpDir();
 	}
@@ -291,16 +360,20 @@ async function _runImplementPipelineInner(
 	// Extract doc name from spec path for commit message scoping
 	const docName = extractDocName(state.specPath) ?? undefined;
 
-	const effectiveSkipPlanGeneration = state.skipPlanGeneration || projectConfig.skipPlanGeneration;
+	const effectiveSkipPlanGeneration =
+		state.skipPlanGeneration || projectConfig.skipPlanGeneration;
 
 	// ============================================
 	// PHASE EXTRACTION (if phases not yet extracted)
 	// ============================================
 	if (state.phases.length === 0) {
 		const specContent = state.specContent;
-		
+
 		// Derive short name from spec path
-		const specBasename = path.basename(state.specPath, path.extname(state.specPath));
+		const specBasename = path.basename(
+			state.specPath,
+			path.extname(state.specPath),
+		);
 		const shortName = specBasename
 			.replace(/^\d+_spec_/, "")
 			.replace(/^\d+_/, "")
@@ -310,18 +383,28 @@ async function _runImplementPipelineInner(
 
 		// Try to extract timestamp from spec filename, otherwise use implTimestamp
 		const timestampMatch = specBasename.match(/^(\d{10})/);
-		const specTimestamp = timestampMatch ? timestampMatch[1] : state.implTimestamp;
+		const specTimestamp = timestampMatch
+			? timestampMatch[1]
+			: state.implTimestamp;
 
 		const phaseResult = extractPhases(specContent, specTimestamp, shortName);
 		state.phases = phaseResult.paths;
 
 		if (phaseResult.isInline && state.phases.length > 0) {
-			ctx.ui.notify(`⚠️ Detected ${state.phases.length} inline phases (table format preferred)`, "warning");
+			ctx.ui.notify(
+				`⚠️ Detected ${state.phases.length} inline phases (table format preferred)`,
+				"warning",
+			);
 		}
 
 		if (state.phases.length === 0) {
-			ctx.ui.notify("No phases found in spec - using single implementation phase", "info");
-			state.phases.push(`${specTimestamp}_${shortName}/phase1_implementation.md`);
+			ctx.ui.notify(
+				"No phases found in spec - using single implementation phase",
+				"info",
+			);
+			state.phases.push(
+				`${specTimestamp}_${shortName}/phase1_implementation.md`,
+			);
 		} else {
 			ctx.ui.notify(`Found ${state.phases.length} phases to implement`, "info");
 		}
@@ -335,12 +418,15 @@ async function _runImplementPipelineInner(
 	// PER-PHASE PIPELINE: Plan → Implement (interleaved)
 	// ============================================
 	if (effectiveSkipPlanGeneration) {
-		ctx.ui.notify(formatStepBanner(
-			"PLAN GENERATION SKIPPED",
-			"Direct implementation mode (skipPlanGeneration=true)",
-			"⏭️"
-		), "info");
-		
+		ctx.ui.notify(
+			formatStepBanner(
+				"PLAN GENERATION SKIPPED",
+				"Direct implementation mode (skipPlanGeneration=true)",
+				"⏭️",
+			),
+			"info",
+		);
+
 		state.phasesGenerated = state.phases.map(() => true);
 		save();
 	}
@@ -348,17 +434,24 @@ async function _runImplementPipelineInner(
 	state.stage = "implementation";
 	save();
 
-	ctx.ui.notify(formatStepBanner(
-		"IMPLEMENTATION",
-		`Processing ${state.phases.length} phase(s) — plan + implement per phase`,
-		"🚀"
-	), "info");
+	ctx.ui.notify(
+		formatStepBanner(
+			"IMPLEMENTATION",
+			`Processing ${state.phases.length} phase(s) — plan + implement per phase`,
+			"🚀",
+		),
+		"info",
+	);
 
-	for (let phaseIdx = state.currentPhaseIndex; phaseIdx < state.phases.length; phaseIdx++) {
+	for (
+		let phaseIdx = state.currentPhaseIndex;
+		phaseIdx < state.phases.length;
+		phaseIdx++
+	) {
 		state.currentPhaseIndex = phaseIdx;
-		
+
 		const resumingMidPhase = state.implementerCompletedForPhase === true;
-		
+
 		if (!resumingMidPhase) {
 			state.reviewCyclesCompleted = 0;
 			state.implementerCompletedForPhase = false;
@@ -370,27 +463,40 @@ async function _runImplementPipelineInner(
 		const fullPhasePath = path.join(plansTmpDir, path.basename(phasePath));
 		const phaseName = extractPhaseName(phasePath);
 
-		ctx.ui.notify(formatStepBanner(
-			`Phase ${phaseIdx + 1}/${state.phases.length}`,
-			phasePath.split("/").pop() || "implementation",
-			"🔨"
-		), "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				`Phase ${phaseIdx + 1}/${state.phases.length}`,
+				phasePath.split("/").pop() || "implementation",
+				"🔨",
+			),
+			"info",
+		);
 
 		// ========================================
 		// STEP 1: Plan Generation (per phase)
 		// ========================================
 		if (!effectiveSkipPlanGeneration && !state.phasesGenerated[phaseIdx]) {
-			updateImplWidget(ctx, state, `Generating plan for phase ${phaseIdx + 1}/${state.phases.length}`);
-			
-			ctx.ui.notify(formatStepBanner(
-				`Phase ${phaseIdx + 1}/${state.phases.length} Plan`,
-				`Creating detailed implementation plan`,
-				"📝"
-			), "info");
+			updateImplWidget(
+				ctx,
+				state,
+				`Generating plan for phase ${phaseIdx + 1}/${state.phases.length}`,
+			);
+
+			ctx.ui.notify(
+				formatStepBanner(
+					`Phase ${phaseIdx + 1}/${state.phases.length} Plan`,
+					`Creating detailed implementation plan`,
+					"📝",
+				),
+				"info",
+			);
 
 			const planDrafterConfig = projectConfig.models.planDrafter;
-			ctx.ui.notify(`📋 ${planDrafterConfig.model} drafting implementation plan...`, "info");
-			
+			ctx.ui.notify(
+				`📋 ${planDrafterConfig.model} drafting implementation plan...`,
+				"info",
+			);
+
 			const planTask = `Create detailed implementation plan for Phase ${phaseIdx + 1}.
 
 ${specFileRef}
@@ -412,7 +518,7 @@ Then create a detailed, executable plan and save it to the path above.`;
 				ctx,
 				state,
 				planPhaseInfo,
-				true  // isImplPipeline
+				true, // isImplPipeline
 			);
 
 			const planDraftResult = await runAgentWithConfig(
@@ -421,30 +527,58 @@ Then create a detailed, executable plan and save it to the path above.`;
 				cwd,
 				SYSTEM_PROMPTS.planDrafter,
 				undefined,
-				planProgressCallback,  // ← Pass callback (R17)
-				"planDrafter"
+				planProgressCallback, // ← Pass callback (R17)
+				"planDrafter",
 			);
-			recordAgentCall(metrics, "planDrafter", planDrafterConfig.model, planDrafterConfig.thinking, planStartTime, planDraftResult.exitCode, phaseIdx + 1, undefined, planDraftResult.usage);
+			recordAgentCall(
+				metrics,
+				"planDrafter",
+				planDrafterConfig.model,
+				planDrafterConfig.thinking,
+				planStartTime,
+				planDraftResult.exitCode,
+				phaseIdx + 1,
+				undefined,
+				planDraftResult.usage,
+			);
 			save();
 
 			if (planDraftResult.exitCode !== 0) {
 				await handleAgentError(
-					cwd, state, planDraftResult,
-					planDrafterConfig.model, "planDrafter", planTask,
-					undefined, undefined,
-					ctx.ui.notify.bind(ctx.ui), save
+					cwd,
+					state,
+					planDraftResult,
+					planDrafterConfig.model,
+					"planDrafter",
+					planTask,
+					undefined,
+					undefined,
+					ctx.ui.notify.bind(ctx.ui),
+					save,
 				);
 				clearPipelineWidget(ctx);
 				return;
 			}
 
-			ctx.ui.notify(formatAgentSummary("planDrafter", planDrafterConfig.model, planDraftResult.output, "✅", phaseIdx + 1), "info");
+			ctx.ui.notify(
+				formatAgentSummary(
+					"planDrafter",
+					planDrafterConfig.model,
+					planDraftResult.output,
+					"✅",
+					phaseIdx + 1,
+				),
+				"info",
+			);
 
 			if (!fs.existsSync(fullPhasePath)) {
 				// Agent didn't use write tool — try to salvage plan from text output
 				const agentOutput = planDraftResult.output || "";
 				if (agentOutput.trim().length > 50) {
-					ctx.ui.notify("⚠️ Plan drafter didn't write file — extracting plan from agent output", "warning");
+					ctx.ui.notify(
+						"⚠️ Plan drafter didn't write file — extracting plan from agent output",
+						"warning",
+					);
 					fs.mkdirSync(path.dirname(fullPhasePath), { recursive: true });
 					fs.writeFileSync(fullPhasePath, agentOutput, "utf-8");
 				} else {
@@ -459,13 +593,20 @@ Then create a detailed, executable plan and save it to the path above.`;
 
 			// Create commit after plan drafting
 			const commitResult = await createAgentCommit(
-				cwd, state,
-				{ role: "planDrafter", modelConfig: planDrafterConfig, phase: phaseIdx + 1, phaseName, docName },
+				cwd,
+				state,
+				{
+					role: "planDrafter",
+					modelConfig: planDrafterConfig,
+					phase: phaseIdx + 1,
+					phaseName,
+					docName,
+				},
 				projectConfig.models.agentCommitMessageWriter,
 				save,
-				ctx.ui.notify.bind(ctx.ui)
+				ctx.ui.notify.bind(ctx.ui),
 			);
-			
+
 			if (!commitResult.success) {
 				if (commitResult.usedFallback) {
 					state.lastError = "Commit message generation failed - fallback used";
@@ -481,10 +622,12 @@ Then create a detailed, executable plan and save it to the path above.`;
 				}
 			}
 
-
 			state.phasesGenerated[phaseIdx] = true;
 			save();
-			ctx.ui.notify(`Phase ${phaseIdx + 1} plan saved to ${phasePath}`, "success");
+			ctx.ui.notify(
+				`Phase ${phaseIdx + 1} plan saved to ${phasePath}`,
+				"success",
+			);
 		}
 
 		// ========================================
@@ -507,7 +650,10 @@ Explore the codebase to understand existing patterns before making changes.`;
 		} else if (fs.existsSync(fullPhasePath)) {
 			phasePlan = fs.readFileSync(fullPhasePath, "utf-8");
 		} else {
-			ctx.ui.notify(`⚠️ Plan file not found: ${fullPhasePath}, using spec`, "warning");
+			ctx.ui.notify(
+				`⚠️ Plan file not found: ${fullPhasePath}, using spec`,
+				"warning",
+			);
 			phasePlan = `## Implementation from Spec (Plan File Missing)
 
 ${specFileRef}`;
@@ -517,23 +663,31 @@ ${specFileRef}`;
 		// STEP 3: Implementation
 		// ========================================
 		let implementationSummary: string;
-		
+
 		if (!resumingMidPhase) {
 			const implementerConfig = projectConfig.models.implementer;
-			
-			updateImplWidget(ctx, state, `Implementing phase ${phaseIdx + 1}/${state.phases.length} (${implementerConfig.model})...`);
-			
-			ctx.ui.notify(`🔵 ${implementerConfig.model} implementing phase ${phaseIdx + 1}...`, "info");
-			
-			const implementTask = state.previousReview === ""
-				? `Implement this phase according to the plan:
+
+			updateImplWidget(
+				ctx,
+				state,
+				`Implementing phase ${phaseIdx + 1}/${state.phases.length} (${implementerConfig.model})...`,
+			);
+
+			ctx.ui.notify(
+				`🔵 ${implementerConfig.model} implementing phase ${phaseIdx + 1}...`,
+				"info",
+			);
+
+			const implementTask =
+				state.previousReview === ""
+					? `Implement this phase according to the plan:
 
 ${phasePlan}
 
 ${projectConfig.testCommand ? `Run tests with: ${projectConfig.testCommand}` : ""}
 
 Make the code changes as specified. Use read, write, edit, and bash tools.`
-				: `Continue implementation, addressing the review feedback.
+					: `Continue implementation, addressing the review feedback.
 
 Original plan:
 ${phasePlan}
@@ -553,7 +707,7 @@ Address all issues raised in the review.`;
 				ctx,
 				state,
 				implPhaseInfo,
-				true  // isImplPipeline
+				true, // isImplPipeline
 			);
 
 			const implementResult = await runAgentWithConfig(
@@ -562,24 +716,53 @@ Address all issues raised in the review.`;
 				cwd,
 				SYSTEM_PROMPTS.implementer,
 				undefined,
-				implProgressCallback,  // ← Pass callback (R18)
-				"implementer"
+				implProgressCallback, // ← Pass callback (R18)
+				"implementer",
 			);
-			recordAgentCall(metrics, "implementer", implementerConfig.model, implementerConfig.thinking, implementStartTime, implementResult.exitCode, phaseIdx + 1, undefined, implementResult.usage);
+			recordAgentCall(
+				metrics,
+				"implementer",
+				implementerConfig.model,
+				implementerConfig.thinking,
+				implementStartTime,
+				implementResult.exitCode,
+				phaseIdx + 1,
+				undefined,
+				implementResult.usage,
+			);
 			save();
 
-			if (implementResult.exitCode !== 0 || implementResult.completed === false || implementResult.limitHit) {
+			if (
+				implementResult.exitCode !== 0 ||
+				implementResult.completed === false ||
+				implementResult.limitHit
+			) {
 				await handleAgentError(
-					cwd, state, implementResult,
-					implementerConfig.model, "implementer", implementTask,
-					phaseIdx + 1, 1,
-					ctx.ui.notify.bind(ctx.ui), save
+					cwd,
+					state,
+					implementResult,
+					implementerConfig.model,
+					"implementer",
+					implementTask,
+					phaseIdx + 1,
+					1,
+					ctx.ui.notify.bind(ctx.ui),
+					save,
 				);
 				clearPipelineWidget(ctx);
 				return;
 			}
 
-			ctx.ui.notify(formatAgentSummary("implementer", implementerConfig.model, implementResult.output, "✅", phaseIdx + 1), "info");
+			ctx.ui.notify(
+				formatAgentSummary(
+					"implementer",
+					implementerConfig.model,
+					implementResult.output,
+					"✅",
+					phaseIdx + 1,
+				),
+				"info",
+			);
 
 			const implementOutput = implementResult.output || "";
 			implementationSummary = implementOutput.slice(0, 1500);
@@ -588,14 +771,18 @@ Address all issues raised in the review.`;
 			// the agent stream ended without producing real work. Must run BEFORE createAgentCommit
 			// because a successful commit clears the working tree.
 			const modifiedBeforeCommit = await getModifiedFiles(cwd);
-			if (modifiedBeforeCommit.length === 0 && implementOutput.trim().length < MIN_IMPLEMENTER_OUTPUT_CHARS) {
+			if (
+				modifiedBeforeCommit.length === 0 &&
+				implementOutput.trim().length < MIN_IMPLEMENTER_OUTPUT_CHARS
+			) {
 				await handleAgentError(
 					cwd,
 					state,
 					{
 						output: implementOutput,
 						exitCode: 0,
-						error: "Implementer exited without clear completion evidence: no file changes and minimal output",
+						error:
+							"Implementer exited without clear completion evidence: no file changes and minimal output",
 						completed: false,
 						finishReason: implementResult.finishReason,
 						stopReason: implementResult.stopReason,
@@ -607,7 +794,7 @@ Address all issues raised in the review.`;
 					phaseIdx + 1,
 					1,
 					ctx.ui.notify.bind(ctx.ui),
-					save
+					save,
 				);
 				clearPipelineWidget(ctx);
 				return;
@@ -615,7 +802,8 @@ Address all issues raised in the review.`;
 
 			// Create commit after implementation
 			const commitResult = await createAgentCommit(
-				cwd, state,
+				cwd,
+				state,
 				{
 					role: "implementer",
 					modelConfig: implementerConfig,
@@ -626,7 +814,7 @@ Address all issues raised in the review.`;
 				},
 				projectConfig.models.agentCommitMessageWriter,
 				save,
-				ctx.ui.notify.bind(ctx.ui)
+				ctx.ui.notify.bind(ctx.ui),
 			);
 
 			if (!commitResult.success) {
@@ -647,7 +835,10 @@ Address all issues raised in the review.`;
 			state.implementerCompletedForPhase = true;
 			save();
 		} else {
-			ctx.ui.notify(`🔄 Resuming phase ${phaseIdx + 1} (skipping implementation step)`, "info");
+			ctx.ui.notify(
+				`🔄 Resuming phase ${phaseIdx + 1} (skipping implementation step)`,
+				"info",
+			);
 			const planPreview = phasePlan || "";
 			implementationSummary = `(Resumed from previous run)\n\nImplementation plan:\n${planPreview.slice(0, 1200)}`;
 		}
@@ -656,20 +847,23 @@ Address all issues raised in the review.`;
 		// STEP 4: Code Review
 		// ========================================
 		updateImplWidget(ctx, state, "Running code review...");
-		
-		ctx.ui.notify(formatStepBanner(
-			`Code Review - Phase ${phaseIdx + 1}`,
-			"Running code review",
-			"💻"
-		), "info");
-		
+
+		ctx.ui.notify(
+			formatStepBanner(
+				`Code Review - Phase ${phaseIdx + 1}`,
+				"Running code review",
+				"💻",
+			),
+			"info",
+		);
+
 		// Create progress callback for code review (R19, R20)
 		const codeReviewPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length} Code Review`;
 		const codeReviewProgressCallback = createProgressCallback(
 			ctx,
 			state,
 			codeReviewPhaseInfo,
-			true  // isImplPipeline
+			true, // isImplPipeline
 		);
 
 		const codeReviewResult = await runReview(
@@ -683,13 +877,36 @@ Address all issues raised in the review.`;
 				phaseName,
 				docName,
 				notify: ctx.ui.notify.bind(ctx.ui),
-				onOutput: codeReviewProgressCallback,  // ← Add callback (R19, R20)
-				recordCall: ({ role, modelConfig, startTime, exitCode, phase, cycle, usage }) => {
-					recordAgentCall(metrics, role, modelConfig.model, modelConfig.thinking, startTime, exitCode, phase, cycle, usage);
+				onOutput: codeReviewProgressCallback, // ← Add callback (R19, R20)
+				recordCall: ({
+					role,
+					modelConfig,
+					startTime,
+					exitCode,
+					phase,
+					cycle,
+					usage,
+				}) => {
+					recordAgentCall(
+						metrics,
+						role,
+						modelConfig.model,
+						modelConfig.thinking,
+						startTime,
+						exitCode,
+						phase,
+						cycle,
+						usage,
+					);
 					save();
 				},
 				recordReviewOutput: ({ role, phase, cycle, verdict, output }) => {
-					writeReviewLog(cwd, state.id, { role, phase, cycle, verdict, output }, ctx.ui.notify.bind(ctx.ui));
+					writeReviewLog(
+						cwd,
+						state.id,
+						{ role, phase, cycle, verdict, output },
+						ctx.ui.notify.bind(ctx.ui),
+					);
 				},
 			},
 			{
@@ -709,26 +926,29 @@ ${projectConfig.testCommand ? `Run tests with: ${projectConfig.testCommand}` : "
 
 Make the necessary fixes.`,
 				runAddressReviewOnSignificantIssues: true,
-			}
+			},
 		);
-		
+
 		if (codeReviewResult.hadError) {
 			clearPipelineWidget(ctx);
 			return;
 		}
-		
+
 		metrics.codeReviewCycles += codeReviewResult.cyclesCompleted;
 		save();
-		
-		ctx.ui.notify(formatAgentSummary(
-			"codeReviewer",
-			projectConfig.models.codeReviewer.model,
-			codeReviewResult.lastReviewOutput,
-			codeReviewResult.verdict === "APPROVED" ? "✅" : "🔄",
-			phaseIdx + 1,
-			`(cycles: ${codeReviewResult.cyclesCompleted})`
-		), "info");
-		
+
+		ctx.ui.notify(
+			formatAgentSummary(
+				"codeReviewer",
+				projectConfig.models.codeReviewer.model,
+				codeReviewResult.lastReviewOutput,
+				codeReviewResult.verdict === "APPROVED" ? "✅" : "🔄",
+				phaseIdx + 1,
+				`(cycles: ${codeReviewResult.cyclesCompleted})`,
+			),
+			"info",
+		);
+
 		state.previousReview = codeReviewResult.lastReviewOutput;
 		state.reviewCyclesCompleted = codeReviewResult.cyclesCompleted;
 		save();
@@ -763,34 +983,40 @@ Make the necessary fixes.`,
 		state.lastError = undefined;
 		save();
 
-		ctx.ui.notify(formatStepBanner(
-			`Phase ${phaseIdx + 1}/${state.phases.length} Complete`,
-			phaseIdx + 1 < state.phases.length ? `Moving to phase ${phaseIdx + 2}...` : "All phases complete!",
-			"✅"
-		), "success");
+		ctx.ui.notify(
+			formatStepBanner(
+				`Phase ${phaseIdx + 1}/${state.phases.length} Complete`,
+				phaseIdx + 1 < state.phases.length
+					? `Moving to phase ${phaseIdx + 2}...`
+					: "All phases complete!",
+				"✅",
+			),
+			"success",
+		);
 	}
 
 	// ============================================
 	// COMPLETION
 	// ============================================
-	
+
 	// Finalize metrics
 	let phasesApprovedFirstPass = 0;
-	const avgReviewCyclesPerPhase = state.phases.length > 0 
-		? metrics.codeReviewCycles / state.phases.length 
-		: 0;
+	const avgReviewCyclesPerPhase =
+		state.phases.length > 0
+			? metrics.codeReviewCycles / state.phases.length
+			: 0;
 	if (avgReviewCyclesPerPhase <= 1.5) {
 		phasesApprovedFirstPass = Math.round(state.phases.length * 0.8);
 	} else if (avgReviewCyclesPerPhase <= 2) {
 		phasesApprovedFirstPass = Math.round(state.phases.length * 0.5);
 	}
-	
+
 	finalizeImplMetrics(metrics, state.phases.length, phasesApprovedFirstPass);
 	state.stage = "completed";
 	save();
-	
+
 	clearPipelineWidget(ctx);
-	
+
 	// Completion message
 	const completionLines: string[] = [];
 	completionLines.push("");
@@ -802,16 +1028,27 @@ Make the necessary fixes.`,
 	completionLines.push(formatKeyValue("  Spec Path", state.specPath));
 	completionLines.push(formatKeyValue("  Phases", String(state.phases.length)));
 	if (state.checkpoints && state.checkpoints.length > 0) {
-		completionLines.push(formatKeyValue("  Checkpoints", String(state.checkpoints.length)));
+		completionLines.push(
+			formatKeyValue("  Checkpoints", String(state.checkpoints.length)),
+		);
 	}
-	
+
 	if (metrics.totalDurationMs) {
 		const durationMins = Math.round(metrics.totalDurationMs / 60000);
 		completionLines.push(formatKeyValue("  Duration", `${durationMins} min`));
 	}
-	completionLines.push(formatKeyValue("  Agent Calls", String(metrics.agentCalls.length)));
-	completionLines.push(formatKeyValue("  Plan Generation", metrics.skipPlanGeneration ? "Skipped" : "Enabled"));
-	completionLines.push(formatKeyValue("  Code Review Cycles", String(metrics.codeReviewCycles)));
+	completionLines.push(
+		formatKeyValue("  Agent Calls", String(metrics.agentCalls.length)),
+	);
+	completionLines.push(
+		formatKeyValue(
+			"  Plan Generation",
+			metrics.skipPlanGeneration ? "Skipped" : "Enabled",
+		),
+	);
+	completionLines.push(
+		formatKeyValue("  Code Review Cycles", String(metrics.codeReviewCycles)),
+	);
 
 	// Token totals — surfaces cache effectiveness in the run summary.
 	const usageTotals = metrics.agentCalls.reduce(
@@ -825,18 +1062,37 @@ Make the necessary fixes.`,
 			acc.callsWithUsage += 1;
 			return acc;
 		},
-		{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, callsWithUsage: 0 }
+		{
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			callsWithUsage: 0,
+		},
 	);
 	if (usageTotals.callsWithUsage > 0) {
 		const fmt = (n: number) => n.toLocaleString();
-		const cacheableInput = usageTotals.input + usageTotals.cacheRead + usageTotals.cacheWrite;
-		const hitRate = cacheableInput > 0
-			? `${Math.round((usageTotals.cacheRead / cacheableInput) * 100)}%`
-			: "n/a";
-		completionLines.push(formatKeyValue("  Tokens (in/out)", `${fmt(usageTotals.input)} / ${fmt(usageTotals.output)}`));
-		completionLines.push(formatKeyValue("  Cache (read/write)", `${fmt(usageTotals.cacheRead)} / ${fmt(usageTotals.cacheWrite)} (hit ${hitRate})`));
+		const cacheableInput =
+			usageTotals.input + usageTotals.cacheRead + usageTotals.cacheWrite;
+		const hitRate =
+			cacheableInput > 0
+				? `${Math.round((usageTotals.cacheRead / cacheableInput) * 100)}%`
+				: "n/a";
+		completionLines.push(
+			formatKeyValue(
+				"  Tokens (in/out)",
+				`${fmt(usageTotals.input)} / ${fmt(usageTotals.output)}`,
+			),
+		);
+		completionLines.push(
+			formatKeyValue(
+				"  Cache (read/write)",
+				`${fmt(usageTotals.cacheRead)} / ${fmt(usageTotals.cacheWrite)} (hit ${hitRate})`,
+			),
+		);
 	}
-	
+
 	completionLines.push("");
 	completionLines.push("  📋 Next Steps:");
 	completionLines.push("     • Review the implementation changes");
@@ -845,9 +1101,11 @@ Make the necessary fixes.`,
 	} else {
 		completionLines.push("     • Run your project's test suite");
 	}
-	completionLines.push("     • Run /implement-metrics to export comparison data");
+	completionLines.push(
+		"     • Run /implement-metrics to export comparison data",
+	);
 	completionLines.push("");
 	completionLines.push(formatDivider(50));
-	
+
 	ctx.ui.notify(completionLines.join("\n"), "success");
 }

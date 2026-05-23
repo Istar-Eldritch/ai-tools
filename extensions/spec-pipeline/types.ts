@@ -1,6 +1,6 @@
 /**
  * Type definitions for the spec pipeline
- * 
+ *
  * Split into two separate state types:
  * - SpecState: For spec creation (/spec command)
  * - ImplementationState: For implementation (/implement command)
@@ -25,6 +25,8 @@ export const ThinkingLevelSchema = Type.Union([
 export const ModelConfigSchema = Type.Object({
 	model: ModelNameSchema,
 	thinking: ThinkingLevelSchema,
+	// Per-role override for the streaming idle-timeout watchdog (ms). 0 disables.
+	streamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
 });
 
 // Full models configuration schema
@@ -43,7 +45,10 @@ export const ModelsConfigSchema = Type.Object({
 });
 
 // Review cycles configuration (allows 0 to skip code review)
-export const ReviewCyclesConfigSchema = Type.Number({ minimum: 0, maximum: 10 });
+export const ReviewCyclesConfigSchema = Type.Number({
+	minimum: 0,
+	maximum: 10,
+});
 
 // Full pipeline configuration schema
 export const SpecPipelineConfigSchema = Type.Object({
@@ -60,6 +65,9 @@ export const SpecPipelineConfigSchema = Type.Object({
 	reviewCycles: Type.Optional(ReviewCyclesConfigSchema),
 	// Experimental: skip plan generation phase (go directly from spec to implementation)
 	skipPlanGeneration: Type.Optional(Type.Boolean()),
+	// Project-level default for the streaming idle-timeout watchdog (ms). 0 disables.
+	// Per-role values in `models.<role>.streamIdleTimeoutMs` take precedence.
+	streamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
 });
 
 // ============================================
@@ -98,12 +106,12 @@ export interface AgentCallMetrics {
 	role: RoleName;
 	model: string;
 	thinking: ThinkingLevel;
-	startTime: string;      // ISO timestamp
-	endTime: string;        // ISO timestamp
-	durationMs: number;     // Wall clock duration
+	startTime: string; // ISO timestamp
+	endTime: string; // ISO timestamp
+	durationMs: number; // Wall clock duration
 	exitCode: number;
-	phase?: number;         // Phase index if applicable
-	cycle?: number;         // Review cycle if applicable
+	phase?: number; // Phase index if applicable
+	cycle?: number; // Review cycle if applicable
 	usage?: AgentCallUsage; // Token usage if reported by the subprocess
 }
 
@@ -186,15 +194,24 @@ export interface ProjectConfig {
 	reviewCycles: NormalizedReviewCycles;
 	// Experimental: skip plan generation (go directly from spec to implementation)
 	skipPlanGeneration: boolean;
+	// Project-level default for streaming idle-timeout watchdog (ms). undefined → fall back to env / 90s.
+	streamIdleTimeoutMs?: number;
 }
 
 // ============================================
 // Error Handling Types
 // ============================================
 
-export type ErrorType = "RATE_LIMIT" | "TIMEOUT" | "NETWORK" | "VALIDATION" | "TOKEN_LIMIT" | "INCOMPLETE" | "UNKNOWN";
+export type ErrorType =
+	| "RATE_LIMIT"
+	| "TIMEOUT"
+	| "NETWORK"
+	| "VALIDATION"
+	| "TOKEN_LIMIT"
+	| "INCOMPLETE"
+	| "UNKNOWN";
 
-export type RoleName = 
+export type RoleName =
 	| "planDrafter"
 	| "implementer"
 	| "codeReviewer"
@@ -203,24 +220,24 @@ export type RoleName =
 	| "brainstormAgent"; // Role for tool restrictions (read-only for both old and new commit agents)
 
 export interface ErrorDetails {
-	timestamp: string;           // ISO timestamp of error
-	agent: AgentName;            // Which agent failed
-	role: RoleName;              // Which role was executing
-	phase?: number;              // Phase index (1-indexed, if in implementation stage)
-	cycle?: number;              // Review cycle (1-indexed, if in implementation stage)
-	exitCode: number;            // Subprocess exit code
-	stderr?: string;             // Error output from subprocess (truncated to 2000 chars)
-	errorType: ErrorType;        // Classified error type
-	agentTask: string;           // The exact task prompt sent to the agent
-	finishReason?: string;       // Provider/model finish reason if available
-	completed?: boolean;         // Whether the agent reported normal completion
+	timestamp: string; // ISO timestamp of error
+	agent: AgentName; // Which agent failed
+	role: RoleName; // Which role was executing
+	phase?: number; // Phase index (1-indexed, if in implementation stage)
+	cycle?: number; // Review cycle (1-indexed, if in implementation stage)
+	exitCode: number; // Subprocess exit code
+	stderr?: string; // Error output from subprocess (truncated to 2000 chars)
+	errorType: ErrorType; // Classified error type
+	agentTask: string; // The exact task prompt sent to the agent
+	finishReason?: string; // Provider/model finish reason if available
+	completed?: boolean; // Whether the agent reported normal completion
 }
 
 // ============================================
 // Spec State Types
 // ============================================
 
-export type SpecStage = 
+export type SpecStage =
 	| "discovery"
 	| "spec_drafting"
 	| "spec_review"
@@ -268,7 +285,12 @@ export interface DraftingState {
  * - discovery: Host LLM is acting as discovery agent
  * - drafting: Host LLM is acting as spec drafter
  */
-export type PipelineMode = "idle" | "scoping" | "discovery" | "drafting" | "brainstorm";
+export type PipelineMode =
+	| "idle"
+	| "scoping"
+	| "discovery"
+	| "drafting"
+	| "brainstorm";
 
 /**
  * Ephemeral scoping state (not persisted to disk).
@@ -306,31 +328,31 @@ export interface SpecState {
 	stage: SpecStage;
 	createdAt: string;
 	updatedAt: string;
-	
+
 	// Stage before cancellation (for resume)
 	stageBeforeCancellation?: SpecStage;
-	
+
 	// Discovery state
 	discovery?: DiscoveryState;
-	
+
 	// Drafting state (conversational mode)
 	drafting?: DraftingState;
-	
+
 	// Spec-related state
-	specTimestamp: string;  // YYMMDDhhmm format
+	specTimestamp: string; // YYMMDDhhmm format
 	specFilename: string;
 	specPath: string;
 	specDraft: string;
 	specApproved: boolean;
 	specIteration: number;
-	
+
 	// Git state
-	checkpoints?: string[];      // Array of commit hashes
-	errorStash?: string;         // Stash reference if error occurred
-	
+	checkpoints?: string[]; // Array of commit hashes
+	errorStash?: string; // Stash reference if error occurred
+
 	// Error tracking
-	lastError?: ErrorDetails | string;  // string for legacy compatibility
-	
+	lastError?: ErrorDetails | string; // string for legacy compatibility
+
 	// Metrics
 	metrics?: SpecMetrics;
 }
@@ -339,7 +361,7 @@ export interface SpecState {
 // Implementation State Types
 // ============================================
 
-export type ImplementationStage = 
+export type ImplementationStage =
 	| "plan_generation"
 	| "implementation"
 	| "completed"
@@ -351,44 +373,44 @@ export type ImplementationStage =
  */
 export interface ImplementationState {
 	id: string;
-	implTimestamp: string;        // YYMMDDhhmm format for this implementation
-	specPath: string;             // Path to the spec file being implemented
-	specContent: string;          // Cached spec content at start
+	implTimestamp: string; // YYMMDDhhmm format for this implementation
+	specPath: string; // Path to the spec file being implemented
+	specContent: string; // Cached spec content at start
 	stage: ImplementationStage;
 	createdAt: string;
 	updatedAt: string;
-	
+
 	// Stage before cancellation (for resume)
 	stageBeforeCancellation?: ImplementationStage;
-	
+
 	// Phases state
 	phases: string[];
 	phasesGenerated: boolean[];
 	currentPhaseIndex: number;
-	
+
 	// Implementation state (per phase)
 	currentReviewCycle: number;
 	previousReview: string;
-	
+
 	// Review state
 	reviewCyclesCompleted?: number;
-	
+
 	// Resume tracking
 	implementerCompletedForPhase?: boolean;
-	
+
 	// Commit tracking
-	phaseCommits: boolean[][];  // phaseCommits[phaseIdx][cycleIdx]
-	
+	phaseCommits: boolean[][]; // phaseCommits[phaseIdx][cycleIdx]
+
 	// Git state
 	checkpoints?: string[];
 	errorStash?: string;
-	
+
 	// Error tracking
 	lastError?: ErrorDetails | string;
-	
+
 	// Flags
 	skipPlanGeneration?: boolean;
-	
+
 	// Metrics
 	metrics?: ImplementationMetrics;
 }
@@ -441,8 +463,8 @@ export type ReviewerRole = "codeReviewer";
 // ============================================
 
 /** UI context type for widget functions */
-export type WidgetUIContext = { 
-	ui: { 
+export type WidgetUIContext = {
+	ui: {
 		setWidget: (id: string, content: string[] | undefined) => void;
 	};
 };
@@ -450,7 +472,10 @@ export type WidgetUIContext = {
 /** Full UI context for pipeline operations */
 export interface PipelineUIContext {
 	ui: {
-		notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
+		notify: (
+			msg: string,
+			type: "info" | "error" | "success" | "warning",
+		) => void;
 		confirm: (title: string, msg: string) => Promise<boolean>;
 		editor: (title: string, initial: string) => Promise<string | undefined>;
 		select: (title: string, options: Array<string>) => Promise<string>;
@@ -471,11 +496,13 @@ export const MAX_SPEC_ITERATIONS = 5;
 export const PIPELINE_WIDGET_ID = "spec-pipeline-status";
 
 // Roles that need write/edit access to modify files
-export const WRITE_ROLES = new Set(["planDrafter", "implementer", "addressReview"]);
+export const WRITE_ROLES = new Set([
+	"planDrafter",
+	"implementer",
+	"addressReview",
+]);
 // Roles that only need to read and analyze (no write/edit access)
 export const READ_ONLY_ROLES = new Set(["codeReviewer", "commitMessageWriter"]);
-
-
 
 // ============================================
 // Hierarchy Types (Roadmaps & Epics)
@@ -486,13 +513,13 @@ export type HierarchyLevel = "roadmap" | "epic" | "feature";
 
 /** Stages for roadmap/epic pipelines */
 export type HierarchyStage =
-	| "scoping"          // /plan scoping assessment
+	| "scoping" // /plan scoping assessment
 	| "discovery"
 	| "drafting"
 	| "review"
 	| "user_approval"
-	| "approved"         // Approved, children can be created
-	| "in_progress"      // At least one child started
+	| "approved" // Approved, children can be created
+	| "in_progress" // At least one child started
 	| "completed"
 	| "cancelled";
 
@@ -535,10 +562,10 @@ export interface RoadmapState {
 	drafting?: DraftingState;
 
 	// Document details
-	docTimestamp: string;       // YYMMDDhhmm format
-	docFilename: string;        // e.g. "2602071200_roadmap_warm_pools.md"
-	docPath: string;            // relative path to document
-	docContent: string;         // current document content
+	docTimestamp: string; // YYMMDDhhmm format
+	docFilename: string; // e.g. "2602071200_roadmap_warm_pools.md"
+	docPath: string; // relative path to document
+	docContent: string; // current document content
 	docApproved: boolean;
 	docIteration: number;
 
@@ -629,10 +656,10 @@ export interface BrainstormState {
 	stageBeforeCancellation?: BrainstormStage;
 
 	// Document details
-	docTimestamp: string;     // YYMMDDhhmm format
-	docFilename: string;      // e.g. "2602171119_brainstorm_billing_redesign.md"
-	docPath: string;          // relative path to document
-	docContent: string;       // written at completion
+	docTimestamp: string; // YYMMDDhhmm format
+	docFilename: string; // e.g. "2602171119_brainstorm_billing_redesign.md"
+	docPath: string; // relative path to document
+	docContent: string; // written at completion
 
 	// Conversation history
 	conversationHistory: ConversationalExchange[];
@@ -667,12 +694,12 @@ export interface TextEventData {
 
 /**
  * Union type for agent output events
- * 
+ *
  * Supports both legacy string callbacks and structured event data:
  * - `string`: Text delta from agent output (backward compatible)
  * - `TextEventData`: Structured text delta with explicit type
  * - `ToolEventData`: Tool invocation events (name, arguments)
- * 
+ *
  * **Type Narrowing Example:**
  * ```typescript
  * function handleOutput(event: AgentOutputEvent) {
@@ -685,7 +712,7 @@ export interface TextEventData {
  *     }
  * }
  * ```
- * 
+ *
  * @since Phase 1 - Event parsing infrastructure
  * @see Phase 2 will introduce progress callbacks that leverage ToolEventData
  */

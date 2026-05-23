@@ -34,10 +34,7 @@ describe("extractPhases", () => {
 `;
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.isInline).toBe(false);
-			expect(result.paths).toEqual([
-				"./specs/phase1.md",
-				"./specs/phase2.md",
-			]);
+			expect(result.paths).toEqual(["./specs/phase1.md", "./specs/phase2.md"]);
 		});
 
 		it("linked format takes priority over plain table format", () => {
@@ -69,9 +66,15 @@ describe("extractPhases", () => {
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.isInline).toBe(false);
 			expect(result.paths).toHaveLength(3);
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints_job.md`);
-			expect(result.paths[1]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase2_realtime_notification_system.md`);
-			expect(result.paths[2]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase3_frontend_ui_components.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints_job.md`,
+			);
+			expect(result.paths[1]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase2_realtime_notification_system.md`,
+			);
+			expect(result.paths[2]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase3_frontend_ui_components.md`,
+			);
 		});
 
 		it("generates slug from focus description (max 4 words, stop words removed)", () => {
@@ -82,7 +85,9 @@ describe("extractPhases", () => {
 			expect(result.paths).toHaveLength(1);
 			// PHASE_STOP_WORDS only includes articles/prepositions: "the", "for" removed
 			// "add" is NOT a stop word here; remaining: "add", "authentication", "flow", "users" (4 max)
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_add_authentication_flow_users.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_add_authentication_flow_users.md`,
+			);
 		});
 
 		it("handles single phase", () => {
@@ -110,7 +115,9 @@ describe("extractPhases", () => {
 `;
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.paths).toHaveLength(1);
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api.md`,
+			);
 		});
 
 		it("filters stop words from phase descriptions", () => {
@@ -121,7 +128,9 @@ describe("extractPhases", () => {
 			expect(result.paths).toHaveLength(1);
 			// "a" filtered (length 1), "for"/"the" are stop words
 			// Remaining: "add", "new", "api", "billing" (4 words max, "system" truncated)
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_add_new_api_billing.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_add_new_api_billing.md`,
+			);
 		});
 
 		it("handles descriptions that result in empty slug after filtering", () => {
@@ -132,7 +141,9 @@ describe("extractPhases", () => {
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.paths).toHaveLength(1);
 			// "a" is single char, filtered out → falls back to "phase"
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_phase.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_phase.md`,
+			);
 		});
 
 		it("strips non-alphanumeric characters from descriptions", () => {
@@ -142,7 +153,9 @@ describe("extractPhases", () => {
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.paths).toHaveLength(1);
 			// "WebSocket", "(real-time)", "integration" → after sanitize: "websocket", "realtime", "integration"
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_websocket_realtime_integration.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_websocket_realtime_integration.md`,
+			);
 		});
 
 		it("does not match table header row", () => {
@@ -175,9 +188,15 @@ describe("extractPhases", () => {
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.isInline).toBe(false);
 			expect(result.paths).toHaveLength(3);
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints.md`);
-			expect(result.paths[1]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase2_frontend_components.md`);
-			expect(result.paths[2]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase3_integration_testing.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints.md`,
+			);
+			expect(result.paths[1]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase2_frontend_components.md`,
+			);
+			expect(result.paths[2]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase3_integration_testing.md`,
+			);
 		});
 
 		it("handles Typst format with special characters in description", () => {
@@ -186,7 +205,9 @@ describe("extractPhases", () => {
 `;
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.paths).toHaveLength(1);
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_websocket_realtime_updates.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_websocket_realtime_updates.md`,
+			);
 		});
 
 		it("does not match Typst header row with asterisks", () => {
@@ -222,9 +243,15 @@ Description of phase 2...
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.isInline).toBe(true);
 			expect(result.paths).toHaveLength(3);
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints.md`);
-			expect(result.paths[1]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase2_frontend_ui_components.md`);
-			expect(result.paths[2]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase3_integration_testing.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints.md`,
+			);
+			expect(result.paths[1]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase2_frontend_ui_components.md`,
+			);
+			expect(result.paths[2]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase3_integration_testing.md`,
+			);
 		});
 
 		it("strips parenthesized effort from inline headers", () => {
@@ -236,8 +263,32 @@ Description of phase 2...
 			expect(result.isInline).toBe(true);
 			expect(result.paths).toHaveLength(2);
 			// Parenthesized content should be stripped
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints.md`);
-			expect(result.paths[1]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase2_frontend.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints.md`,
+			);
+			expect(result.paths[1]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase2_frontend.md`,
+			);
+		});
+
+		it("matches em-dash, en-dash, and hyphen separators in inline headers", () => {
+			const spec = `
+### Phase 1 — Skeleton Plumbing
+### Phase 2 – Pilot Domain
+### Phase 3 - Cleanup Pass
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.isInline).toBe(true);
+			expect(result.paths).toHaveLength(3);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_skeleton_plumbing.md`,
+			);
+			expect(result.paths[1]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase2_pilot_domain.md`,
+			);
+			expect(result.paths[2]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase3_cleanup_pass.md`,
+			);
 		});
 
 		it("does not match ## or #### headers", () => {
@@ -287,10 +338,7 @@ Just regular text content here.
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.isInline).toBe(false);
 			// Should use linked paths, not auto-generated
-			expect(result.paths).toEqual([
-				"./custom/path.md",
-				"./custom/path2.md",
-			]);
+			expect(result.paths).toEqual(["./custom/path.md", "./custom/path2.md"]);
 		});
 
 		it("plain table takes priority over Typst format", () => {
@@ -409,7 +457,9 @@ R2: Background provisioning engine
 			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
 			expect(result.paths).toHaveLength(1);
 			// All words are stop words → falls back to "phase"
-			expect(result.paths[0]).toBe(`${TIMESTAMP}_${SHORT_NAME}/phase1_phase.md`);
+			expect(result.paths[0]).toBe(
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_phase.md`,
+			);
 		});
 
 		it("handles description with numbers and special chars", () => {

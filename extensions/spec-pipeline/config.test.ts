@@ -174,7 +174,9 @@ describe("default configurations", () => {
 
 		it("has agentCommitMessageWriter config", () => {
 			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter).toBeDefined();
-			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe("gpt-5.4-mini");
+			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe(
+				"gpt-5.4-mini",
+			);
 		});
 	});
 
@@ -196,17 +198,21 @@ describe("discoverSpecTemplate", () => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
 
-	it("returns null when no template files exist", () => {
+	it("falls back to the built-in template when no project template exists", () => {
 		fs.mkdirSync(path.join(tmpDir, "docs"));
 		const result = discoverSpecTemplate(tmpDir, "docs");
-		expect(result.path).toBeNull();
-		expect(result.content).toBeNull();
+		expect(result.builtin).toBe(true);
+		expect(result.path).toBe("<built-in spec template>");
+		expect(result.content).toContain("| Phase | Focus | Effort |");
 	});
 
 	it("discovers a TEMPLATE.md file in docs/", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "TEMPLATE.md"), "# Spec Template\n\nContent here");
+		fs.writeFileSync(
+			path.join(docsDir, "TEMPLATE.md"),
+			"# Spec Template\n\nContent here",
+		);
 		const result = discoverSpecTemplate(tmpDir, "docs");
 		expect(result.path).toBe("docs/TEMPLATE.md");
 		expect(result.content).toContain("Spec Template");
@@ -215,45 +221,55 @@ describe("discoverSpecTemplate", () => {
 	it("discovers a timestamped TEMPLATE file (e.g. 2601221403_TEMPLATE.typ)", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "2601221403_TEMPLATE.typ"), "// Typst template\n= Overview");
+		fs.writeFileSync(
+			path.join(docsDir, "2601221403_TEMPLATE.typ"),
+			"// Typst template\n= Overview",
+		);
 		const result = discoverSpecTemplate(tmpDir, "docs");
 		expect(result.path).toBe("docs/2601221403_TEMPLATE.typ");
 		expect(result.content).toContain("Typst template");
 	});
 
-	it("skips _template.typ layout files (underscore prefix)", () => {
+	it("skips _template.typ layout files (underscore prefix) and falls back to built-in", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
 		fs.writeFileSync(path.join(docsDir, "_template.typ"), "// Layout template");
 		const result = discoverSpecTemplate(tmpDir, "docs");
-		expect(result.path).toBeNull();
-		expect(result.content).toBeNull();
+		expect(result.builtin).toBe(true);
 	});
 
-	it("skips template_example files", () => {
+	it("skips template_example files and falls back to built-in", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
 		fs.writeFileSync(path.join(docsDir, "_template_example.typ"), "// Example");
 		const result = discoverSpecTemplate(tmpDir, "docs");
-		expect(result.path).toBeNull();
-		expect(result.content).toBeNull();
+		expect(result.builtin).toBe(true);
 	});
 
-	it("skips binary files (PDF)", () => {
+	it("skips binary files (PDF) and falls back to built-in", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "TEMPLATE.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46]));
+		fs.writeFileSync(
+			path.join(docsDir, "TEMPLATE.pdf"),
+			Buffer.from([0x25, 0x50, 0x44, 0x46]),
+		);
 		const result = discoverSpecTemplate(tmpDir, "docs");
-		expect(result.path).toBeNull();
-		expect(result.content).toBeNull();
+		expect(result.builtin).toBe(true);
 	});
 
 	it("uses explicit path from config when provided", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "my_custom_template.md"), "# Custom Template");
+		fs.writeFileSync(
+			path.join(docsDir, "my_custom_template.md"),
+			"# Custom Template",
+		);
 		fs.writeFileSync(path.join(docsDir, "TEMPLATE.md"), "# Default Template");
-		const result = discoverSpecTemplate(tmpDir, "docs", "docs/my_custom_template.md");
+		const result = discoverSpecTemplate(
+			tmpDir,
+			"docs",
+			"docs/my_custom_template.md",
+		);
 		expect(result.path).toBe("docs/my_custom_template.md");
 		expect(result.content).toContain("Custom Template");
 	});
@@ -276,13 +292,12 @@ describe("discoverSpecTemplate", () => {
 		expect(result.content).toContain("Fallback Template");
 	});
 
-	it("skips empty template files", () => {
+	it("skips empty template files and falls back to built-in", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
 		fs.writeFileSync(path.join(docsDir, "TEMPLATE.md"), "");
 		const result = discoverSpecTemplate(tmpDir, "docs");
-		expect(result.path).toBeNull();
-		expect(result.content).toBeNull();
+		expect(result.builtin).toBe(true);
 	});
 });
 
@@ -307,7 +322,10 @@ describe("discoverSpecConventions", () => {
 	it("discovers a guide_specs file", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "guide_specs.md"), "# Spec Guide\n\nConventions here");
+		fs.writeFileSync(
+			path.join(docsDir, "guide_specs.md"),
+			"# Spec Guide\n\nConventions here",
+		);
 		const result = discoverSpecConventions(tmpDir, "docs");
 		expect(result.path).toBe("docs/guide_specs.md");
 		expect(result.content).toContain("Spec Guide");
@@ -316,7 +334,10 @@ describe("discoverSpecConventions", () => {
 	it("discovers a timestamped guide_specs file", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "2601221403_guide_specs.typ"), "// Spec Conventions");
+		fs.writeFileSync(
+			path.join(docsDir, "2601221403_guide_specs.typ"),
+			"// Spec Conventions",
+		);
 		const result = discoverSpecConventions(tmpDir, "docs");
 		expect(result.path).toBe("docs/2601221403_guide_specs.typ");
 		expect(result.content).toContain("Spec Conventions");
@@ -325,7 +346,10 @@ describe("discoverSpecConventions", () => {
 	it("discovers spec_conventions file", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "spec_conventions.md"), "# Conventions");
+		fs.writeFileSync(
+			path.join(docsDir, "spec_conventions.md"),
+			"# Conventions",
+		);
 		const result = discoverSpecConventions(tmpDir, "docs");
 		expect(result.path).toBe("docs/spec_conventions.md");
 		expect(result.content).toContain("Conventions");
@@ -334,8 +358,15 @@ describe("discoverSpecConventions", () => {
 	it("uses explicit path from config when provided", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
-		fs.writeFileSync(path.join(docsDir, "my_conventions.md"), "# My Conventions");
-		const result = discoverSpecConventions(tmpDir, "docs", "docs/my_conventions.md");
+		fs.writeFileSync(
+			path.join(docsDir, "my_conventions.md"),
+			"# My Conventions",
+		);
+		const result = discoverSpecConventions(
+			tmpDir,
+			"docs",
+			"docs/my_conventions.md",
+		);
 		expect(result.path).toBe("docs/my_conventions.md");
 		expect(result.content).toContain("My Conventions");
 	});
@@ -353,7 +384,10 @@ describe("discoverSpecConventions", () => {
 		const docsDir = path.join(tmpDir, "docs");
 		fs.mkdirSync(docsDir);
 		fs.writeFileSync(path.join(docsDir, "guide_testing.md"), "# Testing Guide");
-		fs.writeFileSync(path.join(docsDir, "guide_deployment.md"), "# Deployment Guide");
+		fs.writeFileSync(
+			path.join(docsDir, "guide_deployment.md"),
+			"# Deployment Guide",
+		);
 		const result = discoverSpecConventions(tmpDir, "docs");
 		expect(result.path).toBeNull();
 		expect(result.content).toBeNull();
@@ -401,7 +435,9 @@ describe("detectSpecFormat", () => {
 	});
 
 	it("derives format from template path extension", () => {
-		expect(detectSpecFormat(undefined, "docs/2601221403_TEMPLATE.typ")).toBe("typ");
+		expect(detectSpecFormat(undefined, "docs/2601221403_TEMPLATE.typ")).toBe(
+			"typ",
+		);
 	});
 
 	it("derives md from a .md template path", () => {

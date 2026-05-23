@@ -48,16 +48,16 @@ const DEFAULT_TOOL_EMOJI = "🔧";
 
 /**
  * Create a progress callback for agent execution (R5-R21)
- * 
+ *
  * The callback formats tool invocations into user-friendly messages and
  * updates the pipeline widget in real-time. Also prints to terminal for permanent history.
- * 
+ *
  * @param ctx - UI context with notify and setWidget functions
  * @param state - Current implementation or spec state (for widget updates)
  * @param phaseInfo - Human-readable phase context (e.g., "Phase 2/3", "Review Cycle 1")
  * @param isImplPipeline - True for implementation widget, false for spec widget
  * @returns Callback function that handles AgentOutputEvent
- * 
+ *
  * @example
  * ```typescript
  * const callback = createProgressCallback(
@@ -76,24 +76,24 @@ export function createProgressCallback(
 	ctx: PipelineUIContext,
 	state: ImplementationState | SpecState,
 	phaseInfo: string,
-	isImplPipeline: boolean = true
+	isImplPipeline: boolean = true,
 ): (event: AgentOutputEvent) => void {
 	return (event: AgentOutputEvent) => {
 		// Handle legacy text deltas (ignore for progress display)
 		if (typeof event === "string") {
 			return;
 		}
-		
+
 		// Handle structured text events (ignore for progress display)
 		if (event.type === "text") {
 			return;
 		}
-		
+
 		// Handle tool invocation events (R2, R3, R4)
 		if (event.type === "tool") {
 			const emoji = TOOL_EMOJI[event.name] || DEFAULT_TOOL_EMOJI;
 			let message = "";
-			
+
 			// Format message based on tool type (R7)
 			if (event.name === "read" && event.arguments?.path) {
 				// Read: show file path (R7)
@@ -115,26 +115,32 @@ export function createProgressCallback(
 			} else if (event.name === "grep" && event.arguments?.pattern) {
 				// Grep: show pattern and optional path (R7)
 				const pattern = event.arguments.pattern;
-				const pathPart = event.arguments.path ? ` in ${formatPath(event.arguments.path)}` : "";
+				const pathPart = event.arguments.path
+					? ` in ${formatPath(event.arguments.path)}`
+					: "";
 				message = `${emoji} Searching ${pattern}${pathPart}`;
 			} else if (event.name === "find" && event.arguments?.pattern) {
 				// Find: show pattern (R7)
 				const pattern = event.arguments.pattern;
 				message = `${emoji} Finding ${pattern}`;
 			}
-			
+
 			// If we successfully formatted a message, update the widget and print to history
 			if (message) {
 				// Add phase context (R21)
 				const contextualMessage = `${message} [${phaseInfo}]`;
-				
+
 				// Update widget with current action (R13, R14, R15)
 				if (isImplPipeline) {
-					updateImplWidget(ctx, state as ImplementationState, contextualMessage);
+					updateImplWidget(
+						ctx,
+						state as ImplementationState,
+						contextualMessage,
+					);
 				} else {
 					updateSpecWidget(ctx, state as SpecState, contextualMessage);
 				}
-				
+
 				// Notify UI and print to terminal for permanent history
 				ctx.ui.notify(contextualMessage, "info");
 				console.log(`  ${contextualMessage}`);
@@ -180,10 +186,16 @@ function recordPromptHash(
 	systemPrompt: string,
 	modelConfig: ModelConfig,
 	roleArgs: string,
-): { systemChanged: boolean; modelChanged: boolean; previousSystemHash?: string } {
+): {
+	systemChanged: boolean;
+	modelChanged: boolean;
+	previousSystemHash?: string;
+} {
 	const key = `${cwd}::${role ?? "unknown"}`;
 	const systemHash = hashString(systemPrompt);
-	const modelHash = hashString(`${modelConfig.model}|${modelConfig.thinking}|${roleArgs}`);
+	const modelHash = hashString(
+		`${modelConfig.model}|${modelConfig.thinking}|${roleArgs}`,
+	);
 	const prev = cacheTrack.get(key);
 	const result = {
 		systemChanged: !!prev && prev.systemHash !== systemHash,
@@ -192,7 +204,11 @@ function recordPromptHash(
 	};
 	// LRU touch
 	if (prev) cacheTrack.delete(key);
-	cacheTrack.set(key, { systemHash, modelHash, systemSample: systemPrompt.slice(0, 4000) });
+	cacheTrack.set(key, {
+		systemHash,
+		modelHash,
+		systemSample: systemPrompt.slice(0, 4000),
+	});
 	while (cacheTrack.size > CACHE_TRACK_MAX_ENTRIES) {
 		const first = cacheTrack.keys().next().value;
 		if (first === undefined) break;
@@ -201,14 +217,26 @@ function recordPromptHash(
 	return result;
 }
 
-function writeCacheDiff(cwd: string, role: string | undefined, currentSystemPrompt: string, prevHash: string | undefined, currentHash: string): void {
+function writeCacheDiff(
+	cwd: string,
+	role: string | undefined,
+	currentSystemPrompt: string,
+	prevHash: string | undefined,
+	currentHash: string,
+): void {
 	if (!prevHash) return;
 	try {
 		const dir = path.join(cwd, ".pi", "spec-pipeline", "cache-diffs");
 		fs.mkdirSync(dir, { recursive: true });
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-		const file = path.join(dir, `${stamp}_${role ?? "unknown"}_${prevHash}_to_${currentHash}.txt`);
-		fs.writeFileSync(file, currentSystemPrompt, { encoding: "utf-8", mode: 0o600 });
+		const file = path.join(
+			dir,
+			`${stamp}_${role ?? "unknown"}_${prevHash}_to_${currentHash}.txt`,
+		);
+		fs.writeFileSync(file, currentSystemPrompt, {
+			encoding: "utf-8",
+			mode: 0o600,
+		});
 	} catch {
 		// Diagnostic only — never let this kill the run.
 	}
@@ -225,7 +253,7 @@ export async function runAgentWithConfig(
 	systemPrompt: string,
 	signal?: AbortSignal,
 	onOutput?: (event: AgentOutputEvent) => void,
-	role?: string
+	role?: string,
 ): Promise<AgentResult> {
 	const args: string[] = [
 		"--mode",
@@ -255,16 +283,31 @@ export async function runAgentWithConfig(
 	// config per (cwd, role) and write a diff sample if the system prompt
 	// changed since the last call for the same source. Post-call cacheRead
 	// totals (below) plus this pre-call diff are enough to explain regressions.
-	const hashCheck = recordPromptHash(cwd, role, systemPrompt, modelConfig, roleArgs);
+	const hashCheck = recordPromptHash(
+		cwd,
+		role,
+		systemPrompt,
+		modelConfig,
+		roleArgs,
+	);
 	if (hashCheck.systemChanged) {
 		const newHash = hashString(systemPrompt);
-		writeCacheDiff(cwd, role, systemPrompt, hashCheck.previousSystemHash, newHash);
+		writeCacheDiff(
+			cwd,
+			role,
+			systemPrompt,
+			hashCheck.previousSystemHash,
+			newHash,
+		);
 	}
 
 	// Write system prompt to temp file
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
 	const promptPath = path.join(tmpDir, "system.md");
-	fs.writeFileSync(promptPath, systemPrompt, { encoding: "utf-8", mode: 0o600 });
+	fs.writeFileSync(promptPath, systemPrompt, {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
 	args.push("--append-system-prompt", promptPath);
 
 	args.push(task);
@@ -280,7 +323,13 @@ export async function runAgentWithConfig(
 	// Accumulated token usage across all assistant turns. Pi emits one
 	// AssistantMessage per turn and each carries a `usage` object — see
 	// pi docs/session-format.md and docs/json.md. We sum across the run.
-	const usage: AgentCallUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+	const usage: AgentCallUsage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+	};
 	let usageRecorded = false;
 	const seenAssistantUsage = new Set<string>();
 	const accumulateAssistantUsage = (msg: any): void => {
@@ -312,7 +361,12 @@ export async function runAgentWithConfig(
 			// for this long, kill it. Catches the "server stopped sending events but
 			// connection still open" hang documented in api-connection-report.md §5.2.
 			// Default mirrors Claude Code's CLAUDE_STREAM_IDLE_TIMEOUT_MS=90s.
-			const idleTimeoutMs = Number(process.env.SPEC_PIPELINE_STREAM_IDLE_TIMEOUT_MS) || 90_000;
+			// Resolution order: per-role ModelConfig > env var > 90s default.
+			// The project-level value (from .pi/spec-pipeline.json `streamIdleTimeoutMs`)
+			// is folded into per-role configs by mergeWithDefaults in config.ts.
+			const idleTimeoutMs =
+				modelConfig.streamIdleTimeoutMs ??
+				(Number(process.env.SPEC_PIPELINE_STREAM_IDLE_TIMEOUT_MS) || 90_000);
 			let idleHandle: NodeJS.Timeout | undefined;
 			const armIdle = () => {
 				if (idleHandle) clearTimeout(idleHandle);
@@ -334,28 +388,34 @@ export async function runAgentWithConfig(
 				if (!line.trim()) return;
 				try {
 					const event = JSON.parse(line);
-					
+
 					// Handle text delta events (for output accumulation and legacy callbacks)
-					if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+					if (
+						event.type === "message_update" &&
+						event.assistantMessageEvent?.type === "text_delta"
+					) {
 						const delta = event.assistantMessageEvent.delta;
 						output += delta;
-						
+
 						if (onOutput) {
 							onOutput(delta);
 						}
 					}
-					
+
 					// Handle tool call events (for progress visibility)
-					if (event.type === "message_update" && event.assistantMessageEvent?.type === "toolcall_end") {
+					if (
+						event.type === "message_update" &&
+						event.assistantMessageEvent?.type === "toolcall_end"
+					) {
 						const toolCall = event.assistantMessageEvent?.toolCall;
-						
+
 						if (toolCall && toolCall.name && toolCall.arguments) {
 							const toolEvent: ToolEventData = {
 								type: "tool",
 								name: toolCall.name,
 								arguments: toolCall.arguments,
 							};
-							
+
 							if (onOutput) {
 								onOutput(toolEvent);
 							}
@@ -374,7 +434,10 @@ export async function runAgentWithConfig(
 					// arrive on message_end / turn_end / agent_end; dedupe by id.
 					if (event.type === "message_end" || event.type === "turn_end") {
 						accumulateAssistantUsage(event.message);
-					} else if (event.type === "agent_end" && Array.isArray(event.messages)) {
+					} else if (
+						event.type === "agent_end" &&
+						Array.isArray(event.messages)
+					) {
 						for (const m of event.messages) accumulateAssistantUsage(m);
 					}
 
@@ -391,7 +454,11 @@ export async function runAgentWithConfig(
 						finishReason = rawFinishReason;
 						stopReason = rawFinishReason;
 						const fr = rawFinishReason.toLowerCase();
-						if (fr === "length" || fr === "max_tokens" || fr === "output_limit") {
+						if (
+							fr === "length" ||
+							fr === "max_tokens" ||
+							fr === "output_limit"
+						) {
 							limitHit = true;
 						}
 					}
@@ -449,10 +516,16 @@ export async function runAgentWithConfig(
 			}
 		}
 
-		const combinedError = [error || "", finishReason || "", stopReason || "", limitHit ? "token/context/output limit hit" : ""]
+		const combinedError = [
+			error || "",
+			finishReason || "",
+			stopReason || "",
+			limitHit ? "token/context/output limit hit" : "",
+		]
 			.filter(Boolean)
 			.join("\n");
-		const successfulCompletion = !limitHit && (completed || (exitCode === 0 && output.trim().length > 0));
+		const successfulCompletion =
+			!limitHit && (completed || (exitCode === 0 && output.trim().length > 0));
 		return {
 			output: output.trim(),
 			exitCode,
@@ -472,5 +545,3 @@ export async function runAgentWithConfig(
 		}
 	}
 }
-
-

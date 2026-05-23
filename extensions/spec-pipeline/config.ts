@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Value } from "@sinclair/typebox/value";
 import type { Static } from "@sinclair/typebox";
 import {
@@ -25,11 +26,11 @@ import {
  * Model values are actual model identifiers passed directly to the pi CLI.
  */
 export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
-	planDrafter: { model: "gpt-5.5", thinking: "high" },              // Complex planning task
-	implementer: { model: "gpt-5.5", thinking: "high" },              // Complex code generation
-	codeReviewer: { model: "gpt-5.4", thinking: "medium" },           // Review code changes
-	addressReview: { model: "gpt-5.4", thinking: "medium" },          // Fix application — issues already identified by reviewer
-	agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" },  // Fast, cheap commit message generation (R5)
+	planDrafter: { model: "gpt-5.5", thinking: "high" }, // Complex planning task
+	implementer: { model: "gpt-5.5", thinking: "high" }, // Complex code generation
+	codeReviewer: { model: "gpt-5.4", thinking: "medium" }, // Review code changes
+	addressReview: { model: "gpt-5.4", thinking: "medium" }, // Fix application — issues already identified by reviewer
+	agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" }, // Fast, cheap commit message generation (R5)
 } as const;
 
 /** Default code review cycle count. Set to 0 to skip code review. */
@@ -53,7 +54,7 @@ export interface ConfigValidationError {
  */
 export function validateConfig(config: unknown): ConfigValidationError[] {
 	const errors: ConfigValidationError[] = [];
-	
+
 	// Use TypeBox Value.Check for validation
 	if (!Value.Check(SpecPipelineConfigSchema, config)) {
 		// Get detailed errors using Value.Errors
@@ -64,26 +65,25 @@ export function validateConfig(config: unknown): ConfigValidationError[] {
 			});
 		}
 	}
-	
+
 	return errors;
 }
 
 /**
  * Format validation errors for display
  */
-export function formatValidationErrors(errors: ConfigValidationError[]): string {
-	const lines: string[] = [
-		"Invalid spec-pipeline configuration:",
-		"",
-	];
-	
+export function formatValidationErrors(
+	errors: ConfigValidationError[],
+): string {
+	const lines: string[] = ["Invalid spec-pipeline configuration:", ""];
+
 	for (const error of errors) {
 		lines.push(`  • ${error.path || "root"}: ${error.message}`);
 	}
-	
+
 	lines.push("");
 	lines.push("Please fix .pi/spec-pipeline.json and try again.");
-	
+
 	return lines.join("\n");
 }
 
@@ -91,7 +91,9 @@ export function formatValidationErrors(errors: ConfigValidationError[]): string 
 // Configuration Normalization
 // ============================================
 
-function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined): NormalizedReviewCycles {
+function normalizeReviewCycles(
+	userReviewCycles: ReviewCyclesConfig | undefined,
+): NormalizedReviewCycles {
 	return userReviewCycles ?? DEFAULT_REVIEW_CYCLES;
 }
 
@@ -102,7 +104,8 @@ function normalizeReviewCycles(userReviewCycles: ReviewCyclesConfig | undefined)
  */
 function mergeWithDefaults(
 	userModels: ModelsConfig | undefined,
-	userReviewCycles: ReviewCyclesConfig | undefined
+	userReviewCycles: ReviewCyclesConfig | undefined,
+	projectStreamIdleTimeoutMs: number | undefined,
 ): {
 	models: ProjectConfig["models"];
 	reviewCycles: ProjectConfig["reviewCycles"];
@@ -112,14 +115,30 @@ function mergeWithDefaults(
 	const models: ProjectConfig["models"] = {
 		planDrafter: userModels?.planDrafter ?? DEFAULT_MODEL_CONFIGS.planDrafter,
 		implementer: userModels?.implementer ?? DEFAULT_MODEL_CONFIGS.implementer,
-		codeReviewer: userModels?.codeReviewer ?? DEFAULT_MODEL_CONFIGS.codeReviewer,
-		addressReview: userModels?.addressReview ?? DEFAULT_MODEL_CONFIGS.addressReview,
-		agentCommitMessageWriter: userModels?.agentCommitMessageWriter ?? DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
+		codeReviewer:
+			userModels?.codeReviewer ?? DEFAULT_MODEL_CONFIGS.codeReviewer,
+		addressReview:
+			userModels?.addressReview ?? DEFAULT_MODEL_CONFIGS.addressReview,
+		agentCommitMessageWriter:
+			userModels?.agentCommitMessageWriter ??
+			DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
 	};
-	
+
+	// Apply project-level streamIdleTimeoutMs as fallback when per-role isn't set.
+	if (projectStreamIdleTimeoutMs !== undefined) {
+		for (const role of Object.keys(models) as Array<keyof typeof models>) {
+			if (models[role].streamIdleTimeoutMs === undefined) {
+				models[role] = {
+					...models[role],
+					streamIdleTimeoutMs: projectStreamIdleTimeoutMs,
+				};
+			}
+		}
+	}
+
 	// Normalize review cycles to per-reviewer format
 	const reviewCycles = normalizeReviewCycles(userReviewCycles);
-	
+
 	return { models, reviewCycles };
 }
 
@@ -170,63 +189,65 @@ function findFilesMatching(dir: string, patterns: RegExp[]): string[] {
 				}
 			}
 		}
-	} catch { /* ignore */ }
+	} catch {
+		/* ignore */
+	}
 	return results;
 }
 
 /**
  * Discover spec template file in the project.
- * 
+ *
  * Priority:
  * 1. Explicit path from config (specTemplatePath)
- * 2. Files matching *TEMPLATE* or *template* in specs directory
- * 3. Files matching *TEMPLATE* or *template* in common locations
- * 
- * Returns { path, content } or { path: null, content: null }
+ * 2. Files matching *TEMPLATE* or *template* in specs directory / common locations
+ * 3. Built-in fallback template shipped with the extension
+ *
+ * Returns { path, content, builtin } or { path: null, content: null }.
+ * `builtin: true` means the caller should surface a one-time hint telling the
+ * user how to customise it.
  */
 export function discoverSpecTemplate(
 	cwd: string,
 	specsDir: string,
-	explicitPath?: string | null
-): { path: string | null; content: string | null } {
+	explicitPath?: string | null,
+): { path: string | null; content: string | null; builtin?: boolean } {
 	// 1. Explicit path from config
 	if (explicitPath) {
-		const fullPath = path.isAbsolute(explicitPath) 
-			? explicitPath 
+		const fullPath = path.isAbsolute(explicitPath)
+			? explicitPath
 			: path.join(cwd, explicitPath);
 		const content = readTextFile(fullPath);
 		if (content) {
 			return { path: explicitPath, content };
 		}
 	}
-	
+
 	// Null means explicitly disabled
 	if (explicitPath === null) {
 		return { path: null, content: null };
 	}
-	
+
 	// 2. Search in specs directory
-	const templatePatterns = [
-		/template/i,
-	];
-	
+	const templatePatterns = [/template/i];
+
 	const searchDirs = [
 		path.join(cwd, specsDir),
 		path.join(cwd, "docs"),
 		path.join(cwd, "specs"),
 	];
-	
+
 	// Deduplicate directories
 	const seen = new Set<string>();
 	for (const dir of searchDirs) {
 		const resolved = path.resolve(dir);
 		if (seen.has(resolved)) continue;
 		seen.add(resolved);
-		
+
 		const matches = findFilesMatching(dir, templatePatterns);
 		// Prefer files with TEMPLATE in the name (case-insensitive)
 		// Filter out _template.typ (the Typst layout file) - we want the spec template
-		const templateFiles = matches.filter(f => {
+		const templateFiles = matches.filter((f) => {
 			const basename = path.basename(f).toLowerCase();
 			// Must have "template" in the name
 			if (!basename.includes("template")) return false;
@@ -240,7 +261,7 @@ export function discoverSpecTemplate(
 			if (basename.includes("example")) return false;
 			return true;
 		});
-		
+
 		if (templateFiles.length > 0) {
 			// Pick the first match (sorted for determinism)
 			templateFiles.sort();
@@ -252,24 +273,39 @@ export function discoverSpecTemplate(
 			}
 		}
 	}
-	
+
+	// 3. Built-in fallback shipped with the extension
+	const builtinPath = path.join(
+		path.dirname(fileURLToPath(import.meta.url)),
+		"templates",
+		"spec-template.md",
+	);
+	const builtinContent = readTextFile(builtinPath);
+	if (builtinContent) {
+		return {
+			path: "<built-in spec template>",
+			content: builtinContent,
+			builtin: true,
+		};
+	}
+
 	return { path: null, content: null };
 }
 
 /**
  * Discover spec conventions/guide file in the project.
- * 
+ *
  * Priority:
  * 1. Explicit path from config (specConventionsPath)
  * 2. Files matching *guide*spec* or *spec*convention* in specs directory
  * 3. Files matching similar patterns in common locations
- * 
+ *
  * Returns { path, content } or { path: null, content: null }
  */
 export function discoverSpecConventions(
 	cwd: string,
 	specsDir: string,
-	explicitPath?: string | null
+	explicitPath?: string | null,
 ): { path: string | null; content: string | null } {
 	// 1. Explicit path from config
 	if (explicitPath) {
@@ -281,12 +317,12 @@ export function discoverSpecConventions(
 			return { path: explicitPath, content };
 		}
 	}
-	
+
 	// Null means explicitly disabled
 	if (explicitPath === null) {
 		return { path: null, content: null };
 	}
-	
+
 	// 2. Search for convention files
 	const conventionPatterns = [
 		/guide.*spec/i,
@@ -296,25 +332,25 @@ export function discoverSpecConventions(
 		/writing.*spec/i,
 		/spec.*standard/i,
 	];
-	
+
 	const searchDirs = [
 		path.join(cwd, specsDir),
 		path.join(cwd, "docs"),
 		path.join(cwd, "specs"),
 	];
-	
+
 	const seen = new Set<string>();
 	for (const dir of searchDirs) {
 		const resolved = path.resolve(dir);
 		if (seen.has(resolved)) continue;
 		seen.add(resolved);
-		
+
 		const matches = findFilesMatching(dir, conventionPatterns);
-		const conventionFiles = matches.filter(f => {
+		const conventionFiles = matches.filter((f) => {
 			const ext = path.extname(f).toLowerCase();
 			return READABLE_EXTENSIONS.has(ext);
 		});
-		
+
 		if (conventionFiles.length > 0) {
 			conventionFiles.sort();
 			const conventionPath = conventionFiles[0];
@@ -325,13 +361,13 @@ export function discoverSpecConventions(
 			}
 		}
 	}
-	
+
 	return { path: null, content: null };
 }
 
 /**
  * Detect the spec output format.
- * 
+ *
  * Priority:
  * 1. Explicit format from config
  * 2. Extension of the discovered template file
@@ -354,21 +390,23 @@ export function detectSpecFormat(
 /**
  * Configuration loading result
  */
-export type ConfigLoadResult = {
-	success: true;
-	config: ProjectConfig;
-	fromFile: boolean;
-} | {
-	success: false;
-	error: string;
-};
+export type ConfigLoadResult =
+	| {
+			success: true;
+			config: ProjectConfig;
+			fromFile: boolean;
+	  }
+	| {
+			success: false;
+			error: string;
+	  };
 
 /**
  * Build complete ProjectConfig from validated raw config
  */
 function buildProjectConfig(
 	cwd: string,
-	config: Static<typeof SpecPipelineConfigSchema>
+	config: Static<typeof SpecPipelineConfigSchema>,
 ): ProjectConfig {
 	// Detect specs directory (existing logic)
 	let specsDir = config.specsDir;
@@ -389,11 +427,15 @@ function buildProjectConfig(
 	if (!testCommand) {
 		if (fs.existsSync(path.join(cwd, "package.json"))) {
 			try {
-				const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf-8"));
+				const pkg = JSON.parse(
+					fs.readFileSync(path.join(cwd, "package.json"), "utf-8"),
+				);
 				if (pkg.scripts?.test) {
 					testCommand = "npm test";
 				}
-			} catch { /* ignore */ }
+			} catch {
+				/* ignore */
+			}
 		}
 		if (!testCommand && fs.existsSync(path.join(cwd, "Cargo.toml"))) {
 			testCommand = "cargo test";
@@ -437,19 +479,25 @@ function buildProjectConfig(
 				const content = fs.readFileSync(filePath, "utf-8");
 				if (content.trim().length > 100) {
 					foundFiles.push(file);
-					const truncated = content.length > 5000 
-						? content.slice(0, 5000) + "\n\n[... truncated ...]" 
-						: content;
+					const truncated =
+						content.length > 5000
+							? content.slice(0, 5000) + "\n\n[... truncated ...]"
+							: content;
 					projectContext += `### From ${file}:\n\n${truncated}\n\n`;
 				}
-			} catch { /* ignore */ }
+			} catch {
+				/* ignore */
+			}
 		}
 	}
 
 	if (foundFiles.length === 0) {
-		projectContext = "## Project Context\n\nNo project documentation found. Explore the codebase to understand conventions.\n";
+		projectContext =
+			"## Project Context\n\nNo project documentation found. Explore the codebase to understand conventions.\n";
 	} else {
-		projectContext = `## Project Context\n\nFound documentation in: ${foundFiles.join(", ")}\n\n` + projectContext;
+		projectContext =
+			`## Project Context\n\nFound documentation in: ${foundFiles.join(", ")}\n\n` +
+			projectContext;
 	}
 
 	// Snapshot the docs-only context before appending sections that don't apply
@@ -466,20 +514,31 @@ function buildProjectConfig(
 
 	// Discover spec template, conventions, and output format
 	const template = discoverSpecTemplate(cwd, specsDir, config.specTemplatePath);
-	const conventions = discoverSpecConventions(cwd, specsDir, config.specConventionsPath);
+	if (template.builtin) {
+		console.log(
+			`ℹ️  spec-pipeline: using built-in spec template. Drop a *template*.md under \`${specsDir}/\` (or set \`specTemplatePath\` in .pi/spec-pipeline.json) to customise.`,
+		);
+	}
+	const conventions = discoverSpecConventions(
+		cwd,
+		specsDir,
+		config.specConventionsPath,
+	);
 	const specFormat = detectSpecFormat(config.specFormat, template.path);
 
 	if (template.content) {
-		const truncatedTemplate = template.content.length > 8000
-			? template.content.slice(0, 8000) + "\n\n[... truncated ...]"
-			: template.content;
+		const truncatedTemplate =
+			template.content.length > 8000
+				? template.content.slice(0, 8000) + "\n\n[... truncated ...]"
+				: template.content;
 		projectContext += `\n## Spec Template (from ${template.path})\n\nUse this template as the basis for new specifications:\n\n\`\`\`\n${truncatedTemplate}\n\`\`\`\n`;
 	}
 
 	if (conventions.content) {
-		const truncatedConventions = conventions.content.length > 8000
-			? conventions.content.slice(0, 8000) + "\n\n[... truncated ...]"
-			: conventions.content;
+		const truncatedConventions =
+			conventions.content.length > 8000
+				? conventions.content.slice(0, 8000) + "\n\n[... truncated ...]"
+				: conventions.content;
 		projectContext += `\n## Spec Conventions (from ${conventions.path})\n\nFollow these conventions when writing specs:\n\n\`\`\`\n${truncatedConventions}\n\`\`\`\n`;
 	}
 
@@ -487,7 +546,8 @@ function buildProjectConfig(
 	// Note: commitMessageWriter in config.models is silently ignored (R5a)
 	const { models, reviewCycles } = mergeWithDefaults(
 		config.models,
-		config.reviewCycles
+		config.reviewCycles,
+		config.streamIdleTimeoutMs,
 	);
 
 	// Skip plan generation (experimental A/B testing)
@@ -508,6 +568,7 @@ function buildProjectConfig(
 		models,
 		reviewCycles,
 		skipPlanGeneration,
+		streamIdleTimeoutMs: config.streamIdleTimeoutMs,
 	};
 }
 
@@ -519,7 +580,7 @@ export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 	const configPath = path.join(cwd, ".pi", "spec-pipeline.json");
 	let rawConfig: unknown = {};
 	let fromFile = false;
-	
+
 	if (fs.existsSync(configPath)) {
 		fromFile = true;
 		try {
@@ -533,7 +594,7 @@ export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 				error: `Failed to parse .pi/spec-pipeline.json: ${parseError}`,
 			};
 		}
-		
+
 		// Validate against schema (R4)
 		const validationErrors = validateConfig(rawConfig);
 		if (validationErrors.length > 0) {
@@ -543,10 +604,10 @@ export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 			};
 		}
 	}
-	
+
 	// Cast to typed config after validation
 	const typedConfig = rawConfig as Static<typeof SpecPipelineConfigSchema>;
-	
+
 	return {
 		success: true,
 		config: buildProjectConfig(cwd, typedConfig),
