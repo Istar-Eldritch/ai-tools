@@ -1,4 +1,5 @@
 .pi/spec-pipeline
+.pi/spec-pipeline.json
 /node_modules
 */target
 rag/.fastembed_cache/
