@@ -21,46 +21,38 @@ export default function (pi: ExtensionAPI) {
 	const getConfig = () => config;
 	const getProvider = () => provider;
 
-	pi.on("session_start", async (_event, ctx) => {
-		config = resolveConfig(ctx.cwd);
-
-		try {
-			const db = await openDatabase(config.dataDir);
-
-			// Initialize embedding provider
-			provider = new EmbeddingProvider(
-				config.embeddingModel,
-				config.embeddingDim,
-			);
-			await provider.init();
-
-			// Check stored config for model mismatch (R9)
-			const stored = await getConfigRow(db);
-			if (stored) {
-				if (
-					stored.embedding_model !== config.embeddingModel ||
-					stored.embedding_dim !== config.embeddingDim
-				) {
-					ctx.ui.notify(
-						`[huginn] Model mismatch detected: stored ${stored.embedding_model} (${stored.embedding_dim}d) vs config ${config.embeddingModel} (${config.embeddingDim}d). ` +
-							`Run /huginn-reindex to rebuild the index. Auto-retrieval is disabled until reindex.`,
-						"warning",
-					);
-				}
-			} else {
-				// First run — seed the config row
-				await setConfigRow(db, config.embeddingModel, config.embeddingDim);
+	const initialize = async (cwd: string): Promise<void> => {
+		config = resolveConfig(cwd);
+		const db = await openDatabase(config.dataDir);
+		provider = new EmbeddingProvider(
+			config.embeddingModel,
+			config.embeddingDim,
+		);
+		await provider.init();
+		const stored = await getConfigRow(db);
+		if (stored) {
+			if (
+				stored.embedding_model !== config.embeddingModel ||
+				stored.embedding_dim !== config.embeddingDim
+			) {
+				console.warn(
+					`[huginn] Model mismatch: stored ${stored.embedding_model} (${stored.embedding_dim}d) vs config ${config.embeddingModel} (${config.embeddingDim}d). Run /huginn-reindex.`,
+				);
 			}
-
-			ctx.ui.notify(
-				`[huginn] Ready — ${config.embeddingModel} (${config.embeddingDim}d) on PGlite`,
-				"info",
-			);
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			console.error("[huginn] session_start failed:", msg);
-			ctx.ui.notify(`[huginn] Initialization failed: ${msg}`, "error");
+		} else {
+			await setConfigRow(db, config.embeddingModel, config.embeddingDim);
 		}
+	};
+
+	pi.on("session_start", (_event, ctx) => {
+		config = resolveConfig(ctx.cwd);
+		if (!config.autoIngestion && !config.autoRetrieval) {
+			return;
+		}
+		initialize(ctx.cwd).catch((err) => {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error("[huginn] background init failed:", msg);
+		});
 	});
 
 	pi.on("session_shutdown", async (_event, _ctx) => {
