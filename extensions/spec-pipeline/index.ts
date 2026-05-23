@@ -167,6 +167,7 @@ import {
 
 // Import review
 import { retryFailedOperation } from "./review.ts";
+import { runAgentWithConfig } from "./agents.ts";
 
 // Import pipelines
 import { runSpecPipeline } from "./spec-pipeline.ts";
@@ -455,6 +456,16 @@ export default function (pi: ExtensionAPI) {
 	/** Number of conversation exchanges in current mode */
 	let exchangeCount = 0;
 
+	// Extension-driven discovery Q&A loop state
+	/** True while the extension is running the structured Q&A loop for discovery */
+	let discoveryLoopActive = false;
+	/** Accumulated Q&A pairs for the current discovery loop */
+	let discoveryQAPairs: Array<{ question: string; answer: string }> = [];
+	/** The question the extension just injected — waiting for the user's answer */
+	let pendingDiscoveryQuestion: string | null = null;
+	/** AbortController for the in-flight discovery subagent call */
+	let discoveryLoopAbort: AbortController | null = null;
+
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
 	let pendingScopingContext: string | undefined;
 
@@ -642,6 +653,14 @@ export default function (pi: ExtensionAPI) {
 		pendingImplementFlags = null;
 		pendingImplementShortName = null;
 		pendingImplementTimestamp = null;
+		// Clear discovery loop state
+		discoveryLoopActive = false;
+		discoveryQAPairs = [];
+		pendingDiscoveryQuestion = null;
+		if (discoveryLoopAbort) {
+			discoveryLoopAbort.abort();
+			discoveryLoopAbort = null;
+		}
 		return result;
 	}
 
@@ -717,6 +736,154 @@ IMPORTANT: You are in DISCOVERY MODE.
 - If the user asks you to proceed, start planning, or implement, tell them to type ${doneCommand} instead.
 - Your only valid outputs are: (a) one assumption proposal, (b) a request for clarification, or (c) the instruction to type ${doneCommand} when discovery is complete.
 `;
+	}
+
+	/**
+	 * Build the system prompt for a single extension-driven discovery question.
+	 * The agent must output either:
+	 *   - A single question/assumption (free text)
+	 *   - The exact token READY_TO_DRAFT on its own line when it has enough context
+	 */
+	function buildDiscoveryQuestionSystemPrompt(
+		state: ConversationalPipelineState,
+		projectConfig: ProjectConfig,
+		qaPairs: Array<{ question: string; answer: string }>,
+		parentContext?: string,
+	): string {
+		const { projectContext } = projectConfig;
+
+		const historyBlock =
+			qaPairs.length > 0
+				? `\n## Discovery So Far\n\n${qaPairs.map((p, i) => `Q${i + 1}: ${p.question}\nA${i + 1}: ${p.answer}`).join("\n\n")}\n`
+				: "";
+
+		const scopingBlock = state.discovery?.discoverySummary
+			? `\n## Prior Scoping Context\n\n${state.discovery.discoverySummary}\n`
+			: "";
+
+		const parentBlock = parentContext
+			? `\n## Parent Context\n\n${parentContext}\n`
+			: "";
+
+		return `You are a requirements discovery expert.\n\n${projectContext}${scopingBlock}${parentBlock}\n## Task\n\nFeature being explored: ${state.description}\n${historyBlock}\n## Instructions\n\nExplore the codebase (read, bash, grep, find, ls) to understand the context, then output ONE of the following:\n\n1. Your single most important clarifying question or assumption proposal, grounded in codebase evidence.\n   Format it naturally — state your assumption, explain your reasoning, and ask the user to confirm or correct.\n   Do NOT number the question or use headers. Do NOT ask multiple questions.\n\n2. The exact token READY_TO_DRAFT on its own line — only when you have gathered enough context to write a thorough spec.\n\nOutput ONLY the question/assumption text OR the token READY_TO_DRAFT. Nothing else.`;
+	}
+
+	/**
+	 * Run one step of the extension-driven discovery loop.
+	 * Calls the discovery subagent, then either injects the question into the
+	 * conversation (awaiting user answer) or transitions to drafting if READY_TO_DRAFT.
+	 */
+	async function runDiscoveryStep(
+		ctx: any,
+		sessionLabel: string,
+		nextStep: string,
+	): Promise<void> {
+		if (!activePipelineState || !activeCwd || !activeProjectConfig) return;
+
+		const state = activePipelineState;
+		const cwd = activeCwd;
+		const projectConfig = activeProjectConfig;
+
+		ctx.ui.notify(`🔍 Exploring codebase to form next question...`, "info");
+
+		discoveryLoopAbort = new AbortController();
+		const systemPrompt = buildDiscoveryQuestionSystemPrompt(
+			state,
+			projectConfig,
+			discoveryQAPairs,
+			activeParentContext,
+		);
+
+		const result = await runAgentWithConfig(
+			projectConfig.models.planDrafter,
+			`Conduct one step of requirements discovery for: ${state.description}`,
+			cwd,
+			systemPrompt,
+			discoveryLoopAbort.signal,
+			undefined,
+			"brainstormAgent",
+		);
+		discoveryLoopAbort = null;
+
+		if (!result.output.trim()) {
+			ctx.ui.notify(
+				"Discovery agent returned empty output. Type /discovery-done to proceed.",
+				"warning",
+			);
+			return;
+		}
+
+		const output = result.output.trim();
+
+		if (output === "READY_TO_DRAFT") {
+			// Sync Q&A pairs into the state's conversation history so /discovery-done works
+			if (!state.discovery!.conversationHistory) {
+				state.discovery!.conversationHistory = [];
+			}
+			for (const pair of discoveryQAPairs) {
+				state.discovery!.conversationHistory.push({
+					userMessage: pair.answer,
+					assistantResponse: pair.question,
+					timestamp: new Date().toISOString(),
+				});
+			}
+			exchangeCount = state.discovery!.conversationHistory.length;
+			activeStateSaveFn?.();
+
+			ctx.ui.notify(
+				`✅ Discovery complete (${discoveryQAPairs.length} questions). Transitioning to ${nextStep}...`,
+				"success",
+			);
+			discoveryLoopActive = false;
+			pendingDiscoveryQuestion = null;
+
+			// Trigger the same transition that /discovery-done uses
+			await handleDiscoveryDone(ctx, sessionLabel);
+			return;
+		}
+
+		// It's a question — display via notify only (no pi.sendUserMessage, which
+		// would trigger a host agent turn to reply to it).
+		pendingDiscoveryQuestion = output;
+		ctx.ui.notify(
+			`\n💬 Question ${discoveryQAPairs.length + 1}\n\n${output}\n\n➔ Type your answer below:`,
+			"info",
+		);
+	}
+
+	/**
+	 * Shared handler for completing discovery — called both by /discovery-done
+	 * and automatically when the agent signals READY_TO_DRAFT.
+	 */
+	async function handleDiscoveryDone(
+		ctx: any,
+		sessionLabel: string,
+	): Promise<void> {
+		if (
+			pipelineMode !== "discovery" ||
+			!activePipelineKind ||
+			!activePipelineState ||
+			!activeCwd ||
+			!activeProjectConfig
+		) {
+			ctx.ui.notify("No active discovery session.", "error");
+			return;
+		}
+
+		discoveryLoopActive = false;
+		pendingDiscoveryQuestion = null;
+		if (discoveryLoopAbort) {
+			discoveryLoopAbort.abort();
+			discoveryLoopAbort = null;
+		}
+
+		if (activePipelineKind === "spec") {
+			await endDiscoveryAndStartDrafting(ctx);
+		} else {
+			// Delegate to the existing /discovery-done handler for hierarchy/implement
+			// by invoking the shared endDiscoveryForKind logic inline
+			// (for now: fall through to the existing handler which re-checks state)
+		}
 	}
 
 	/**
@@ -1581,6 +1748,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			customType = "spec-scoping-context";
 			contextLabel = `[SCOPING MODE ACTIVE - Assessing scope for: ${activeScopingState.description}]`;
 		} else if (pipelineMode === "discovery" && activePipelineState) {
+			// When the extension-driven loop is active, the host agent must not run
+			// — the subagent in runDiscoveryStep handles question generation.
+			if (discoveryLoopActive) {
+				return undefined;
+			}
+
 			let sessionLabel = "Spec";
 			let nextStep = "proceed to spec drafting";
 
@@ -1645,7 +1818,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	});
 
 	/**
-	 * Capture user input during any conversational mode to track conversation
+	 * Capture user input during any conversational mode to track conversation.
+	 * When the extension-driven discovery loop is active, intercept the user's
+	 * answer, record the Q&A pair, and trigger the next discovery step instead
+	 * of letting the host agent respond.
 	 */
 	pi.on("input", async (event, ctx) => {
 		if (pipelineMode === "idle") {
@@ -1655,6 +1831,36 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		// Don't intercept extension-injected messages
 		if (event.source === "extension") {
 			return { action: "continue" as const };
+		}
+
+		// Extension-driven discovery loop: capture answer and run next step
+		if (discoveryLoopActive && pendingDiscoveryQuestion !== null) {
+			const answer = event.text.trim();
+
+			// Allow /discovery-done to break out even during the loop
+			if (!answer.startsWith("/")) {
+				discoveryQAPairs.push({
+					question: pendingDiscoveryQuestion,
+					answer,
+				});
+				pendingDiscoveryQuestion = null;
+
+				let sessionLabel = "Spec";
+				let nextStep = "spec drafting";
+				if (activePipelineKind === "hierarchy") {
+					sessionLabel =
+						activeHierarchyLevel!.charAt(0).toUpperCase() +
+						activeHierarchyLevel!.slice(1);
+					nextStep = `${activeHierarchyLevel} drafting`;
+				} else if (activePipelineKind === "implement") {
+					sessionLabel = "Implementation";
+					nextStep = "implementation";
+				}
+
+				// Suppress the host agent — extension handles the next turn
+				setImmediate(() => runDiscoveryStep(ctx, sessionLabel, nextStep));
+				return { action: "handled" as const };
+			}
 		}
 
 		// Store the user message for pairing with assistant response
@@ -1785,6 +1991,30 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			) {
 				ctx.ui.notify("No active discovery session.", "error");
 				return;
+			}
+
+			// Stop the extension-driven loop and flush any partial Q&A into history
+			if (discoveryLoopActive) {
+				discoveryLoopActive = false;
+				pendingDiscoveryQuestion = null;
+				if (discoveryLoopAbort) {
+					discoveryLoopAbort.abort();
+					discoveryLoopAbort = null;
+				}
+				if (!activePipelineState!.discovery!.conversationHistory) {
+					activePipelineState!.discovery!.conversationHistory = [];
+				}
+				for (const pair of discoveryQAPairs) {
+					activePipelineState!.discovery!.conversationHistory.push({
+						userMessage: pair.answer,
+						assistantResponse: pair.question,
+						timestamp: new Date().toISOString(),
+					});
+				}
+				exchangeCount =
+					activePipelineState!.discovery!.conversationHistory.length;
+				discoveryQAPairs = [];
+				activeStateSaveFn?.();
 			}
 
 			if (exchangeCount === 0) {
@@ -2179,21 +2409,19 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					"info",
 				);
 				ctx.ui.notify(
-					"The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.",
+					"The extension will ask questions one at a time. Answer each one and the next will follow automatically.",
 					"info",
 				);
 				ctx.ui.notify(
-					"When you're satisfied with the discovery, type /discovery-done to proceed to spec drafting.",
+					"Type /discovery-done at any time to skip to spec drafting.",
 					"info",
 				);
 
-				// Send the initial discovery message to kick off the conversation
-				const scopingNote = scopingContext
-					? `\n\nThe following context was gathered during a scoping assessment:\n\n${scopingContext}\n\nPlease take this into account when forming your assumptions.`
-					: "";
-				pi.sendUserMessage(
-					`I want to build the following feature: ${description}${scopingNote}\n\nPlease explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`,
-				);
+				// Start the extension-driven Q&A loop
+				discoveryLoopActive = true;
+				discoveryQAPairs = [];
+				pendingDiscoveryQuestion = null;
+				setImmediate(() => runDiscoveryStep(ctx, "Spec", "spec drafting"));
 			} else {
 				// --quick mode: enter conversational drafting directly
 				enterDraftingMode(state, cwd, projectConfig, ctx);
