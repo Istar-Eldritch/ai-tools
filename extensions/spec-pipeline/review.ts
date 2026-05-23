@@ -15,7 +15,7 @@ import type {
 	AgentOutputEvent,
 	RoleName,
 } from "./types.ts";
-import { runAgentWithConfig } from "./agents.ts";
+import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
 import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 
@@ -316,6 +316,7 @@ export async function retryFailedOperation(
 		ui: {
 			notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
 			confirm: (title: string, message: string) => Promise<boolean>;
+			setWidget?: (id: string, content: string[] | undefined) => void;
 		};
 	}
 ): Promise<boolean> {
@@ -348,13 +349,20 @@ export async function retryFailedOperation(
 		return false;
 	}
 	
+	const progressCallback = createProgressCallback(
+		{ ui: { notify: ctx.ui.notify, setWidget: ctx.ui.setWidget ?? (() => {}) } } as import("./types.ts").PipelineUIContext,
+		state as import("./types.ts").ImplementationState,
+		`Retry ${error.role}`,
+		error.role !== "codeReviewer",
+	);
+
 	const result = await runAgentWithConfig(
 		modelConfig,
 		error.agentTask,
 		cwd,
 		systemPrompt,
 		undefined,
-		undefined,
+		progressCallback,
 		error.role
 	);
 	
