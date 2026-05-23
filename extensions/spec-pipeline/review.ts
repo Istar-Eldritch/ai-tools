@@ -42,7 +42,8 @@ export function parseVerdict(output: string): ReviewVerdict {
 	// Anchored marker: **Verdict**: X / **Status**: X / Verdict: X / Status: X
 	// Use the LAST marker line (a re-emitted final verdict at the end of the
 	// review wins over an earlier draft verdict).
-	const markerRegex = /(?:\*\*\s*)?(?:VERDICT|STATUS)(?:\s*\*\*)?\s*:\s*([A-Z_ |/,]+)/g;
+	const markerRegex =
+		/(?:\*\*\s*)?(?:VERDICT|STATUS)(?:\s*\*\*)?\s*:\s*([A-Z_ |/,]+)/g;
 	let lastMarkerValue: string | undefined;
 	let markerMatch: RegExpExecArray | null;
 	while ((markerMatch = markerRegex.exec(normalized)) !== null) {
@@ -65,7 +66,11 @@ export function parseVerdict(output: string): ReviewVerdict {
 	if (approvedMatch) return "APPROVED";
 	if (needsChangesMatch) return "NEEDS_CHANGES";
 
-	if (normalized.includes("CHANGES_REQUESTED") || normalized.includes("NEEDS_WORK") || normalized.includes("NEEDS WORK")) {
+	if (
+		normalized.includes("CHANGES_REQUESTED") ||
+		normalized.includes("NEEDS_WORK") ||
+		normalized.includes("NEEDS WORK")
+	) {
 		return "NEEDS_CHANGES";
 	}
 	if (normalized.includes("READY") && !normalized.includes("NEEDS")) {
@@ -83,7 +88,10 @@ function classifyVerdictToken(token: string): ReviewVerdict | undefined {
 	// that the model sometimes parrots from the prompt template.
 	const cleaned = token.replace(/[|/,.;:]+/g, " ").trim();
 	const hasApproved = /\bAPPROVED\b/.test(cleaned);
-	const hasNeedsChanges = /\b(NEEDS_CHANGES|NEEDS\s+CHANGES|CHANGES_REQUESTED|NEEDS_WORK|NEEDS\s+WORK)\b/.test(cleaned);
+	const hasNeedsChanges =
+		/\b(NEEDS_CHANGES|NEEDS\s+CHANGES|CHANGES_REQUESTED|NEEDS_WORK|NEEDS\s+WORK)\b/.test(
+			cleaned,
+		);
 	const hasReady = /\bREADY\b/.test(cleaned);
 
 	if (hasApproved && hasNeedsChanges) return undefined; // template parrot — let caller decide
@@ -165,10 +173,28 @@ export interface ReviewOperation {
  */
 export async function runReview(
 	ctx: ReviewContext,
-	operation: ReviewOperation
+	operation: ReviewOperation,
 ): Promise<ReviewResult> {
-	const { cwd, projectConfig, systemPrompts, state, saveFn, phaseIndex, docName, notify, onOutput, signal, recordCall, recordReviewOutput } = ctx;
-	const { role, reviewTask, fixTask, runAddressReviewOnSignificantIssues = false } = operation;
+	const {
+		cwd,
+		projectConfig,
+		systemPrompts,
+		state,
+		saveFn,
+		phaseIndex,
+		docName,
+		notify,
+		onOutput,
+		signal,
+		recordCall,
+		recordReviewOutput,
+	} = ctx;
+	const {
+		role,
+		reviewTask,
+		fixTask,
+		runAddressReviewOnSignificantIssues = false,
+	} = operation;
 	const reviewerConfig = projectConfig.models[role];
 	const addressReviewConfig = projectConfig.models.addressReview;
 	const maxCycles = projectConfig.reviewCycles;
@@ -177,7 +203,12 @@ export async function runReview(
 
 	if (maxCycles === 0) {
 		notify(`${roleEmoji} Skipping ${role} (cycles: 0)`, "info");
-		return { verdict: "APPROVED", lastReviewOutput: "", cyclesCompleted: 0, hadError: false };
+		return {
+			verdict: "APPROVED",
+			lastReviewOutput: "",
+			cyclesCompleted: 0,
+			hadError: false,
+		};
 	}
 
 	let lastReviewOutput = "";
@@ -185,7 +216,10 @@ export async function runReview(
 	(state as ImplementationState).reviewCyclesCompleted = 0;
 	saveFn();
 
-	notify(`${roleEmoji}${phaseCtx} Starting ${role} (${reviewerConfig.model}/${reviewerConfig.thinking}, cycles: ${maxCycles})`, "info");
+	notify(
+		`${roleEmoji}${phaseCtx} Starting ${role} (${reviewerConfig.model}/${reviewerConfig.thinking}, cycles: ${maxCycles})`,
+		"info",
+	);
 
 	for (let cycle = 1; cycle <= maxCycles; cycle++) {
 		cyclesCompleted = cycle;
@@ -193,7 +227,15 @@ export async function runReview(
 		saveFn();
 
 		notify(`${phaseCtx} Review cycle ${cycle}/${maxCycles}`, "info");
-		await createCheckpointAndSave(cwd, state, role, saveFn, phaseIndex, cycle, notify);
+		await createCheckpointAndSave(
+			cwd,
+			state,
+			role,
+			saveFn,
+			phaseIndex,
+			cycle,
+			notify,
+		);
 
 		const reviewStartTime = new Date();
 		// Keep the user message byte-identical across cycles so prompt-cache prefixes
@@ -208,7 +250,7 @@ export async function runReview(
 			systemPrompts[role],
 			signal,
 			onOutput,
-			role
+			role,
 		);
 		recordCall?.({
 			role,
@@ -220,14 +262,37 @@ export async function runReview(
 			usage: reviewResult.usage,
 		});
 
-		if (reviewResult.exitCode !== 0 || reviewResult.completed === false || reviewResult.limitHit) {
-			await handleAgentError(cwd, state, reviewResult, reviewerConfig.model, role, reviewTask, phaseIndex, cycle, notify, saveFn);
-			return { verdict: "NEEDS_CHANGES", lastReviewOutput, cyclesCompleted, hadError: true };
+		if (
+			reviewResult.exitCode !== 0 ||
+			reviewResult.completed === false ||
+			reviewResult.limitHit
+		) {
+			await handleAgentError(
+				cwd,
+				state,
+				reviewResult,
+				reviewerConfig.model,
+				role,
+				reviewTask,
+				phaseIndex,
+				cycle,
+				notify,
+				saveFn,
+			);
+			return {
+				verdict: "NEEDS_CHANGES",
+				lastReviewOutput,
+				cyclesCompleted,
+				hadError: true,
+			};
 		}
 
 		lastReviewOutput = reviewResult.output;
 		const verdict = parseVerdict(lastReviewOutput);
-		notify(`${phaseCtx} Review cycle ${cycle}/${maxCycles} verdict: ${verdict}`, "info");
+		notify(
+			`${phaseCtx} Review cycle ${cycle}/${maxCycles} verdict: ${verdict}`,
+			"info",
+		);
 
 		recordReviewOutput?.({
 			role,
@@ -238,15 +303,26 @@ export async function runReview(
 		});
 
 		if (verdict === "APPROVED") {
-			return { verdict: "APPROVED", lastReviewOutput, cyclesCompleted, hadError: false };
+			return {
+				verdict: "APPROVED",
+				lastReviewOutput,
+				cyclesCompleted,
+				hadError: false,
+			};
 		}
 
 		// Apply fixes after NEEDS_CHANGES. Do this even on the last cycle so the
 		// final tree reflects the latest feedback before proceeding.
-		if (runAddressReviewOnSignificantIssues && hasSignificantIssues(lastReviewOutput)) {
+		if (
+			runAddressReviewOnSignificantIssues &&
+			hasSignificantIssues(lastReviewOutput)
+		) {
 			notify(`${phaseCtx} Found significant issues - applying fix`, "info");
 		}
-		notify(`${phaseCtx} Applying fixes (${addressReviewConfig.model})...`, "info");
+		notify(
+			`${phaseCtx} Applying fixes (${addressReviewConfig.model})...`,
+			"info",
+		);
 
 		const fixTaskText = fixTask(lastReviewOutput);
 		const fixStartTime = new Date();
@@ -257,7 +333,7 @@ export async function runReview(
 			systemPrompts.addressReview,
 			signal,
 			onOutput,
-			"addressReview"
+			"addressReview",
 		);
 		recordCall?.({
 			role: "addressReview",
@@ -269,9 +345,29 @@ export async function runReview(
 			usage: fixResult.usage,
 		});
 
-		if (fixResult.exitCode !== 0 || fixResult.completed === false || fixResult.limitHit) {
-			await handleAgentError(cwd, state, fixResult, addressReviewConfig.model, "addressReview", fixTaskText, phaseIndex, cycle, notify, saveFn);
-			return { verdict: "NEEDS_CHANGES", lastReviewOutput, cyclesCompleted, hadError: true };
+		if (
+			fixResult.exitCode !== 0 ||
+			fixResult.completed === false ||
+			fixResult.limitHit
+		) {
+			await handleAgentError(
+				cwd,
+				state,
+				fixResult,
+				addressReviewConfig.model,
+				"addressReview",
+				fixTaskText,
+				phaseIndex,
+				cycle,
+				notify,
+				saveFn,
+			);
+			return {
+				verdict: "NEEDS_CHANGES",
+				lastReviewOutput,
+				cyclesCompleted,
+				hadError: true,
+			};
 		}
 
 		const commitResult = await createAgentCommit(
@@ -288,19 +384,35 @@ export async function runReview(
 			},
 			projectConfig.models.agentCommitMessageWriter,
 			saveFn,
-			notify
+			notify,
 		);
 
 		if (!commitResult.success) {
-			notify(commitResult.usedFallback
-				? "Commit message generation failed - fallback used. Pipeline aborted."
-				: "Failed to create agent commit", "error");
-			return { verdict: "NEEDS_CHANGES", lastReviewOutput, cyclesCompleted, hadError: true };
+			notify(
+				commitResult.usedFallback
+					? "Commit message generation failed - fallback used. Pipeline aborted."
+					: "Failed to create agent commit",
+				"error",
+			);
+			return {
+				verdict: "NEEDS_CHANGES",
+				lastReviewOutput,
+				cyclesCompleted,
+				hadError: true,
+			};
 		}
 	}
 
-	notify(`${phaseCtx} Max review cycles reached - fixes applied, proceeding (cycles=${cyclesCompleted})`, "warning");
-	return { verdict: "NEEDS_CHANGES", lastReviewOutput, cyclesCompleted, hadError: false };
+	notify(
+		`${phaseCtx} Max review cycles reached - fixes applied, proceeding (cycles=${cyclesCompleted})`,
+		"warning",
+	);
+	return {
+		verdict: "NEEDS_CHANGES",
+		lastReviewOutput,
+		cyclesCompleted,
+		hadError: false,
+	};
 }
 
 // ============================================
@@ -314,43 +426,65 @@ export async function retryFailedOperation(
 	saveFn: () => void,
 	ctx: {
 		ui: {
-			notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
+			notify: (
+				msg: string,
+				type: "info" | "error" | "success" | "warning",
+			) => void;
 			confirm: (title: string, message: string) => Promise<boolean>;
 			setWidget?: (id: string, content: string[] | undefined) => void;
 		};
-	}
+	},
 ): Promise<boolean> {
 	const error = state.lastError;
 	if (!error || typeof error === "string") return false;
-	
-	const { createSystemPrompts, buildPromptOptions } = await import("./agents-config.ts");
+
+	const { createSystemPrompts, buildPromptOptions } = await import(
+		"./agents-config.ts"
+	);
 	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
-	const systemPrompt = SYSTEM_PROMPTS[error.role as keyof typeof SYSTEM_PROMPTS];
+	const systemPrompt =
+		SYSTEM_PROMPTS[error.role as keyof typeof SYSTEM_PROMPTS];
 	if (!systemPrompt) {
 		ctx.ui.notify(`Unknown role: ${error.role}. Cannot retry.`, "error");
 		return false;
 	}
-	
-	await createCheckpointAndSave(cwd, state, `retry_${error.role}`, saveFn, error.phase, error.cycle, ctx.ui.notify.bind(ctx.ui));
+
+	await createCheckpointAndSave(
+		cwd,
+		state,
+		`retry_${error.role}`,
+		saveFn,
+		error.phase,
+		error.cycle,
+		ctx.ui.notify.bind(ctx.ui),
+	);
 	ctx.ui.notify(`🔄 Retrying ${error.role}...`, "info");
-	
+
 	let modelConfig: ModelConfig;
 	if (error.role === "codeReviewer") {
 		modelConfig = projectConfig.models.codeReviewer;
 	} else if (error.role === "commitMessageWriter") {
 		modelConfig = projectConfig.models.agentCommitMessageWriter;
 	} else {
-		const nonReviewerRole = error.role as keyof Pick<typeof projectConfig.models, "planDrafter" | "implementer" | "addressReview">;
+		const nonReviewerRole = error.role as keyof Pick<
+			typeof projectConfig.models,
+			"planDrafter" | "implementer" | "addressReview"
+		>;
 		modelConfig = projectConfig.models[nonReviewerRole];
 	}
-	
+
 	if (!modelConfig) {
-		ctx.ui.notify(`No model configuration found for role: ${error.role}`, "error");
+		ctx.ui.notify(
+			`No model configuration found for role: ${error.role}`,
+			"error",
+		);
 		return false;
 	}
-	
+
 	const progressCallback = createProgressCallback(
-		{ ui: { notify: ctx.ui.notify, setWidget: ctx.ui.setWidget ?? (() => {}) } } as import("./types.ts").PipelineUIContext,
+		{
+			ui: { notify: ctx.ui.notify, setWidget: ctx.ui.setWidget ?? (() => {}) },
+		} as import("./types.ts").PipelineUIContext,
 		state as import("./types.ts").ImplementationState,
 		`Retry ${error.role}`,
 		error.role !== "codeReviewer",
@@ -363,9 +497,9 @@ export async function retryFailedOperation(
 		systemPrompt,
 		undefined,
 		progressCallback,
-		error.role
+		error.role,
 	);
-	
+
 	if (result.exitCode !== 0) {
 		await handleAgentError(
 			cwd,
@@ -377,11 +511,11 @@ export async function retryFailedOperation(
 			error.phase,
 			error.cycle,
 			ctx.ui.notify.bind(ctx.ui),
-			saveFn
+			saveFn,
 		);
 		return false;
 	}
-	
+
 	state.lastError = undefined;
 	saveFn();
 	ctx.ui.notify(`✅ Retry succeeded for ${error.role}`, "success");
