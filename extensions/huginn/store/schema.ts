@@ -1,5 +1,5 @@
 export function buildSchemaSql(dim: number): string {
-  return `
+	return `
     CREATE EXTENSION IF NOT EXISTS vchord;
 
     CREATE TABLE IF NOT EXISTS huginn_memories (
