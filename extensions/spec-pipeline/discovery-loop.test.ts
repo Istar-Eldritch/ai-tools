@@ -595,6 +595,11 @@ describe("spec discovery loop", () => {
 		expect(pi.sendUserMessage).not.toHaveBeenCalled();
 		expect(
 			notifications.some((entry) =>
+				entry.message.includes("Resuming topic: Should SSO be mandatory"),
+			),
+		).toBe(true);
+		expect(
+			notifications.some((entry) =>
 				entry.message.includes(
 					"Should SSO be mandatory for enterprise tenants?",
 				),
@@ -620,5 +625,112 @@ describe("spec discovery loop", () => {
 		expect(resumedState.discovery?.activeTopic).toBeNull();
 
 		continueDiscovery({ output: "READY_TO_DRAFT" });
+	});
+
+	it("drops an in-flight empty follow-up placeholder when resuming an active topic", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx } = createMockCtx(cwd);
+
+		const state = createInitialSpecState(
+			"Add authentication",
+			"2605231201",
+			"auth",
+			"docs/specs",
+			false,
+			"md",
+		);
+		state.discovery!.activeTopic = {
+			question: "Should enterprise tenants require SSO?",
+			followUps: [
+				{
+					userQuestion: "What happens to local accounts?",
+					agentAnswer: "",
+					timestamp: "2026-05-23T12:06:00.000Z",
+				},
+			],
+			decision: null,
+			timestamp: "2026-05-23T12:05:00.000Z",
+		};
+		saveSpecState(cwd, state);
+
+		await pi.commands.get("spec-resume")!.handler(state.id, ctx);
+
+		const resumedState = loadSpecState(cwd, state.id)!;
+		expect(resumedState.discovery?.activeTopic?.followUps).toEqual([]);
+		expect(mockRunAgentWithConfig).not.toHaveBeenCalled();
+		expect(pi.sendUserMessage).not.toHaveBeenCalled();
+	});
+
+	it("continues discovery on /spec-resume when completed topics exist but no active topic", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx } = createMockCtx(cwd);
+
+		const state = createInitialSpecState(
+			"Add authentication",
+			"2605231202",
+			"auth",
+			"docs/specs",
+			false,
+			"md",
+		);
+		state.discovery!.topics = [
+			{
+				question: "Should local auth remain supported?",
+				followUps: [],
+				decision: "Yes.",
+				timestamp: "2026-05-23T12:00:00.000Z",
+			},
+		];
+		state.discovery!.activeTopic = null;
+		saveSpecState(cwd, state);
+
+		mockRunAgentWithConfig.mockResolvedValueOnce({
+			output: "Should SSO be mandatory?",
+		});
+
+		await pi.commands.get("spec-resume")!.handler(state.id, ctx);
+
+		await vi.waitFor(() => {
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1);
+		});
+		expect(pi.sendUserMessage).not.toHaveBeenCalled();
+
+		const resumedState = loadSpecState(cwd, state.id)!;
+		expect(resumedState.discovery?.topics).toHaveLength(1);
+		expect(resumedState.discovery?.activeTopic?.question).toBe(
+			"Should SSO be mandatory?",
+		);
+	});
+
+	it("uses legacy host-agent resume when no topic-loop state exists", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx } = createMockCtx(cwd);
+
+		const state = createInitialSpecState(
+			"Add authentication",
+			"2605231203",
+			"auth",
+			"docs/specs",
+			false,
+			"md",
+		);
+		state.discovery!.topics = [];
+		state.discovery!.activeTopic = null;
+		saveSpecState(cwd, state);
+
+		await pi.commands.get("spec-resume")!.handler(state.id, ctx);
+
+		expect(mockRunAgentWithConfig).not.toHaveBeenCalled();
+		expect(pi.sendUserMessage).toHaveBeenCalledWith(
+			expect.stringContaining(
+				"I'm resuming the discovery session for: Add authentication",
+			),
+		);
 	});
 });

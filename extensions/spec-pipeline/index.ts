@@ -513,6 +513,44 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	function trimIncompleteFollowUps(topic: DiscoveryTopic): DiscoveryTopic {
+		const followUps = [...topic.followUps];
+		while (
+			followUps.length > 0 &&
+			followUps[followUps.length - 1].agentAnswer.trim().length === 0
+		) {
+			followUps.pop();
+		}
+		return { ...topic, followUps };
+	}
+
+	function previewDiscoveryTopic(question: string): string {
+		const normalized = question.trim().replace(/\s+/g, " ");
+		if (normalized.length <= 80) return normalized;
+		return `${normalized.slice(0, 80)}…`;
+	}
+
+	function restoreSpecDiscoveryLoopFromState(state: SpecState): boolean {
+		const persistedTopics = state.discovery?.topics ?? [];
+		const restoredActiveTopic = state.discovery?.activeTopic
+			? trimIncompleteFollowUps(state.discovery.activeTopic)
+			: null;
+
+		const hasPersistedLoopState =
+			persistedTopics.length > 0 || restoredActiveTopic !== null;
+
+		if (!hasPersistedLoopState) {
+			resetDiscoveryLoopState();
+			return false;
+		}
+
+		discoveryLoopActive = true;
+		discoveryTopics = persistedTopics;
+		activeDiscoveryTopic = restoredActiveTopic;
+		persistDiscoveryLoopState();
+		return true;
+	}
+
 	type DiscoveryReplyClassification = "followup" | "decision";
 
 	function isUnambiguousDiscoveryDecision(reply: string): boolean {
@@ -2912,17 +2950,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				enterSpecMode("discovery", state, cwd, projectConfig);
 				updateModeWidget(ctx);
 
-				const persistedTopics = state.discovery?.topics ?? [];
-				const persistedActiveTopic = state.discovery?.activeTopic ?? null;
-				const hasPersistedLoopState =
-					persistedTopics.length > 0 || persistedActiveTopic !== null;
-
-				if (hasPersistedLoopState) {
-					discoveryLoopActive = true;
-					discoveryTopics = persistedTopics;
-					activeDiscoveryTopic = persistedActiveTopic;
-					persistDiscoveryLoopState();
-
+				if (restoreSpecDiscoveryLoopFromState(state)) {
 					ctx.ui.notify(
 						formatStepBanner(
 							"DISCOVERY MODE RESUMED",
@@ -2938,6 +2966,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 					if (activeDiscoveryTopic) {
 						ctx.ui.notify(
+							`Resuming topic: ${previewDiscoveryTopic(activeDiscoveryTopic.question)}`,
+							"info",
+						);
+						ctx.ui.notify(
 							`\n💬 Resuming pending question ${discoveryTopics.length + 1}\n\n${activeDiscoveryTopic.question}\n\n➔ Type your answer below:`,
 							"info",
 						);
@@ -2947,7 +2979,6 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					return;
 				}
 
-				resetDiscoveryLoopState();
 				ctx.ui.notify(
 					formatStepBanner(
 						"DISCOVERY MODE RESUMED",
@@ -2961,7 +2992,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					"info",
 				);
 
-				// Backward-compatible fallback for older discovery sessions without topic-loop state
+				// Backward-compatible fallback for older discovery sessions without topic-loop state.
 				pi.sendUserMessage(
 					`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`,
 				);
