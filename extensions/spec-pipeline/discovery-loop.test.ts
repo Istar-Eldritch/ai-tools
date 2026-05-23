@@ -210,7 +210,11 @@ describe("spec discovery loop", () => {
 			.mockResolvedValueOnce({
 				output: "Should enterprise tenants require SSO?",
 			})
-			.mockResolvedValueOnce({ output: "FOLLOWUP" });
+			.mockResolvedValueOnce({ output: "FOLLOWUP" })
+			.mockResolvedValueOnce({
+				output:
+					"Optional SSO would allow local accounts to remain available while enterprise tenants configure identity providers.",
+			});
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
 
@@ -227,21 +231,195 @@ describe("spec discovery loop", () => {
 		);
 
 		expect(inputResult).toEqual({ action: "handled" });
-		expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(2);
+		expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3);
 		expect(mockRunAgentWithConfig.mock.calls[1][0]).toBe(
 			testProjectConfig.models.agentCommitMessageWriter,
 		);
 		expect(mockRunAgentWithConfig.mock.calls[1][6]).toBe("commitMessageWriter");
+		expect(mockRunAgentWithConfig.mock.calls[2][0]).toBe(
+			testProjectConfig.models.planDrafter,
+		);
+		expect(mockRunAgentWithConfig.mock.calls[2][6]).toBe("brainstormAgent");
+		expect(mockRunAgentWithConfig.mock.calls[2][3]).toContain(
+			"Do NOT ask or propose a new unrelated discovery topic",
+		);
 
 		const state = getLatestActiveSpecPipeline(cwd)!;
 		expect(state.discovery?.topics).toEqual([]);
 		expect(state.discovery?.activeTopic).toMatchObject({
 			question: "Should enterprise tenants require SSO?",
 			decision: null,
+			followUps: [
+				{
+					userQuestion: "What would optional SSO mean for local accounts?",
+					agentAnswer:
+						"Optional SSO would allow local accounts to remain available while enterprise tenants configure identity providers.",
+				},
+			],
 		});
 		expect(
+			notifications.some((entry) => entry.message.includes("Follow-up answer")),
+		).toBe(true);
+	});
+
+	it("persists an in-flight follow-up placeholder and then fills the answer", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx } = createMockCtx(cwd);
+
+		let resolveFollowUp!: (value: { output: string }) => void;
+		mockRunAgentWithConfig
+			.mockResolvedValueOnce({
+				output: "Should enterprise tenants require SSO?",
+			})
+			.mockResolvedValueOnce({ output: "FOLLOWUP" })
+			.mockImplementationOnce(
+				() =>
+					new Promise<{ output: string }>((resolve) => {
+						resolveFollowUp = resolve;
+					}),
+			);
+
+		await pi.commands.get("spec")!.handler("Add authentication", ctx);
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
+		);
+
+		const inputPromise = pi.events.get("input")!(
+			{
+				text: "What would optional SSO mean for local accounts?",
+				source: "user",
+			},
+			ctx,
+		);
+
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3),
+		);
+
+		let state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.discovery?.activeTopic?.followUps).toMatchObject([
+			{
+				userQuestion: "What would optional SSO mean for local accounts?",
+				agentAnswer: "",
+			},
+		]);
+
+		resolveFollowUp({
+			output: "It allows fallback local login while SSO is configured.",
+		});
+		await expect(inputPromise).resolves.toEqual({ action: "handled" });
+
+		state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.discovery?.activeTopic?.followUps?.[0].agentAnswer).toBe(
+			"It allows fallback local login while SSO is configured.",
+		);
+		expect(state.discovery?.topics).toEqual([]);
+	});
+
+	it("closes the same topic and advances discovery after a follow-up decision", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx } = createMockCtx(cwd);
+
+		mockRunAgentWithConfig
+			.mockResolvedValueOnce({
+				output: "Should enterprise tenants require SSO?",
+			})
+			.mockResolvedValueOnce({ output: "FOLLOWUP" })
+			.mockResolvedValueOnce({
+				output: "It allows fallback local login while SSO is configured.",
+			})
+			.mockResolvedValueOnce({ output: "READY_TO_DRAFT" });
+
+		await pi.commands.get("spec")!.handler("Add authentication", ctx);
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
+		);
+
+		await expect(
+			pi.events.get("input")!(
+				{
+					text: "What would optional SSO mean for local accounts?",
+					source: "user",
+				},
+				ctx,
+			),
+		).resolves.toEqual({ action: "handled" });
+		expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3);
+
+		await expect(
+			pi.events.get("input")!(
+				{ text: "Yes, make SSO optional.", source: "user" },
+				ctx,
+			),
+		).resolves.toEqual({ action: "handled" });
+
+		const state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.discovery?.topics).toHaveLength(1);
+		expect(state.discovery?.topics?.[0]).toMatchObject({
+			question: "Should enterprise tenants require SSO?",
+			decision: "Yes, make SSO optional.",
+			followUps: [
+				{
+					userQuestion: "What would optional SSO mean for local accounts?",
+					agentAnswer:
+						"It allows fallback local login while SSO is configured.",
+				},
+			],
+		});
+		expect(state.discovery?.activeTopic).toBeNull();
+
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(4),
+		);
+		expect(mockRunAgentWithConfig.mock.calls[3][0]).toBe(
+			testProjectConfig.models.planDrafter,
+		);
+		expect(mockRunAgentWithConfig.mock.calls[3][6]).toBe("brainstormAgent");
+	});
+
+	it("removes the placeholder and keeps the topic open when the follow-up agent fails", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx, notifications } = createMockCtx(cwd);
+
+		mockRunAgentWithConfig
+			.mockResolvedValueOnce({
+				output: "Should enterprise tenants require SSO?",
+			})
+			.mockResolvedValueOnce({ output: "FOLLOWUP" })
+			.mockRejectedValueOnce(new Error("follow-up unavailable"));
+
+		await pi.commands.get("spec")!.handler("Add authentication", ctx);
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
+		);
+
+		const inputResult = pi.events.get("input")!(
+			{
+				text: "What would optional SSO mean for local accounts?",
+				source: "user",
+			},
+			ctx,
+		);
+
+		await expect(inputResult).resolves.toEqual({ action: "handled" });
+		expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3);
+
+		const state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.discovery?.activeTopic).toMatchObject({
+			question: "Should enterprise tenants require SSO?",
+			decision: null,
+			followUps: [],
+		});
+		expect(state.discovery?.topics).toEqual([]);
+		expect(
 			notifications.some((entry) =>
-				entry.message.includes("Follow-up detected"),
+				entry.message.includes("Discovery follow-up agent failed"),
 			),
 		).toBe(true);
 	});

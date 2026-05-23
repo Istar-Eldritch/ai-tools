@@ -612,6 +612,38 @@ Output only FOLLOWUP or DECISION. No punctuation. No explanation.`;
 		return "decision";
 	}
 
+	function buildDiscoveryFollowUpSystemPrompt(
+		state: ConversationalPipelineState,
+		projectConfig: ProjectConfig,
+		topic: DiscoveryTopic,
+		currentFollowUpQuestion: string,
+		parentContext?: string,
+	): string {
+		const { projectContext } = projectConfig;
+
+		const previousFollowUps = topic.followUps
+			.filter((followUp) => followUp.agentAnswer.trim().length > 0)
+			.map(
+				(followUp, i) =>
+					`Follow-up ${i + 1}\nUser: ${followUp.userQuestion}\nDiscovery Agent: ${followUp.agentAnswer}`,
+			)
+			.join("\n\n");
+
+		const previousFollowUpsBlock = previousFollowUps
+			? `\n## Previous Follow-ups in This Topic\n\n${previousFollowUps}\n`
+			: "";
+
+		const parentBlock = parentContext
+			? `\n## Parent Context\n\n${parentContext}\n`
+			: "";
+
+		const scopingBlock = state.discovery?.discoverySummary
+			? `\n## Prior Scoping Context\n\n${state.discovery.discoverySummary}\n`
+			: "";
+
+		return `You are a requirements discovery expert answering a user's follow-up question inside an active discovery topic.\n\n${projectContext}${scopingBlock}${parentBlock}\n## Feature Being Explored\n\n${state.description}\n\n## Active Discovery Topic\n\n${topic.question}\n${previousFollowUpsBlock}\n## User's Current Follow-up Question\n\n${currentFollowUpQuestion}\n\n## Instructions\n\n- Answer only this follow-up question in the context of the active discovery topic.\n- You may explore the codebase with read, bash, grep, find, and ls to ground your answer.\n- Explain relevant tradeoffs, codebase constraints, and options that help the user decide this topic.\n- Do NOT ask or propose a new unrelated discovery topic.\n- Do NOT output READY_TO_DRAFT.\n- End by inviting the user to either ask another follow-up or give their final confirmation/correction for this same topic.\n`;
+	}
+
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
 	let pendingScopingContext: string | undefined;
 
@@ -914,6 +946,94 @@ IMPORTANT: You are in DISCOVERY MODE.
 			: "";
 
 		return `You are a requirements discovery expert.\n\n${projectContext}${scopingBlock}${parentBlock}\n## Task\n\nFeature being explored: ${state.description}\n${historyBlock}\n## Instructions\n\nExplore the codebase (read, bash, grep, find, ls) to understand the context, then output ONE of the following:\n\n1. Your single most important clarifying question or assumption proposal, grounded in codebase evidence.\n   Format it naturally — state your assumption, explain your reasoning, and ask the user to confirm or correct.\n   Do NOT number the question or use headers. Do NOT ask multiple questions.\n\n2. The exact token READY_TO_DRAFT on its own line — only when you have gathered enough context to write a thorough spec.\n\nOutput ONLY the question/assumption text OR the token READY_TO_DRAFT. Nothing else.`;
+	}
+
+	async function runFollowUpStep(
+		ctx: any,
+		followUpQuestion: string,
+		topicAtStart: DiscoveryTopic,
+	): Promise<void> {
+		if (!activePipelineState || !activeCwd || !activeProjectConfig) return;
+		if (!discoveryLoopActive || activeDiscoveryTopic !== topicAtStart) return;
+		if (activePipelineKind !== "spec") return;
+
+		const state = activePipelineState;
+		const cwd = activeCwd;
+		const projectConfig = activeProjectConfig;
+
+		const followUp = {
+			userQuestion: followUpQuestion,
+			agentAnswer: "",
+			timestamp: new Date().toISOString(),
+		};
+
+		activeDiscoveryTopic.followUps.push(followUp);
+		persistDiscoveryLoopState();
+
+		ctx.ui.notify(
+			"🔎 Exploring this follow-up in the current topic...",
+			"info",
+		);
+
+		const followUpAbort = new AbortController();
+		discoveryLoopAbort = followUpAbort;
+
+		try {
+			const result = await runAgentWithConfig(
+				projectConfig.models.planDrafter,
+				`Answer a discovery follow-up for: ${state.description}`,
+				cwd,
+				buildDiscoveryFollowUpSystemPrompt(
+					state,
+					projectConfig,
+					topicAtStart,
+					followUpQuestion,
+					activeParentContext,
+				),
+				followUpAbort.signal,
+				undefined,
+				"brainstormAgent",
+			);
+
+			if (discoveryLoopAbort === followUpAbort) {
+				discoveryLoopAbort = null;
+			}
+
+			// If /discovery-done, /spec-cancel, or another state transition happened while
+			// the subagent was running, do not mutate or notify stale topic state.
+			if (!discoveryLoopActive || activeDiscoveryTopic !== topicAtStart) {
+				return;
+			}
+
+			const answer = result.output.trim();
+			followUp.agentAnswer = answer || "(Discovery agent returned no answer.)";
+			persistDiscoveryLoopState();
+
+			ctx.ui.notify(
+				`\n💬 Follow-up answer\n\n${followUp.agentAnswer}\n\n➔ Ask another follow-up or give your final confirmation/correction for this topic:`,
+				"info",
+			);
+		} catch (error) {
+			if (discoveryLoopAbort === followUpAbort) {
+				discoveryLoopAbort = null;
+			}
+
+			if (!discoveryLoopActive || activeDiscoveryTopic !== topicAtStart) {
+				return;
+			}
+
+			// Preserve a clean resumable topic: the user can retry by asking again, and
+			// the state file will not contain a permanent empty-answer placeholder.
+			activeDiscoveryTopic.followUps = activeDiscoveryTopic.followUps.filter(
+				(entry) => entry !== followUp,
+			);
+			persistDiscoveryLoopState();
+
+			ctx.ui.notify(
+				"Discovery follow-up agent failed. The topic is still open; ask again or type /discovery-done to proceed.",
+				"warning",
+			);
+		}
 	}
 
 	/**
@@ -2020,13 +2140,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 
 				if (classification === "followup") {
-					// Phase 3 will call runFollowUpStep() here. For this phase, keep the topic
-					// open and persist it so the classifier branch is observable and resumable.
-					persistDiscoveryLoopState();
-					ctx.ui.notify(
-						"Follow-up detected. The active discovery topic remains open; follow-up answering is added in Phase 3.",
-						"info",
-					);
+					await runFollowUpStep(ctx, answer, topicAtClassification);
 					return { action: "handled" as const };
 				}
 
