@@ -124,7 +124,7 @@ describe("spec discovery loop", () => {
 		const { default: specPipeline } = await import("./index.ts");
 		const pi = createMockPi();
 		specPipeline(pi as any);
-		const { ctx } = createMockCtx(cwd);
+		const { ctx, notifications } = createMockCtx(cwd);
 
 		let resolveReady: ((value: { output: string }) => void) | null = null;
 		mockRunAgentWithConfig
@@ -163,6 +163,13 @@ describe("spec discovery loop", () => {
 		expect(mockRunAgentWithConfig.mock.calls[1][0]).toBe(
 			testProjectConfig.models.planDrafter,
 		);
+		expect(
+			notifications.some((entry) =>
+				entry.message.includes(
+					"Checking whether this is a follow-up or a decision",
+				),
+			),
+		).toBe(false);
 
 		state = getLatestActiveSpecPipeline(cwd)!;
 		expect(state.discovery?.activeTopic).toBeNull();
@@ -248,6 +255,41 @@ describe("spec discovery loop", () => {
 		mockRunAgentWithConfig
 			.mockResolvedValueOnce({ output: "Should we support local auth?" })
 			.mockRejectedValueOnce(new Error("classifier unavailable"))
+			.mockResolvedValueOnce({ output: "READY_TO_DRAFT" });
+
+		await pi.commands.get("spec")!.handler("Add authentication", ctx);
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
+		);
+
+		const inputResult = await pi.events.get("input")!(
+			{ text: "local auth only for launch", source: "user" },
+			ctx,
+		);
+
+		expect(inputResult).toEqual({ action: "handled" });
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3),
+		);
+
+		const state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.discovery?.topics).toHaveLength(1);
+		expect(state.discovery?.topics?.[0]).toMatchObject({
+			question: "Should we support local auth?",
+			decision: "local auth only for launch",
+		});
+		expect(state.discovery?.activeTopic).toBeNull();
+	});
+
+	it("falls back to decision when the classifier returns malformed output", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx } = createMockCtx(cwd);
+
+		mockRunAgentWithConfig
+			.mockResolvedValueOnce({ output: "Should we support local auth?" })
+			.mockResolvedValueOnce({ output: "MAYBE_DECISION" })
 			.mockResolvedValueOnce({ output: "READY_TO_DRAFT" });
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);

@@ -1986,7 +1986,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				const topicAtClassification = activeDiscoveryTopic;
 				let classification: DiscoveryReplyClassification = "decision";
 
-				if (activePipelineKind === "spec" && activeProjectConfig && activeCwd) {
+				if (
+					activePipelineKind === "spec" &&
+					activeProjectConfig &&
+					activeCwd &&
+					!isUnambiguousDiscoveryDecision(answer)
+				) {
 					const classifierAbort = new AbortController();
 					discoveryLoopAbort = classifierAbort;
 					ctx.ui.notify(
