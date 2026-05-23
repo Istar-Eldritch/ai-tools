@@ -2647,11 +2647,47 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 			}
 
-			// If resuming in conversational discovery mode, re-enter discovery mode
+			// If resuming in discovery mode, restore the structured discovery loop when possible
 			if (state.stage === "discovery" && !state.discovery?.completed) {
 				enterSpecMode("discovery", state, cwd, projectConfig);
 				updateModeWidget(ctx);
 
+				const persistedTopics = state.discovery?.topics ?? [];
+				const persistedActiveTopic = state.discovery?.activeTopic ?? null;
+				const hasPersistedLoopState =
+					persistedTopics.length > 0 || persistedActiveTopic !== null;
+
+				if (hasPersistedLoopState) {
+					discoveryLoopActive = true;
+					discoveryTopics = persistedTopics;
+					activeDiscoveryTopic = persistedActiveTopic;
+					persistDiscoveryLoopState();
+
+					ctx.ui.notify(
+						formatStepBanner(
+							"DISCOVERY MODE RESUMED",
+							`${discoveryTopics.length} completed topics restored.`,
+							"🔍",
+						),
+						"info",
+					);
+					ctx.ui.notify(
+						"Type /discovery-done when ready to proceed to spec drafting.",
+						"info",
+					);
+
+					if (activeDiscoveryTopic) {
+						ctx.ui.notify(
+							`\n💬 Resuming pending question ${discoveryTopics.length + 1}\n\n${activeDiscoveryTopic.question}\n\n➔ Type your answer below:`,
+							"info",
+						);
+					} else {
+						setImmediate(() => runDiscoveryStep(ctx, "Spec", "spec drafting"));
+					}
+					return;
+				}
+
+				resetDiscoveryLoopState();
 				ctx.ui.notify(
 					formatStepBanner(
 						"DISCOVERY MODE RESUMED",
@@ -2665,7 +2701,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					"info",
 				);
 
-				// Send a resume message to kick off the conversation
+				// Backward-compatible fallback for older discovery sessions without topic-loop state
 				pi.sendUserMessage(
 					`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`,
 				);
