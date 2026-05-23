@@ -357,7 +357,7 @@ describe("spec discovery loop", () => {
 			),
 		).resolves.toEqual({ action: "handled" });
 
-		const state = getLatestActiveSpecPipeline(cwd)!;
+		let state = getLatestActiveSpecPipeline(cwd)!;
 		expect(state.discovery?.topics).toHaveLength(1);
 		expect(state.discovery?.topics?.[0]).toMatchObject({
 			question: "Should enterprise tenants require SSO?",
@@ -379,6 +379,24 @@ describe("spec discovery loop", () => {
 			testProjectConfig.models.planDrafter,
 		);
 		expect(mockRunAgentWithConfig.mock.calls[3][6]).toBe("brainstormAgent");
+
+		await vi.waitFor(() => {
+			expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+		});
+
+		state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.stage).toBe("spec_drafting");
+		expect(state.discovery?.discoverySummary).toContain("### Topic 1:");
+		expect(state.discovery?.discoverySummary).toContain(
+			"**Decision:** Yes, make SSO optional.",
+		);
+		expect(state.discovery?.discoverySummary).toContain(
+			"**Supporting thread:**",
+		);
+		expect(state.discovery?.discoverySummary).toContain(
+			"- **Q:** What would optional SSO mean for local accounts?",
+		);
+		expect(state.discovery?.discoverySummary).not.toContain("### Exchange 1");
 	});
 
 	it("removes the placeholder and keeps the topic open when the follow-up agent fails", async () => {

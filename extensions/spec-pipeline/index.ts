@@ -1536,15 +1536,15 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		const cwd = activeCwd;
 		const projectConfig = activeProjectConfig;
 
-		// Build the discovery summary from conversation history
-		if (
-			state.discovery &&
-			state.discovery.conversationHistory &&
-			state.discovery.conversationHistory.length > 0
-		) {
-			state.discovery.discoverySummary = generateConversationalDiscoverySummary(
-				state.discovery.conversationHistory,
-			);
+		// Build the discovery summary from structured topics when available, falling
+		// back to legacy conversation history for older discovery sessions.
+		if (state.discovery) {
+			const exchanges = state.discovery.conversationHistory ?? [];
+			const topics = state.discovery.topics ?? [];
+			if (topics.length > 0 || exchanges.length > 0) {
+				state.discovery.discoverySummary =
+					generateConversationalDiscoverySummary(exchanges, topics);
+			}
 		}
 
 		state.discovery!.completed = true;

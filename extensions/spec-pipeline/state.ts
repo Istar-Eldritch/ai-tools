@@ -9,6 +9,7 @@ import {
 	type ImplementationState,
 	type DiscoveryState,
 	type ConversationalExchange,
+	type DiscoveryTopic,
 	type ProjectConfig,
 	type RoadmapState,
 	type EpicState,
@@ -350,12 +351,83 @@ export function createInitialDiscoveryState(
 	};
 }
 
+function summarizeDiscoveryTopicTitle(question: string): string {
+	const normalized = question.trim().replace(/\s+/g, " ");
+	if (!normalized) return "Untitled topic";
+
+	const words = normalized.split(" ");
+	if (words.length <= 12) return normalized;
+	return `${words.slice(0, 12).join(" ")}…`;
+}
+
+function summaryText(
+	value: string | null | undefined,
+	fallback: string,
+): string {
+	const normalized = (value ?? "").trim();
+	return normalized.length > 0 ? normalized : fallback;
+}
+
+function indentContinuationLines(value: string, indent: string): string {
+	return value.replace(/\n/g, `\n${indent}`);
+}
+
+function generateDiscoveryTopicSummary(topics: DiscoveryTopic[]): string {
+	const sections: string[] = [];
+	sections.push("## Discovery Summary\n");
+	sections.push(
+		"The following decisions were gathered during an interactive discovery conversation:\n",
+	);
+
+	for (let i = 0; i < topics.length; i++) {
+		const topic = topics[i];
+		sections.push(
+			`### Topic ${i + 1}: ${summarizeDiscoveryTopicTitle(topic.question)}\n`,
+		);
+		sections.push(
+			`**Decision:** ${summaryText(topic.decision, "(No final decision recorded.)")}\n`,
+		);
+		sections.push(
+			`**Assumption:** ${summaryText(topic.question, "(No assumption recorded.)")}\n`,
+		);
+
+		if (topic.followUps.length > 0) {
+			sections.push("**Supporting thread:**\n");
+			for (const followUp of topic.followUps) {
+				const question = indentContinuationLines(
+					summaryText(
+						followUp.userQuestion,
+						"(No follow-up question recorded.)",
+					),
+					"  ",
+				);
+				const answer = indentContinuationLines(
+					summaryText(followUp.agentAnswer, "(No follow-up answer recorded.)"),
+					"  ",
+				);
+				sections.push(`- **Q:** ${question}`);
+				sections.push(`  **A:** ${answer}`);
+			}
+			sections.push("");
+		}
+
+		sections.push("---\n");
+	}
+
+	return sections.join("\n");
+}
+
 /**
  * Generate a discovery summary from conversational exchanges
  */
 export function generateConversationalDiscoverySummary(
-	exchanges: ConversationalExchange[],
+	exchanges: ConversationalExchange[] = [],
+	topics: DiscoveryTopic[] = [],
 ): string {
+	if (topics.length > 0) {
+		return generateDiscoveryTopicSummary(topics);
+	}
+
 	if (exchanges.length === 0) {
 		return "";
 	}

@@ -7,6 +7,7 @@ import {
 	generateSpecTimestamp,
 	generateTimestamp,
 	createInitialDiscoveryState,
+	generateConversationalDiscoverySummary,
 	createInitialSpecState,
 	createInitialImplState,
 	createInitialRoadmapState,
@@ -113,6 +114,104 @@ describe("createInitialDiscoveryState", () => {
 		const state = createInitialDiscoveryState();
 		expect(state.topics).toEqual([]);
 		expect(state.activeTopic).toBeNull();
+	});
+});
+
+describe("generateConversationalDiscoverySummary", () => {
+	it("renders completed discovery topics with decision first and nested follow-ups", () => {
+		const summary = generateConversationalDiscoverySummary(
+			[],
+			[
+				{
+					question: "Should enterprise tenants require SSO from launch?",
+					decision: "Yes, but make SSO optional for launch.",
+					followUps: [
+						{
+							userQuestion: "What happens to local accounts?",
+							agentAnswer: "They remain available as fallback login.",
+							timestamp: "2026-05-23T08:00:00.000Z",
+						},
+					],
+					timestamp: "2026-05-23T07:59:00.000Z",
+				},
+			],
+		);
+
+		expect(summary).toContain(
+			"### Topic 1: Should enterprise tenants require SSO from launch?",
+		);
+		expect(summary).toContain(
+			"**Decision:** Yes, but make SSO optional for launch.",
+		);
+		expect(summary).toContain(
+			"**Assumption:** Should enterprise tenants require SSO from launch?",
+		);
+		expect(summary.indexOf("**Decision:**")).toBeLessThan(
+			summary.indexOf("**Assumption:**"),
+		);
+		expect(summary).toContain("**Supporting thread:**");
+		expect(summary).toContain("- **Q:** What happens to local accounts?");
+		expect(summary).toContain(
+			"  **A:** They remain available as fallback login.",
+		);
+		expect(summary).not.toContain("### Exchange 1");
+	});
+
+	it("keeps the legacy exchange rendering when no topics are provided", () => {
+		const summary = generateConversationalDiscoverySummary([
+			{
+				userMessage: "We need password auth.",
+				assistantResponse: "Should registration require email verification?",
+				timestamp: "2026-05-23T08:00:00.000Z",
+			},
+		]);
+
+		expect(summary).toContain("### Exchange 1");
+		expect(summary).toContain("**User:**");
+		expect(summary).toContain("We need password auth.");
+		expect(summary).toContain("**Discovery Agent:**");
+		expect(summary).toContain(
+			"Should registration require email verification?",
+		);
+	});
+
+	it("renders flushed open topics as one topic with no final decision", () => {
+		const summary = generateConversationalDiscoverySummary(
+			[],
+			[
+				{
+					question: "Should tenant admins manage user invites?",
+					decision: null,
+					followUps: [],
+					timestamp: "2026-05-23T08:00:00.000Z",
+				},
+			],
+		);
+
+		expect(summary).toContain(
+			"### Topic 1: Should tenant admins manage user invites?",
+		);
+		expect(summary).toContain("**Decision:** (No final decision recorded.)");
+		expect(summary).not.toContain("### Exchange 1");
+	});
+
+	it("truncates long topic titles to about twelve words", () => {
+		const summary = generateConversationalDiscoverySummary(
+			[],
+			[
+				{
+					question:
+						"Should authentication support password reset magic links backup codes and session revocation for all tenants?",
+					decision: "Yes.",
+					followUps: [],
+					timestamp: "2026-05-23T08:00:00.000Z",
+				},
+			],
+		);
+
+		expect(summary).toContain(
+			"### Topic 1: Should authentication support password reset magic links backup codes and session revocation…",
+		);
 	});
 });
 
