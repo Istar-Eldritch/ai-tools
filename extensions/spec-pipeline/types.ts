@@ -27,6 +27,13 @@ export const ModelConfigSchema = Type.Object({
 	thinking: ThinkingLevelSchema,
 	// Per-role override for the streaming idle-timeout watchdog (ms). 0 disables.
 	streamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
+	// Some models (e.g. Ollama-hosted models) reject conversations where pi
+	// injects the appended system prompt as an assistant-role prefill. Set to
+	// "inline" to prepend the system prompt into the task string instead, keeping
+	// the conversation as a plain [system] -> [user] exchange.
+	systemPromptMode: Type.Optional(
+		Type.Union([Type.Literal("append"), Type.Literal("inline")]),
+	),
 });
 
 // Full models configuration schema
@@ -209,6 +216,7 @@ export type ErrorType =
 	| "VALIDATION"
 	| "TOKEN_LIMIT"
 	| "INCOMPLETE"
+	| "MODEL_COMPAT"
 	| "UNKNOWN";
 
 export type RoleName =

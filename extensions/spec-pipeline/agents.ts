@@ -301,16 +301,26 @@ export async function runAgentWithConfig(
 		);
 	}
 
-	// Write system prompt to temp file
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
-	const promptPath = path.join(tmpDir, "system.md");
-	fs.writeFileSync(promptPath, systemPrompt, {
-		encoding: "utf-8",
-		mode: 0o600,
-	});
-	args.push("--append-system-prompt", promptPath);
+	// For models that reject pi's assistant-role system-prompt injection
+	// ("Cannot continue from message role: assistant"), inline the system prompt
+	// as a prefix in the task string so only a clean [system]->[user] turn is sent.
+	const useInlineSystemPrompt = modelConfig.systemPromptMode === "inline";
 
-	args.push(task);
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
+	let promptPath: string | null = null;
+	if (!useInlineSystemPrompt) {
+		promptPath = path.join(tmpDir, "system.md");
+		fs.writeFileSync(promptPath, systemPrompt, {
+			encoding: "utf-8",
+			mode: 0o600,
+		});
+		args.push("--append-system-prompt", promptPath);
+	}
+
+	const effectiveTask = useInlineSystemPrompt
+		? `${systemPrompt}\n\n---\n\n${task}`
+		: task;
+	args.push(effectiveTask);
 
 	let output = "";
 	let error = "";
@@ -538,7 +548,7 @@ export async function runAgentWithConfig(
 		};
 	} finally {
 		try {
-			fs.unlinkSync(promptPath);
+			if (promptPath) fs.unlinkSync(promptPath);
 			fs.rmdirSync(tmpDir);
 		} catch {
 			/* ignore */
