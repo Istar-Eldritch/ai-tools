@@ -26,17 +26,23 @@ import { getErrorEmoji, getErrorSuggestion } from "./errors.ts";
  * Create a formatted box with title and content
  * Uses Unicode box-drawing characters for visual appeal
  */
-export function formatBox(title: string, content: string[], width: number = 60): string {
+export function formatBox(
+	title: string,
+	content: string[],
+	width: number = 60,
+): string {
 	const lines: string[] = [];
-	const innerWidth = width - 4;  // Account for "│ " and " │"
-	
+	const innerWidth = width - 4; // Account for "│ " and " │"
+
 	// Top border with title
 	const titlePadded = ` ${title} `;
 	const titleLen = titlePadded.length;
 	const leftBorder = Math.floor((width - titleLen - 2) / 2);
 	const rightBorder = width - titleLen - leftBorder - 2;
-	lines.push(`┌${"─".repeat(leftBorder)}${titlePadded}${"─".repeat(rightBorder)}┐`);
-	
+	lines.push(
+		`┌${"─".repeat(leftBorder)}${titlePadded}${"─".repeat(rightBorder)}┐`,
+	);
+
 	// Content lines
 	for (const line of content) {
 		// Word-wrap long lines
@@ -62,10 +68,10 @@ export function formatBox(title: string, content: string[], width: number = 60):
 			}
 		}
 	}
-	
+
 	// Bottom border
 	lines.push(`└${"─".repeat(width - 2)}┘`);
-	
+
 	return lines.join("\n");
 }
 
@@ -79,7 +85,11 @@ export function formatDivider(width: number = 60): string {
 /**
  * Format a key-value pair with consistent alignment
  */
-export function formatKeyValue(key: string, value: string, keyWidth: number = 14): string {
+export function formatKeyValue(
+	key: string,
+	value: string,
+	keyWidth: number = 14,
+): string {
 	return `${key.padEnd(keyWidth)}: ${value}`;
 }
 
@@ -94,7 +104,7 @@ export function formatKeyValue(key: string, value: string, keyWidth: number = 14
 export function formatStepBanner(
 	step: string,
 	details?: string,
-	emoji?: string
+	emoji?: string,
 ): string {
 	const icon = emoji || "▶";
 	const lines: string[] = [];
@@ -123,28 +133,57 @@ export function formatModelConfig(config: ModelConfig): string {
 /**
  * Format effective configuration for display at startup (R5)
  */
-export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean): string {
+export function formatEffectiveConfig(
+	config: ProjectConfig,
+	fromFile: boolean,
+): string {
 	const lines: string[] = [];
-	
+
 	lines.push(formatDivider(60));
-	lines.push(`  📋 Configuration${fromFile ? " (from .pi/spec-pipeline.json)" : " (defaults)"}`);
+	lines.push(
+		`  📋 Configuration${fromFile ? " (from .pi/spec-pipeline.json)" : " (defaults)"}`,
+	);
 	lines.push(formatDivider(60));
 	lines.push("");
-	
+
 	// Model configurations
 	lines.push("  Model Configurations:");
-	lines.push(`    planDrafter       : ${formatModelConfig(config.models.planDrafter)}`);
-	lines.push(`    implementer       : ${formatModelConfig(config.models.implementer)}`);
-	lines.push(`    codeReviewer      : ${formatModelConfig(config.models.codeReviewer)}`);
-	lines.push(`    addressReview     : ${formatModelConfig(config.models.addressReview)}`);
-	lines.push(`    agentCommitMessageWriter: ${formatModelConfig(config.models.agentCommitMessageWriter)}`);
+	lines.push(
+		`    planDrafter       : ${formatModelConfig(config.models.planDrafter)}`,
+	);
+	lines.push(
+		`    implementer       : ${formatModelConfig(config.models.implementer)}`,
+	);
+	lines.push(
+		`    codeReviewer      : ${formatModelConfig(config.models.codeReviewer)}`,
+	);
+	lines.push(
+		`    addressReview     : ${formatModelConfig(config.models.addressReview)}`,
+	);
+	lines.push(
+		`    agentCommitMessageWriter: ${formatModelConfig(config.models.agentCommitMessageWriter)}`,
+	);
+	lines.push(
+		`    roadmapDrafter    : ${formatModelConfig(config.models.roadmapDrafter)}`,
+	);
+	lines.push(
+		`    roadmapReviewer   : ${formatModelConfig(config.models.roadmapReviewer)}`,
+	);
+	lines.push(
+		`    epicDrafter       : ${formatModelConfig(config.models.epicDrafter)}`,
+	);
+	lines.push(
+		`    epicReviewer      : ${formatModelConfig(config.models.epicReviewer)}`,
+	);
 	lines.push("");
-	
+
 	// Review cycles
 	lines.push("  Review Cycles:");
-	lines.push(`    codeReviewer: ${config.reviewCycles === 0 ? "skipped" : config.reviewCycles}`);
+	lines.push(
+		`    codeReviewer: ${config.reviewCycles === 0 ? "skipped" : config.reviewCycles}`,
+	);
 	lines.push("");
-	
+
 	// Spec template & conventions
 	if (config.specTemplatePath || config.specConventionsPath) {
 		lines.push("  Spec Templates:");
@@ -156,9 +195,9 @@ export function formatEffectiveConfig(config: ProjectConfig, fromFile: boolean):
 		}
 		lines.push("");
 	}
-	
+
 	lines.push(formatDivider(60));
-	
+
 	return lines.join("\n");
 }
 
@@ -220,41 +259,45 @@ export function formatHierarchyStage(stage: HierarchyStage): string {
  * Generate a summary of agent output for persistent display
  * Extracts key information and truncates to reasonable length
  */
-export function summarizeAgentOutput(output: string, maxLines: number = 10, maxChars: number = 800): string {
+export function summarizeAgentOutput(
+	output: string,
+	maxLines: number = 10,
+	maxChars: number = 800,
+): string {
 	if (!output || output.trim().length === 0) {
 		return "(no output)";
 	}
-	
+
 	const lines = output.trim().split("\n");
-	
+
 	// If output is short enough, return as-is
 	if (lines.length <= maxLines && output.length <= maxChars) {
 		return output.trim();
 	}
-	
+
 	// Take first few and last few lines for context
 	const headLines = Math.ceil(maxLines * 0.6);
 	const tailLines = maxLines - headLines;
-	
+
 	let summary: string[] = [];
-	
+
 	if (lines.length > maxLines) {
 		summary = [
 			...lines.slice(0, headLines),
 			`  ... (${lines.length - maxLines} lines omitted) ...`,
-			...lines.slice(-tailLines)
+			...lines.slice(-tailLines),
 		];
 	} else {
 		summary = lines;
 	}
-	
+
 	let result = summary.join("\n");
-	
+
 	// Truncate if still too long
 	if (result.length > maxChars) {
 		result = result.slice(0, maxChars - 20) + "\n  ... (truncated)";
 	}
-	
+
 	return result;
 }
 
@@ -267,7 +310,7 @@ export function formatAgentSummary(
 	output: string,
 	emoji: string = "✅",
 	phase?: number,
-	cycleInfo?: string
+	cycleInfo?: string,
 ): string {
 	const lines: string[] = [];
 	let header = `${emoji} ${role} complete (${model})`;
@@ -293,22 +336,27 @@ export function formatAgentSummary(
  */
 export function formatSpecState(state: SpecState): string {
 	const lines: string[] = [];
-	
+
 	// Header section
 	lines.push(formatDivider(50));
 	lines.push(`  Spec: ${state.id || "unknown"}`);
 	lines.push(formatDivider(50));
 	lines.push("");
-	
+
 	// Basic info section
 	lines.push("📋 Basic Information");
 	const description = state.description || "(no description)";
-	lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
+	lines.push(
+		formatKeyValue(
+			"  Description",
+			description.slice(0, 50) + (description.length > 50 ? "..." : ""),
+		),
+	);
 	lines.push(formatKeyValue("  Stage", formatSpecStage(state.stage)));
 	lines.push(formatKeyValue("  Created", state.createdAt));
 	lines.push(formatKeyValue("  Updated", state.updatedAt));
 	lines.push(formatKeyValue("  Spec", state.specFilename));
-	
+
 	// Git section
 	if ((state.checkpoints && state.checkpoints.length > 0) || state.errorStash) {
 		lines.push("");
@@ -317,10 +365,15 @@ export function formatSpecState(state: SpecState): string {
 			lines.push(formatKeyValue("  Commits", String(state.checkpoints.length)));
 		}
 		if (state.errorStash) {
-			lines.push(formatKeyValue("  Error Stash", state.errorStash + " (will be dropped on resume)"));
+			lines.push(
+				formatKeyValue(
+					"  Error Stash",
+					state.errorStash + " (will be dropped on resume)",
+				),
+			);
 		}
 	}
-	
+
 	// Discovery progress section
 	if (state.discovery) {
 		const exchanges = state.discovery.conversationHistory || [];
@@ -332,33 +385,48 @@ export function formatSpecState(state: SpecState): string {
 			lines.push(formatKeyValue("  Exchanges", String(exchanges.length)));
 			lines.push("  In progress...");
 		} else if (state.discovery.completed && exchanges.length > 0) {
-			lines.push(formatKeyValue("  Status", `Completed (${exchanges.length} exchanges)`));
+			lines.push(
+				formatKeyValue("  Status", `Completed (${exchanges.length} exchanges)`),
+			);
 			const summaryLength = state.discovery.discoverySummary?.length || 0;
 			if (summaryLength > 0) {
-				lines.push(formatKeyValue("  Summary", `${Math.round(summaryLength / 1000)}KB`));
+				lines.push(
+					formatKeyValue("  Summary", `${Math.round(summaryLength / 1000)}KB`),
+				);
 			}
 		} else if (state.discovery.completed) {
 			lines.push("  Completed (no exchanges)");
 		}
 	}
-	
+
 	// Spec progress section
-	if (state.stage === "spec_drafting" || state.stage === "spec_review" || state.stage === "user_approval") {
+	if (
+		state.stage === "spec_drafting" ||
+		state.stage === "spec_review" ||
+		state.stage === "user_approval"
+	) {
 		lines.push("");
 		lines.push("📝 Spec Progress");
-		lines.push(formatKeyValue("  Iteration", `${state.specIteration}/${MAX_SPEC_ITERATIONS}`));
-		lines.push(formatKeyValue("  Approved", state.specApproved ? "Yes ✅" : "No"));
+		lines.push(
+			formatKeyValue(
+				"  Iteration",
+				`${state.specIteration}/${MAX_SPEC_ITERATIONS}`,
+			),
+		);
+		lines.push(
+			formatKeyValue("  Approved", state.specApproved ? "Yes ✅" : "No"),
+		);
 	}
-	
+
 	// Error section
 	if (state.lastError) {
 		lines.push("");
 		formatErrorSection(lines, state.lastError);
 	}
-	
+
 	lines.push("");
 	lines.push(formatDivider(50));
-	
+
 	return lines.join("\n");
 }
 
@@ -371,13 +439,13 @@ export function formatSpecState(state: SpecState): string {
  */
 export function formatImplState(state: ImplementationState): string {
 	const lines: string[] = [];
-	
+
 	// Header section
 	lines.push(formatDivider(50));
 	lines.push(`  Implementation: ${state.id || "unknown"}`);
 	lines.push(formatDivider(50));
 	lines.push("");
-	
+
 	// Basic info section
 	lines.push("📋 Basic Information");
 	lines.push(formatKeyValue("  Spec Path", state.specPath));
@@ -387,7 +455,7 @@ export function formatImplState(state: ImplementationState): string {
 	if (state.skipPlanGeneration) {
 		lines.push(formatKeyValue("  Plan Gen", "Skipped (--no-plan)"));
 	}
-	
+
 	// Git section
 	if ((state.checkpoints && state.checkpoints.length > 0) || state.errorStash) {
 		lines.push("");
@@ -396,10 +464,15 @@ export function formatImplState(state: ImplementationState): string {
 			lines.push(formatKeyValue("  Commits", String(state.checkpoints.length)));
 		}
 		if (state.errorStash) {
-			lines.push(formatKeyValue("  Error Stash", state.errorStash + " (will be dropped on resume)"));
+			lines.push(
+				formatKeyValue(
+					"  Error Stash",
+					state.errorStash + " (will be dropped on resume)",
+				),
+			);
 		}
 	}
-	
+
 	// Phases section
 	const phases = state.phases || [];
 	const phasesGenerated = state.phasesGenerated || [];
@@ -408,27 +481,41 @@ export function formatImplState(state: ImplementationState): string {
 		lines.push("🏗️ Implementation Phases");
 		const generatedCount = phasesGenerated.filter(Boolean).length;
 		lines.push(formatKeyValue("  Total Phases", String(phases.length)));
-		lines.push(formatKeyValue("  Plans Ready", `${generatedCount}/${phases.length}`));
-		
+		lines.push(
+			formatKeyValue("  Plans Ready", `${generatedCount}/${phases.length}`),
+		);
+
 		if (state.stage === "implementation") {
-			lines.push(formatKeyValue("  Current Phase", `${state.currentPhaseIndex + 1}/${phases.length}`));
+			lines.push(
+				formatKeyValue(
+					"  Current Phase",
+					`${state.currentPhaseIndex + 1}/${phases.length}`,
+				),
+			);
 			if (state.reviewCyclesCompleted !== undefined) {
-				lines.push(formatKeyValue("  Review Cycles", String(state.reviewCyclesCompleted || 0)));
+				lines.push(
+					formatKeyValue(
+						"  Review Cycles",
+						String(state.reviewCyclesCompleted || 0),
+					),
+				);
 			} else {
-				lines.push(formatKeyValue("  Review Cycle", String(state.currentReviewCycle)));
+				lines.push(
+					formatKeyValue("  Review Cycle", String(state.currentReviewCycle)),
+				);
 			}
-			
+
 			// Show phase names with progress indicators
 			lines.push("");
 			lines.push("  Phase Progress:");
 			for (let i = 0; i < phases.length && i < 5; i++) {
 				const phase = phases[i] || "(unnamed phase)";
 				const phaseName = phase.slice(0, 30) + (phase.length > 30 ? "..." : "");
-				let status = "  ⬜";  // Pending
+				let status = "  ⬜"; // Pending
 				if (i < state.currentPhaseIndex) {
-					status = "  ✅";  // Completed
+					status = "  ✅"; // Completed
 				} else if (i === state.currentPhaseIndex) {
-					status = "  🔄";  // In progress
+					status = "  🔄"; // In progress
 				}
 				lines.push(`  ${status} Phase ${i + 1}: ${phaseName}`);
 			}
@@ -437,16 +524,16 @@ export function formatImplState(state: ImplementationState): string {
 			}
 		}
 	}
-	
+
 	// Error section
 	if (state.lastError) {
 		lines.push("");
 		formatErrorSection(lines, state.lastError);
 	}
-	
+
 	lines.push("");
 	lines.push(formatDivider(50));
-	
+
 	return lines.join("\n");
 }
 
@@ -467,7 +554,12 @@ export function formatRoadmapState(state: RoadmapState): string {
 
 	lines.push("📋 Basic Information");
 	const description = state.description || "(no description)";
-	lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
+	lines.push(
+		formatKeyValue(
+			"  Description",
+			description.slice(0, 50) + (description.length > 50 ? "..." : ""),
+		),
+	);
 	lines.push(formatKeyValue("  Stage", formatHierarchyStage(state.stage)));
 	lines.push(formatKeyValue("  Created", state.createdAt));
 	lines.push(formatKeyValue("  Updated", state.updatedAt));
@@ -476,19 +568,39 @@ export function formatRoadmapState(state: RoadmapState): string {
 	if (state.children.length > 0) {
 		lines.push("");
 		lines.push("📦 Child Epics");
-		const completed = state.children.filter(c => c.childStatus === "completed").length;
-		const inProgress = state.children.filter(c => c.childStatus === "in_progress").length;
-		const pending = state.children.filter(c => !c.childStatus || c.childStatus === "pending").length;
+		const completed = state.children.filter(
+			(c) => c.childStatus === "completed",
+		).length;
+		const inProgress = state.children.filter(
+			(c) => c.childStatus === "in_progress",
+		).length;
+		const pending = state.children.filter(
+			(c) => !c.childStatus || c.childStatus === "pending",
+		).length;
 		lines.push(formatKeyValue("  Total", String(state.children.length)));
-		lines.push(formatKeyValue("  Progress", `${completed} done, ${inProgress} active, ${pending} pending`));
+		lines.push(
+			formatKeyValue(
+				"  Progress",
+				`${completed} done, ${inProgress} active, ${pending} pending`,
+			),
+		);
 		lines.push("");
 		for (const child of state.children) {
-			const statusIcon = child.childStatus === "completed" ? "✅"
-				: child.childStatus === "in_progress" ? "🔄"
-				: child.childStatus === "cancelled" ? "🚫"
-				: "⬜";
-			const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
-			lines.push(`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`);
+			const statusIcon =
+				child.childStatus === "completed"
+					? "✅"
+					: child.childStatus === "in_progress"
+						? "🔄"
+						: child.childStatus === "cancelled"
+							? "🚫"
+							: "⬜";
+			const deps =
+				child.dependencies.length > 0
+					? ` (deps: ${child.dependencies.join(", ")})`
+					: "";
+			lines.push(
+				`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`,
+			);
 		}
 	}
 
@@ -515,31 +627,61 @@ export function formatEpicState(state: EpicState): string {
 
 	lines.push("📋 Basic Information");
 	const description = state.description || "(no description)";
-	lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
+	lines.push(
+		formatKeyValue(
+			"  Description",
+			description.slice(0, 50) + (description.length > 50 ? "..." : ""),
+		),
+	);
 	lines.push(formatKeyValue("  Stage", formatHierarchyStage(state.stage)));
 	lines.push(formatKeyValue("  Created", state.createdAt));
 	lines.push(formatKeyValue("  Updated", state.updatedAt));
 	lines.push(formatKeyValue("  Document", state.docFilename));
 	if (state.parentId) {
-		lines.push(formatKeyValue("  Parent", `${state.parentType || "roadmap"}:${state.parentId}`));
+		lines.push(
+			formatKeyValue(
+				"  Parent",
+				`${state.parentType || "roadmap"}:${state.parentId}`,
+			),
+		);
 	}
 
 	if (state.children.length > 0) {
 		lines.push("");
 		lines.push("📦 Child Features");
-		const completed = state.children.filter(c => c.childStatus === "completed").length;
-		const inProgress = state.children.filter(c => c.childStatus === "in_progress").length;
-		const pending = state.children.filter(c => !c.childStatus || c.childStatus === "pending").length;
+		const completed = state.children.filter(
+			(c) => c.childStatus === "completed",
+		).length;
+		const inProgress = state.children.filter(
+			(c) => c.childStatus === "in_progress",
+		).length;
+		const pending = state.children.filter(
+			(c) => !c.childStatus || c.childStatus === "pending",
+		).length;
 		lines.push(formatKeyValue("  Total", String(state.children.length)));
-		lines.push(formatKeyValue("  Progress", `${completed} done, ${inProgress} active, ${pending} pending`));
+		lines.push(
+			formatKeyValue(
+				"  Progress",
+				`${completed} done, ${inProgress} active, ${pending} pending`,
+			),
+		);
 		lines.push("");
 		for (const child of state.children) {
-			const statusIcon = child.childStatus === "completed" ? "✅"
-				: child.childStatus === "in_progress" ? "🔄"
-				: child.childStatus === "cancelled" ? "🚫"
-				: "⬜";
-			const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
-			lines.push(`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`);
+			const statusIcon =
+				child.childStatus === "completed"
+					? "✅"
+					: child.childStatus === "in_progress"
+						? "🔄"
+						: child.childStatus === "cancelled"
+							? "🚫"
+							: "⬜";
+			const deps =
+				child.dependencies.length > 0
+					? ` (deps: ${child.dependencies.join(", ")})`
+					: "";
+			lines.push(
+				`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`,
+			);
 		}
 	}
 
@@ -556,17 +698,24 @@ export function formatEpicState(state: EpicState): string {
 /**
  * Helper: format error section for state display
  */
-function formatErrorSection(lines: string[], lastError: SpecState["lastError"]): void {
+function formatErrorSection(
+	lines: string[],
+	lastError: SpecState["lastError"],
+): void {
 	if (typeof lastError === "string") {
 		lines.push("❌ Last Error (Legacy)");
-		lines.push(`  ${lastError.slice(0, 200)}${lastError.length > 200 ? "..." : ""}`);
+		lines.push(
+			`  ${lastError.slice(0, 200)}${lastError.length > 200 ? "..." : ""}`,
+		);
 	} else if (lastError) {
 		const emoji = getErrorEmoji(lastError.errorType);
 		const content: string[] = [];
-		
+
 		content.push(formatKeyValue("Timestamp", lastError.timestamp));
-		content.push(formatKeyValue("Agent", `${lastError.agent} (${lastError.role})`));
-		
+		content.push(
+			formatKeyValue("Agent", `${lastError.agent} (${lastError.role})`),
+		);
+
 		if (lastError.phase !== undefined) {
 			let phaseInfo = `Phase ${lastError.phase}`;
 			if (lastError.cycle !== undefined) {
@@ -574,25 +723,28 @@ function formatErrorSection(lines: string[], lastError: SpecState["lastError"]):
 			}
 			content.push(formatKeyValue("Phase", phaseInfo));
 		}
-		
-		content.push(formatKeyValue("Error Type", `${emoji} ${lastError.errorType}`));
+
+		content.push(
+			formatKeyValue("Error Type", `${emoji} ${lastError.errorType}`),
+		);
 		content.push(formatKeyValue("Exit Code", String(lastError.exitCode)));
-		
+
 		if (lastError.stderr) {
 			content.push("");
 			content.push("─── Error Message ───");
-			const preview = lastError.stderr.length > 400 
-				? lastError.stderr.slice(0, 400) + "..." 
-				: lastError.stderr;
+			const preview =
+				lastError.stderr.length > 400
+					? lastError.stderr.slice(0, 400) + "..."
+					: lastError.stderr;
 			for (const line of preview.split("\n").slice(0, 6)) {
 				content.push(`  ${line.trim()}`);
 			}
 		}
-		
+
 		content.push("");
 		content.push("─── Recovery ───");
 		content.push(`  ${getErrorSuggestion(lastError.errorType)}`);
-		
+
 		lines.push(formatBox(`${emoji} Error Details`, content));
 	}
 }
@@ -607,30 +759,34 @@ function formatErrorSection(lines: string[], lastError: SpecState["lastError"]):
 export function updateSpecWidget(
 	ctx: WidgetUIContext,
 	state: SpecState,
-	currentAction?: string
+	currentAction?: string,
 ): void {
 	const lines: string[] = [];
-	
+
 	// Header
 	const stateId = state.id || "unknown";
 	lines.push(`📋 Spec: ${stateId.slice(0, 16)}...`);
 	lines.push(formatDivider(40));
-	
+
 	// Stage indicator
 	lines.push(`Stage: ${formatSpecStage(state.stage)}`);
-	
+
 	// Discovery progress if in discovery
-	if (state.discovery && state.stage === "discovery" && !state.discovery.completed) {
+	if (
+		state.discovery &&
+		state.stage === "discovery" &&
+		!state.discovery.completed
+	) {
 		const exchanges = state.discovery.conversationHistory?.length ?? 0;
 		lines.push(`Discovery: ${exchanges} exchanges`);
 	}
-	
+
 	// Current action
 	if (currentAction) {
 		lines.push(formatDivider(40));
 		lines.push(`⏳ ${currentAction}`);
 	}
-	
+
 	ctx.ui.setWidget(PIPELINE_WIDGET_ID, lines);
 }
 
@@ -640,18 +796,18 @@ export function updateSpecWidget(
 export function updateImplWidget(
 	ctx: WidgetUIContext,
 	state: ImplementationState,
-	currentAction?: string
+	currentAction?: string,
 ): void {
 	const lines: string[] = [];
-	
+
 	// Header
 	const stateId = state.id || "unknown";
 	lines.push(`🚀 Implement: ${stateId.slice(0, 16)}...`);
 	lines.push(formatDivider(40));
-	
+
 	// Stage indicator
 	lines.push(`Stage: ${formatImplStage(state.stage)}`);
-	
+
 	// Phase progress if in implementation
 	const widgetPhases = state.phases || [];
 	if (widgetPhases.length > 0 && state.stage === "implementation") {
@@ -660,13 +816,13 @@ export function updateImplWidget(
 		const progressBar = "█".repeat(completed) + "░".repeat(total - completed);
 		lines.push(`Phases: [${progressBar}] ${completed + 1}/${total}`);
 	}
-	
+
 	// Current action
 	if (currentAction) {
 		lines.push(formatDivider(40));
 		lines.push(`⏳ ${currentAction}`);
 	}
-	
+
 	ctx.ui.setWidget(PIPELINE_WIDGET_ID, lines);
 }
 

@@ -76,6 +76,18 @@ describe("validateConfig", () => {
 			};
 			expect(validateConfig(config)).toEqual([]);
 		});
+
+		it("accepts hierarchy model roles in config", () => {
+			const config = {
+				models: {
+					roadmapDrafter: { model: "gpt-5.5", thinking: "high" },
+					roadmapReviewer: { model: "gpt-5.4", thinking: "medium" },
+					epicDrafter: { model: "gpt-5.5", thinking: "high" },
+					epicReviewer: { model: "gpt-5.4", thinking: "medium" },
+				},
+			};
+			expect(validateConfig(config)).toEqual([]);
+		});
 	});
 
 	describe("invalid configurations", () => {
@@ -177,6 +189,25 @@ describe("default configurations", () => {
 			expect(DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter.model).toBe(
 				"gpt-5.4-mini",
 			);
+		});
+		it("has roadmapDrafter config", () => {
+			expect(DEFAULT_MODEL_CONFIGS.roadmapDrafter).toBeDefined();
+			expect(DEFAULT_MODEL_CONFIGS.roadmapDrafter.model).toBe("gpt-5.5");
+		});
+
+		it("has roadmapReviewer config", () => {
+			expect(DEFAULT_MODEL_CONFIGS.roadmapReviewer).toBeDefined();
+			expect(DEFAULT_MODEL_CONFIGS.roadmapReviewer.model).toBe("gpt-5.4");
+		});
+
+		it("has epicDrafter config", () => {
+			expect(DEFAULT_MODEL_CONFIGS.epicDrafter).toBeDefined();
+			expect(DEFAULT_MODEL_CONFIGS.epicDrafter.model).toBe("gpt-5.5");
+		});
+
+		it("has epicReviewer config", () => {
+			expect(DEFAULT_MODEL_CONFIGS.epicReviewer).toBeDefined();
+			expect(DEFAULT_MODEL_CONFIGS.epicReviewer.model).toBe("gpt-5.4");
 		});
 	});
 

@@ -21,8 +21,12 @@ export function resolveConfig(cwd: string): HuginnConfig {
 		}
 	}
 
+	const rawDataDir = userConfig.dataDir ?? DEFAULT_HUGINN_CONFIG.dataDir;
+
 	return {
-		dataDir: userConfig.dataDir ?? DEFAULT_HUGINN_CONFIG.dataDir,
+		dataDir: path.isAbsolute(rawDataDir)
+			? rawDataDir
+			: path.resolve(cwd, rawDataDir),
 		embeddingModel:
 			userConfig.embeddingModel ?? DEFAULT_HUGINN_CONFIG.embeddingModel,
 		embeddingDim: userConfig.embeddingDim ?? DEFAULT_HUGINN_CONFIG.embeddingDim,

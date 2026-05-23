@@ -5,6 +5,7 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.4.0",
     "@huggingface/transformers": "^3.0.0",
+    "ignore": "^6.0.0",
     "tree-sitter": "^0.21.0",
     "tree-sitter-typescript": "^0.23.0",
     "tree-sitter-python": "^0.23.0",

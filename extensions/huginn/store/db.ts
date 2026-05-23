@@ -2,12 +2,15 @@ import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { SCHEMA_DDL } from "./schema.ts";
+import { buildSchemaDDL } from "./schema.ts";
 import type { DbState } from "../types.ts";
 
 let dbState: DbState = { pglite: null, isReady: false };
 
-export async function openDatabase(dataDir: string): Promise<PGlite> {
+export async function openDatabase(
+	dataDir: string,
+	embeddingDim = 768,
+): Promise<PGlite> {
 	if (dbState.pglite) return dbState.pglite;
 
 	const resolvedDir = path.resolve(dataDir);
@@ -18,7 +21,7 @@ export async function openDatabase(dataDir: string): Promise<PGlite> {
 	});
 
 	await db.waitReady;
-	await db.exec(SCHEMA_DDL);
+	await db.exec(buildSchemaDDL(embeddingDim));
 
 	dbState = { pglite: db, isReady: true };
 	return db;

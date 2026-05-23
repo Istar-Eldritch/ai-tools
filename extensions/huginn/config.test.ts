@@ -18,7 +18,9 @@ describe("resolveConfig", () => {
 
 	it("returns all defaults when config file is missing", () => {
 		const config = resolveConfig(tmpDir);
-		expect(config.dataDir).toBe(DEFAULT_HUGINN_CONFIG.dataDir);
+		expect(config.dataDir).toBe(
+			path.resolve(tmpDir, DEFAULT_HUGINN_CONFIG.dataDir),
+		);
 		expect(config.embeddingModel).toBe(DEFAULT_HUGINN_CONFIG.embeddingModel);
 		expect(config.embeddingDim).toBe(DEFAULT_HUGINN_CONFIG.embeddingDim);
 		expect(config.chunkSize).toBe(DEFAULT_HUGINN_CONFIG.chunkSize);
@@ -49,7 +51,9 @@ describe("resolveConfig", () => {
 		expect(config.embeddingDim).toBe(384);
 		expect(config.chunkSize).toBe(256);
 		expect(config.embeddingModel).toBe(DEFAULT_HUGINN_CONFIG.embeddingModel);
-		expect(config.dataDir).toBe(DEFAULT_HUGINN_CONFIG.dataDir);
+		expect(config.dataDir).toBe(
+			path.resolve(tmpDir, DEFAULT_HUGINN_CONFIG.dataDir),
+		);
 	});
 
 	it("gracefully handles malformed JSON", () => {
@@ -57,6 +61,27 @@ describe("resolveConfig", () => {
 		fs.writeFileSync(path.join(tmpDir, ".pi", "huginn.json"), "not json");
 		const config = resolveConfig(tmpDir);
 		expect(config.embeddingModel).toBe(DEFAULT_HUGINN_CONFIG.embeddingModel);
+	});
+
+	it("resolves relative dataDir against cwd", () => {
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "huginn.json"),
+			JSON.stringify({ dataDir: "custom/db" }),
+		);
+		const config = resolveConfig(tmpDir);
+		expect(path.isAbsolute(config.dataDir)).toBe(true);
+		expect(config.dataDir).toBe(path.resolve(tmpDir, "custom", "db"));
+	});
+
+	it("preserves absolute dataDir", () => {
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "huginn.json"),
+			JSON.stringify({ dataDir: "/absolute/path/to/db" }),
+		);
+		const config = resolveConfig(tmpDir);
+		expect(config.dataDir).toBe("/absolute/path/to/db");
 	});
 
 	it("returns a deep copy so callers cannot mutate defaults", () => {

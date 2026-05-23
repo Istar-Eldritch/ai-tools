@@ -1,4 +1,5 @@
-export const SCHEMA_DDL = `
+export function buildSchemaDDL(embeddingDim: number): string {
+	return `
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS huginn_config (
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS huginn_chunks (
   file_mtime    TIMESTAMPTZ,
   file_size     INT,
   model_name    TEXT NOT NULL,
-  embedding     vector(768),
+  embedding     vector(${embeddingDim}),
   project       TEXT,
   metadata      JSONB NOT NULL DEFAULT '{}',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -43,3 +44,4 @@ CREATE INDEX IF NOT EXISTS huginn_chunks_embedding_idx
 CREATE INDEX IF NOT EXISTS huginn_chunks_project_idx
   ON huginn_chunks (project, source_type);
 `;
+}

@@ -47,6 +47,11 @@ export const ModelsConfigSchema = Type.Object({
 	addressReview: Type.Optional(ModelConfigSchema),
 	// agentCommitMessageWriter for commits after agent operations (R5)
 	agentCommitMessageWriter: Type.Optional(ModelConfigSchema),
+	// Hierarchy document roles (optional, fall back to planDrafter / codeReviewer)
+	roadmapDrafter: Type.Optional(ModelConfigSchema),
+	roadmapReviewer: Type.Optional(ModelConfigSchema),
+	epicDrafter: Type.Optional(ModelConfigSchema),
+	epicReviewer: Type.Optional(ModelConfigSchema),
 	// commitMessageWriter allowed in config but silently ignore it per R5a
 	commitMessageWriter: Type.Optional(Type.Any()),
 });
@@ -196,6 +201,10 @@ export interface ProjectConfig {
 		codeReviewer: ModelConfig;
 		addressReview: ModelConfig;
 		agentCommitMessageWriter: ModelConfig;
+		roadmapDrafter: ModelConfig;
+		roadmapReviewer: ModelConfig;
+		epicDrafter: ModelConfig;
+		epicReviewer: ModelConfig;
 	};
 	// Code review cycle count. Setting to 0 skips code review entirely.
 	reviewCycles: NormalizedReviewCycles;
@@ -225,7 +234,11 @@ export type RoleName =
 	| "codeReviewer"
 	| "addressReview"
 	| "commitMessageWriter"
-	| "brainstormAgent"; // Role for tool restrictions (read-only for both old and new commit agents)
+	| "brainstormAgent" // Role for tool restrictions (read-only for both old and new commit agents)
+	| "roadmapDrafter"
+	| "roadmapReviewer"
+	| "epicDrafter"
+	| "epicReviewer";
 
 export interface ErrorDetails {
 	timestamp: string; // ISO timestamp of error

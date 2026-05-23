@@ -23,7 +23,7 @@ export default function (pi: ExtensionAPI) {
 
 	const initialize = async (cwd: string): Promise<void> => {
 		config = resolveConfig(cwd);
-		const db = await openDatabase(config.dataDir);
+		const db = await openDatabase(config.dataDir, config.embeddingDim);
 		provider = new EmbeddingProvider(
 			config.embeddingModel,
 			config.embeddingDim,
@@ -46,9 +46,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		config = resolveConfig(ctx.cwd);
-		if (!config.autoIngestion && !config.autoRetrieval) {
-			return;
-		}
 		initialize(ctx.cwd).catch((err) => {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error("[huginn] background init failed:", msg);

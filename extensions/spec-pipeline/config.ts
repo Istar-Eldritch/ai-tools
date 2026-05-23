@@ -31,6 +31,10 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 	codeReviewer: { model: "gpt-5.4", thinking: "medium" }, // Review code changes
 	addressReview: { model: "gpt-5.4", thinking: "medium" }, // Fix application — issues already identified by reviewer
 	agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" }, // Fast, cheap commit message generation (R5)
+	roadmapDrafter: { model: "gpt-5.5", thinking: "high" }, // Roadmap documents (same as planDrafter)
+	roadmapReviewer: { model: "gpt-5.4", thinking: "medium" }, // Review roadmap docs
+	epicDrafter: { model: "gpt-5.5", thinking: "high" }, // Epic documents (same as planDrafter)
+	epicReviewer: { model: "gpt-5.4", thinking: "medium" }, // Review epic docs
 } as const;
 
 /** Default code review cycle count. Set to 0 to skip code review. */
@@ -122,6 +126,22 @@ function mergeWithDefaults(
 		agentCommitMessageWriter:
 			userModels?.agentCommitMessageWriter ??
 			DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
+		roadmapDrafter:
+			userModels?.roadmapDrafter ??
+			userModels?.planDrafter ??
+			DEFAULT_MODEL_CONFIGS.roadmapDrafter,
+		roadmapReviewer:
+			userModels?.roadmapReviewer ??
+			userModels?.codeReviewer ??
+			DEFAULT_MODEL_CONFIGS.roadmapReviewer,
+		epicDrafter:
+			userModels?.epicDrafter ??
+			userModels?.planDrafter ??
+			DEFAULT_MODEL_CONFIGS.epicDrafter,
+		epicReviewer:
+			userModels?.epicReviewer ??
+			userModels?.codeReviewer ??
+			DEFAULT_MODEL_CONFIGS.epicReviewer,
 	};
 
 	// Apply project-level streamIdleTimeoutMs as fallback when per-role isn't set.

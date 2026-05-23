@@ -68,6 +68,22 @@ describe("db", () => {
 		expect(result.rows).toEqual([]);
 	});
 
+	it("applies schema with custom embedding dimension", async () => {
+		const customDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "huginn-dim-test-"),
+		);
+		const db = await openDatabase(path.join(customDir, "db"), 384);
+		// Insert a 384-dim vector to confirm column type
+		await db.query(
+			`INSERT INTO huginn_chunks (source_type, role, chunk_index, content, content_hash, model_name, embedding)
+	     VALUES ('conversation', 'user', 0, 'test', 'hash', 'm', '[${Array(384).fill(0.1).join(",")}]'::vector)`,
+		);
+		const result = await db.query("SELECT embedding FROM huginn_chunks");
+		expect(result.rows.length).toBe(1);
+		await closeDatabase();
+		fs.rmSync(customDir, { recursive: true, force: true });
+	});
+
 	it("schema is applied: querying huginn_config does not throw", async () => {
 		const db = await openDatabase(path.join(tmpDir, "db"));
 		const result = await db.query("SELECT * FROM huginn_config LIMIT 1");

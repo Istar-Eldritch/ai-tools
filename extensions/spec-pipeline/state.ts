@@ -114,7 +114,7 @@ export function loadSpecState(cwd: string, id: string): SpecState | null {
 			state.lastError = {
 				timestamp: state.updatedAt || new Date().toISOString(),
 				agent: "unknown",
-				role: "specDrafter",
+				role: "planDrafter",
 				exitCode: 1,
 				stderr: legacyError,
 				errorType: classifyError(legacyError),

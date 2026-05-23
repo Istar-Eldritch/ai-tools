@@ -1930,7 +1930,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			state,
 			{
 				role: drafterRole,
-				modelConfig: projectConfig.models.planDrafter,
+				modelConfig:
+					level === "roadmap"
+						? projectConfig.models.roadmapDrafter
+						: projectConfig.models.epicDrafter,
 				docName,
 			},
 			projectConfig.models.agentCommitMessageWriter,
