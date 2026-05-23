@@ -513,6 +513,105 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	type DiscoveryReplyClassification = "followup" | "decision";
+
+	function isUnambiguousDiscoveryDecision(reply: string): boolean {
+		const normalized = reply
+			.trim()
+			.toLowerCase()
+			.replace(/[.!]+$/g, "")
+			.replace(/\s+/g, " ");
+
+		if (!normalized) return false;
+		if (normalized.includes("?")) return false;
+
+		const oneWordDecisions = new Set([
+			"yes",
+			"yep",
+			"yeah",
+			"correct",
+			"confirmed",
+			"confirm",
+			"ok",
+			"okay",
+			"sure",
+			"no",
+			"nope",
+		]);
+
+		if (oneWordDecisions.has(normalized)) return true;
+
+		return /^(yes|yep|yeah|correct|confirmed|confirm|ok|okay|sure|sounds good|no|nope)\b/.test(
+			normalized,
+		);
+	}
+
+	function buildDiscoveryReplyClassifierSystemPrompt(
+		topic: DiscoveryTopic,
+		reply: string,
+	): string {
+		const followUpContext =
+			topic.followUps.length > 0
+				? `\n## Supporting Thread So Far\n\n${topic.followUps
+						.map(
+							(f, i) =>
+								`Follow-up ${i + 1}\nUser: ${f.userQuestion}\nDiscovery Agent: ${f.agentAnswer}`,
+						)
+						.join("\n\n")}\n`
+				: "";
+
+		return `You are classifying a user reply during requirements discovery.
+
+## Active Topic
+
+${topic.question}
+${followUpContext}
+## User Reply
+
+${reply}
+
+## Classification Rules
+
+Output exactly one word: FOLLOWUP or DECISION.
+
+- FOLLOWUP: the reply asks a question, requests more information, asks for examples/tradeoffs, or otherwise keeps exploring this same topic.
+- DECISION: the reply confirms, rejects, corrects, constrains, or closes the topic, even if the decision is partial.
+
+Output only FOLLOWUP or DECISION. No punctuation. No explanation.`;
+	}
+
+	async function classifyDiscoveryReply(
+		reply: string,
+		topic: DiscoveryTopic,
+		projectConfig: ProjectConfig,
+		cwd: string,
+		signal: AbortSignal,
+	): Promise<DiscoveryReplyClassification> {
+		if (isUnambiguousDiscoveryDecision(reply)) {
+			return "decision";
+		}
+
+		try {
+			const result = await runAgentWithConfig(
+				projectConfig.models.agentCommitMessageWriter,
+				"Classify whether this discovery reply is a follow-up question or a final decision.",
+				cwd,
+				buildDiscoveryReplyClassifierSystemPrompt(topic, reply),
+				signal,
+				undefined,
+				"commitMessageWriter",
+			);
+
+			const normalized = result.output.trim().toUpperCase();
+			if (normalized === "FOLLOWUP") return "followup";
+			if (normalized === "DECISION") return "decision";
+		} catch {
+			// Conservative fallback: preserve pre-feature behavior if classification fails.
+		}
+
+		return "decision";
+	}
+
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
 	let pendingScopingContext: string | undefined;
 
@@ -1877,12 +1976,55 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			return { action: "continue" as const };
 		}
 
-		// Extension-driven discovery loop: capture answer and run next step
+		// Extension-driven /spec discovery loop: classify the reply before deciding
+		// whether to close the active topic or keep it open for a follow-up thread.
 		if (discoveryLoopActive && activeDiscoveryTopic !== null) {
 			const answer = event.text.trim();
 
-			// Allow /discovery-done to break out even during the loop
+			// Allow /discovery-done to break out even during the loop.
 			if (!answer.startsWith("/")) {
+				const topicAtClassification = activeDiscoveryTopic;
+				let classification: DiscoveryReplyClassification = "decision";
+
+				if (activePipelineKind === "spec" && activeProjectConfig && activeCwd) {
+					const classifierAbort = new AbortController();
+					discoveryLoopAbort = classifierAbort;
+					ctx.ui.notify(
+						"🤔 Checking whether this is a follow-up or a decision...",
+						"info",
+					);
+					classification = await classifyDiscoveryReply(
+						answer,
+						topicAtClassification,
+						activeProjectConfig,
+						activeCwd,
+						classifierAbort.signal,
+					);
+					if (discoveryLoopAbort === classifierAbort) {
+						discoveryLoopAbort = null;
+					}
+				}
+
+				// If another command changed state while the classifier was running, do not
+				// resurrect stale topic data.
+				if (
+					!discoveryLoopActive ||
+					activeDiscoveryTopic !== topicAtClassification
+				) {
+					return { action: "handled" as const };
+				}
+
+				if (classification === "followup") {
+					// Phase 3 will call runFollowUpStep() here. For this phase, keep the topic
+					// open and persist it so the classifier branch is observable and resumable.
+					persistDiscoveryLoopState();
+					ctx.ui.notify(
+						"Follow-up detected. The active discovery topic remains open; follow-up answering is added in Phase 3.",
+						"info",
+					);
+					return { action: "handled" as const };
+				}
+
 				const closedTopic: DiscoveryTopic = {
 					...activeDiscoveryTopic,
 					decision: answer,
@@ -1903,7 +2045,6 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					nextStep = "implementation";
 				}
 
-				// Suppress the host agent — extension handles the next turn
 				setImmediate(() => runDiscoveryStep(ctx, sessionLabel, nextStep));
 				return { action: "handled" as const };
 			}

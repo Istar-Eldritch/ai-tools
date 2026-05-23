@@ -157,6 +157,12 @@ describe("spec discovery loop", () => {
 		await vi.waitFor(() => {
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(2);
 		});
+		expect(mockRunAgentWithConfig.mock.calls[0][0]).toBe(
+			testProjectConfig.models.planDrafter,
+		);
+		expect(mockRunAgentWithConfig.mock.calls[1][0]).toBe(
+			testProjectConfig.models.planDrafter,
+		);
 
 		state = getLatestActiveSpecPipeline(cwd)!;
 		expect(state.discovery?.activeTopic).toBeNull();
@@ -185,6 +191,87 @@ describe("spec discovery loop", () => {
 				timestamp: state.discovery!.topics![0].timestamp,
 			},
 		]);
+	});
+
+	it("classifies question-shaped replies as follow-ups and keeps the active topic open", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx, notifications } = createMockCtx(cwd);
+
+		mockRunAgentWithConfig
+			.mockResolvedValueOnce({
+				output: "Should enterprise tenants require SSO?",
+			})
+			.mockResolvedValueOnce({ output: "FOLLOWUP" });
+
+		await pi.commands.get("spec")!.handler("Add authentication", ctx);
+
+		await vi.waitFor(() => {
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1);
+		});
+
+		const inputResult = await pi.events.get("input")!(
+			{
+				text: "What would optional SSO mean for local accounts?",
+				source: "user",
+			},
+			ctx,
+		);
+
+		expect(inputResult).toEqual({ action: "handled" });
+		expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(2);
+		expect(mockRunAgentWithConfig.mock.calls[1][0]).toBe(
+			testProjectConfig.models.agentCommitMessageWriter,
+		);
+		expect(mockRunAgentWithConfig.mock.calls[1][6]).toBe("commitMessageWriter");
+
+		const state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.discovery?.topics).toEqual([]);
+		expect(state.discovery?.activeTopic).toMatchObject({
+			question: "Should enterprise tenants require SSO?",
+			decision: null,
+		});
+		expect(
+			notifications.some((entry) =>
+				entry.message.includes("Follow-up detected"),
+			),
+		).toBe(true);
+	});
+
+	it("falls back to decision when the classifier fails", async () => {
+		const { default: specPipeline } = await import("./index.ts");
+		const pi = createMockPi();
+		specPipeline(pi as any);
+		const { ctx } = createMockCtx(cwd);
+
+		mockRunAgentWithConfig
+			.mockResolvedValueOnce({ output: "Should we support local auth?" })
+			.mockRejectedValueOnce(new Error("classifier unavailable"))
+			.mockResolvedValueOnce({ output: "READY_TO_DRAFT" });
+
+		await pi.commands.get("spec")!.handler("Add authentication", ctx);
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
+		);
+
+		const inputResult = await pi.events.get("input")!(
+			{ text: "local auth only for launch", source: "user" },
+			ctx,
+		);
+
+		expect(inputResult).toEqual({ action: "handled" });
+		await vi.waitFor(() =>
+			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3),
+		);
+
+		const state = getLatestActiveSpecPipeline(cwd)!;
+		expect(state.discovery?.topics).toHaveLength(1);
+		expect(state.discovery?.topics?.[0]).toMatchObject({
+			question: "Should we support local auth?",
+			decision: "local auth only for launch",
+		});
+		expect(state.discovery?.activeTopic).toBeNull();
 	});
 
 	it("preserves an open topic with decision null when /discovery-done is used", async () => {
