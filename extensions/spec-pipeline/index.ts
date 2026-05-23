@@ -74,7 +74,20 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 // Import types
-import type { SpecState, ImplementationState, RoadmapState, EpicState, HierarchyState, HierarchyLevel, ConversationalExchange, ProjectConfig, PipelineMode, ScopingState, ConversationalPipelineState, BrainstormState } from "./types.ts";
+import type {
+	SpecState,
+	ImplementationState,
+	RoadmapState,
+	EpicState,
+	HierarchyState,
+	HierarchyLevel,
+	ConversationalExchange,
+	ProjectConfig,
+	PipelineMode,
+	ScopingState,
+	ConversationalPipelineState,
+	BrainstormState,
+} from "./types.ts";
 
 // Import config
 import { loadPipelineConfig } from "./config.ts";
@@ -152,7 +165,6 @@ import {
 
 // Import agents
 
-
 // Import review
 import { retryFailedOperation } from "./review.ts";
 
@@ -171,44 +183,199 @@ import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 /** Common stop words for generating short names from descriptions */
 const STOP_WORDS = new Set([
 	// Articles, pronouns, determiners
-	"a", "an", "the", "i", "we", "you", "it", "he", "she", "they", "me", "us",
-	"my", "our", "your", "their", "its", "his", "her", "this", "that", "these",
-	"those", "some", "any", "all", "each", "every", "no", "not",
+	"a",
+	"an",
+	"the",
+	"i",
+	"we",
+	"you",
+	"it",
+	"he",
+	"she",
+	"they",
+	"me",
+	"us",
+	"my",
+	"our",
+	"your",
+	"their",
+	"its",
+	"his",
+	"her",
+	"this",
+	"that",
+	"these",
+	"those",
+	"some",
+	"any",
+	"all",
+	"each",
+	"every",
+	"no",
+	"not",
 	// Be/have/do verbs
-	"is", "are", "was", "were", "be", "been", "being",
-	"have", "has", "had", "having",
-	"do", "does", "did", "done", "doing",
+	"is",
+	"are",
+	"was",
+	"were",
+	"be",
+	"been",
+	"being",
+	"have",
+	"has",
+	"had",
+	"having",
+	"do",
+	"does",
+	"did",
+	"done",
+	"doing",
 	// Modal/auxiliary verbs
-	"will", "would", "can", "could", "should", "may", "might", "must", "shall",
+	"will",
+	"would",
+	"can",
+	"could",
+	"should",
+	"may",
+	"might",
+	"must",
+	"shall",
 	// Common action verbs (too generic for naming)
-	"want", "need", "like", "go", "get", "got", "let", "lets", "put", "set",
-	"take", "give", "tell", "say", "said", "know", "see", "look", "find",
-	"use", "used", "using", "try", "keep", "start", "run", "work", "call",
-	"come", "think", "also", "just", "even", "still", "way", "more", "much",
-	"many", "less", "most", "only", "already", "now", "here", "there",
+	"want",
+	"need",
+	"like",
+	"go",
+	"get",
+	"got",
+	"let",
+	"lets",
+	"put",
+	"set",
+	"take",
+	"give",
+	"tell",
+	"say",
+	"said",
+	"know",
+	"see",
+	"look",
+	"find",
+	"use",
+	"used",
+	"using",
+	"try",
+	"keep",
+	"start",
+	"run",
+	"work",
+	"call",
+	"come",
+	"think",
+	"also",
+	"just",
+	"even",
+	"still",
+	"way",
+	"more",
+	"much",
+	"many",
+	"less",
+	"most",
+	"only",
+	"already",
+	"now",
+	"here",
+	"there",
 	// Spec/dev action verbs (user intent, not content)
-	"add", "create", "make", "build", "implement", "write", "spec", "plan",
-	"design", "develop", "setup", "configure", "update", "modify", "change",
-	"fix", "address", "handle", "support", "enable", "allow", "ensure",
-	"improve", "optimize", "optimise", "refactor", "introduce", "provide",
+	"add",
+	"create",
+	"make",
+	"build",
+	"implement",
+	"write",
+	"spec",
+	"plan",
+	"design",
+	"develop",
+	"setup",
+	"configure",
+	"update",
+	"modify",
+	"change",
+	"fix",
+	"address",
+	"handle",
+	"support",
+	"enable",
+	"allow",
+	"ensure",
+	"improve",
+	"optimize",
+	"optimise",
+	"refactor",
+	"introduce",
+	"provide",
 	// Prepositions and conjunctions
-	"to", "for", "of", "in", "on", "at", "by", "up", "out", "off", "from",
-	"into", "with", "about", "between", "through", "after", "before",
-	"and", "or", "but", "so", "if", "then", "than", "when", "where", "how",
+	"to",
+	"for",
+	"of",
+	"in",
+	"on",
+	"at",
+	"by",
+	"up",
+	"out",
+	"off",
+	"from",
+	"into",
+	"with",
+	"about",
+	"between",
+	"through",
+	"after",
+	"before",
+	"and",
+	"or",
+	"but",
+	"so",
+	"if",
+	"then",
+	"than",
+	"when",
+	"where",
+	"how",
 	// Filler words
-	"new", "thing", "stuff", "feature", "functionality", "ability",
-	"something", "everything", "nothing", "really", "very", "quite",
-	"please", "thanks", "hey", "ok", "okay", "sure", "right",
+	"new",
+	"thing",
+	"stuff",
+	"feature",
+	"functionality",
+	"ability",
+	"something",
+	"everything",
+	"nothing",
+	"really",
+	"very",
+	"quite",
+	"please",
+	"thanks",
+	"hey",
+	"ok",
+	"okay",
+	"sure",
+	"right",
 ]);
 
 function generateShortName(text: string): string {
-	return text
-		.toLowerCase()
-		.replace(/[^a-z0-9\s]/g, " ")
-		.split(/\s+/)
-		.filter(word => word.length > 1 && !STOP_WORDS.has(word))
-		.slice(0, 4)
-		.join("_") || "spec";
+	return (
+		text
+			.toLowerCase()
+			.replace(/[^a-z0-9\s]/g, " ")
+			.split(/\s+/)
+			.filter((word) => word.length > 1 && !STOP_WORDS.has(word))
+			.slice(0, 4)
+			.join("_") || "spec"
+	);
 }
 
 /**
@@ -216,24 +383,33 @@ function generateShortName(text: string): string {
  * Returns { shortName }.
  */
 async function promptForShortName(
-	ctx: { ui: { input: (title: string, placeholder?: string) => Promise<string | undefined> } },
-	description: string
+	ctx: {
+		ui: {
+			input: (
+				title: string,
+				placeholder?: string,
+			) => Promise<string | undefined>;
+		};
+	},
+	description: string,
 ): Promise<{ shortName: string }> {
 	const suggested = generateShortName(description);
-	const userInput = await ctx.ui.input("Short name (used for file names):", suggested);
+	const userInput = await ctx.ui.input(
+		"Short name (used for file names):",
+		suggested,
+	);
 	// Sanitize whatever the user typed (or use suggested if they cancelled/left empty)
-	const raw = (userInput && userInput.trim()) ? userInput.trim() : suggested;
-	const shortName = raw
-		.toLowerCase()
-		.replace(/[^a-z0-9\s_-]/g, "")
-		.replace(/[\s-]+/g, "_")
-		.replace(/^_+|_+$/g, "")
-		|| "spec";
+	const raw = userInput && userInput.trim() ? userInput.trim() : suggested;
+	const shortName =
+		raw
+			.toLowerCase()
+			.replace(/[^a-z0-9\s_-]/g, "")
+			.replace(/[\s-]+/g, "_")
+			.replace(/^_+|_+$/g, "") || "spec";
 	return { shortName };
 }
 
 export default function (pi: ExtensionAPI) {
-
 	// ============================================
 	// UNIFIED CONVERSATIONAL MODE STATE
 	// ============================================
@@ -245,13 +421,18 @@ export default function (pi: ExtensionAPI) {
 	let activePipelineState: ConversationalPipelineState | null = null;
 
 	/** Which kind of pipeline is active: "spec", "hierarchy", "implement", or "brainstorm" */
-	let activePipelineKind: "spec" | "hierarchy" | "implement" | "brainstorm" | null = null;
+	let activePipelineKind:
+		| "spec"
+		| "hierarchy"
+		| "implement"
+		| "brainstorm"
+		| null = null;
 
 	/** Hierarchy level when activePipelineKind === "hierarchy" */
 	let activeHierarchyLevel: HierarchyLevel | null = null;
 
 	/** Parent context string for hierarchy pipelines (roadmap context, scoping context, etc.) */
-	let activeParentContext: string | undefined ;
+	let activeParentContext: string | undefined;
 
 	/** Function to persist the active pipeline state */
 	let activeStateSaveFn: (() => void) | null = null;
@@ -275,12 +456,13 @@ export default function (pi: ExtensionAPI) {
 	let exchangeCount = 0;
 
 	/** Pending scoping context from /plan → feature route, consumed by next /spec invocation */
-	let pendingScopingContext: string | undefined ;
+	let pendingScopingContext: string | undefined;
 
 	/** Flags for implement-discovery sessions (--no-plan, --no-review)
 	 * NOTE: Ephemeral (not persisted to disk) because discovery is conversational.
 	 * Flags are applied after /discovery-done when creating the implementation state. */
-	let pendingImplementFlags: { noPlan: boolean; noReview: boolean } | null = null;
+	let pendingImplementFlags: { noPlan: boolean; noReview: boolean } | null =
+		null;
 
 	/** Short name for implement-discovery session
 	 * NOTE: Ephemeral (not persisted) - cleared on mode exit */
@@ -292,18 +474,26 @@ export default function (pi: ExtensionAPI) {
 
 	/** Helper to get the active state as SpecState (only valid when activePipelineKind === "spec") */
 	function getActiveSpecState(): SpecState | null {
-		return activePipelineKind === "spec" ? activePipelineState as SpecState : null;
+		return activePipelineKind === "spec"
+			? (activePipelineState as SpecState)
+			: null;
 	}
 
 	/** Helper to get the active state as HierarchyState (only valid when activePipelineKind === "hierarchy") */
 	function getActiveHierarchyState(): HierarchyState | null {
-		return activePipelineKind === "hierarchy" ? activePipelineState as HierarchyState : null;
+		return activePipelineKind === "hierarchy"
+			? (activePipelineState as HierarchyState)
+			: null;
 	}
 
 	/**
 	 * Enter scoping mode (no pipeline state, just ephemeral scoping)
 	 */
-	function enterScopingMode(cwd: string, projectConfig: ProjectConfig, scopingState: ScopingState): void {
+	function enterScopingMode(
+		cwd: string,
+		projectConfig: ProjectConfig,
+		scopingState: ScopingState,
+	): void {
 		pipelineMode = "scoping";
 		activePipelineState = null;
 		activePipelineKind = null;
@@ -320,7 +510,12 @@ export default function (pi: ExtensionAPI) {
 	/**
 	 * Enter discovery or drafting mode for a spec pipeline
 	 */
-	function enterSpecMode(mode: "discovery" | "drafting", state: SpecState, cwd: string, projectConfig: ProjectConfig): void {
+	function enterSpecMode(
+		mode: "discovery" | "drafting",
+		state: SpecState,
+		cwd: string,
+		projectConfig: ProjectConfig,
+	): void {
 		pipelineMode = mode;
 		activePipelineState = state;
 		activePipelineKind = "spec";
@@ -331,9 +526,10 @@ export default function (pi: ExtensionAPI) {
 		activeProjectConfig = projectConfig;
 		activeScopingState = null;
 		lastUserMessage = "";
-		exchangeCount = mode === "discovery"
-			? state.discovery?.conversationHistory?.length ?? 0
-			: state.drafting?.conversationHistory?.length ?? 0;
+		exchangeCount =
+			mode === "discovery"
+				? (state.discovery?.conversationHistory?.length ?? 0)
+				: (state.drafting?.conversationHistory?.length ?? 0);
 	}
 
 	/**
@@ -345,7 +541,7 @@ export default function (pi: ExtensionAPI) {
 		level: HierarchyLevel,
 		cwd: string,
 		projectConfig: ProjectConfig,
-		parentContext?: string
+		parentContext?: string,
 	): void {
 		pipelineMode = mode;
 		activePipelineState = state;
@@ -353,16 +549,18 @@ export default function (pi: ExtensionAPI) {
 		activeHierarchyLevel = level;
 		activeParentContext = parentContext;
 		activeStateSaveFn = () => {
-			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			if (state.level === "roadmap")
+				saveRoadmapState(cwd, state as RoadmapState);
 			else saveEpicState(cwd, state as EpicState);
 		};
 		activeCwd = cwd;
 		activeProjectConfig = projectConfig;
 		activeScopingState = null;
 		lastUserMessage = "";
-		exchangeCount = mode === "discovery"
-			? state.discovery?.conversationHistory?.length ?? 0
-			: state.drafting?.conversationHistory?.length ?? 0;
+		exchangeCount =
+			mode === "discovery"
+				? (state.discovery?.conversationHistory?.length ?? 0)
+				: (state.drafting?.conversationHistory?.length ?? 0);
 	}
 
 	/**
@@ -374,20 +572,20 @@ export default function (pi: ExtensionAPI) {
 		discoveryState: ConversationalPipelineState,
 		flags: { noPlan: boolean; noReview: boolean },
 		shortName: string,
-		timestamp: string
+		timestamp: string,
 	): void {
 		pipelineMode = "discovery";
 		activePipelineState = discoveryState;
 		activePipelineKind = "implement";
 		activeHierarchyLevel = null;
 		activeParentContext = undefined;
-		activeStateSaveFn = null;  // No persistence for implement-discovery
+		activeStateSaveFn = null; // No persistence for implement-discovery
 		activeCwd = cwd;
 		activeProjectConfig = projectConfig;
 		activeScopingState = null;
 		lastUserMessage = "";
 		exchangeCount = discoveryState.discovery?.conversationHistory?.length ?? 0;
-		
+
 		// Store flags and metadata for use at /discovery-done
 		pendingImplementFlags = flags;
 		pendingImplementShortName = shortName;
@@ -397,7 +595,11 @@ export default function (pi: ExtensionAPI) {
 	/**
 	 * Enter brainstorm mode
 	 */
-	function enterBrainstormMode(cwd: string, projectConfig: ProjectConfig, brainstormState: BrainstormState): void {
+	function enterBrainstormMode(
+		cwd: string,
+		projectConfig: ProjectConfig,
+		brainstormState: BrainstormState,
+	): void {
 		pipelineMode = "brainstorm";
 		activePipelineState = null;
 		activePipelineKind = "brainstorm";
@@ -446,7 +648,7 @@ export default function (pi: ExtensionAPI) {
 	/**
 	 * Build the unified discovery system prompt injection for before_agent_start.
 	 * This turns the host LLM into a discovery agent for any pipeline type.
-	 * 
+	 *
 	 * @param state - The conversational pipeline state (spec, hierarchy, or implement)
 	 * @param projectConfig - The project configuration
 	 * @param doneCommand - Command to tell user (e.g., "/discovery-done")
@@ -461,13 +663,18 @@ export default function (pi: ExtensionAPI) {
 		doneCommand: string,
 		sessionLabel: string,
 		nextStep: string,
-		parentContext?: string
+		parentContext?: string,
 	): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+		const SYSTEM_PROMPTS = createSystemPrompts(
+			buildPromptOptions(projectConfig),
+		);
 		const discoveryPrompt = SYSTEM_PROMPTS.discoveryAgent;
 
 		let conversationContext = "";
-		if (state.discovery?.conversationHistory && state.discovery.conversationHistory.length > 0) {
+		if (
+			state.discovery?.conversationHistory &&
+			state.discovery.conversationHistory.length > 0
+		) {
 			conversationContext = "\n\n## Previous Discovery Exchanges\n\n";
 			for (const exchange of state.discovery.conversationHistory) {
 				conversationContext += `**User**: ${exchange.userMessage}\n\n`;
@@ -510,15 +717,19 @@ IMPORTANT: You are in DISCOVERY MODE.
 - If the user asks you to proceed, start planning, or implement, tell them to type ${doneCommand} instead.
 - Your only valid outputs are: (a) one assumption proposal, (b) a request for clarification, or (c) the instruction to type ${doneCommand} when discovery is complete.
 `;
-
 	}
 
 	/**
 	 * Build the spec drafting system prompt injection for before_agent_start.
 	 * This turns the host LLM into a spec drafter.
 	 */
-	function buildDraftingPromptInjection(state: SpecState, projectConfig: ProjectConfig): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+	function buildDraftingPromptInjection(
+		state: SpecState,
+		projectConfig: ProjectConfig,
+	): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(
+			buildPromptOptions(projectConfig),
+		);
 		const specDrafterPrompt = SYSTEM_PROMPTS.specDrafter;
 
 		const fullSpecPath = path.join(activeCwd, state.specPath);
@@ -528,7 +739,10 @@ IMPORTANT: You are in DISCOVERY MODE.
 			: "";
 
 		let draftingHistory = "";
-		if (state.drafting?.conversationHistory && state.drafting.conversationHistory.length > 0) {
+		if (
+			state.drafting?.conversationHistory &&
+			state.drafting.conversationHistory.length > 0
+		) {
 			draftingHistory = `\n\n## Drafting Progress\n\nYou have had ${state.drafting.conversationHistory.length} exchanges with the user while drafting this spec.\n`;
 		}
 
@@ -567,8 +781,13 @@ IMPORTANT: You are in SPEC DRAFTING MODE. Focus on creating/refining the specifi
 	 * Build the scoping system prompt injection for before_agent_start.
 	 * This turns the host LLM into a scoping agent for /plan.
 	 */
-	function buildScopingPromptInjection(scopingState: ScopingState, projectConfig: ProjectConfig): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+	function buildScopingPromptInjection(
+		scopingState: ScopingState,
+		projectConfig: ProjectConfig,
+	): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(
+			buildPromptOptions(projectConfig),
+		);
 		const scopingPrompt = SYSTEM_PROMPTS.scopingAgent;
 
 		let conversationContext = "";
@@ -616,7 +835,9 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 
 		const sections: string[] = [];
 		sections.push("## Scoping Context\n");
-		sections.push("The following information was gathered during a scoping assessment:\n");
+		sections.push(
+			"The following information was gathered during a scoping assessment:\n",
+		);
 
 		for (let i = 0; i < scopingState.conversationHistory.length; i++) {
 			const exchange = scopingState.conversationHistory[i];
@@ -633,12 +854,16 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 	 * Parse the recommended level from the scoping agent's conversation.
 	 * Looks for "**Recommended Level**: roadmap|epic|feature" in the last few exchanges.
 	 */
-	function parseRecommendedLevel(scopingState: ScopingState): HierarchyLevel | null {
+	function parseRecommendedLevel(
+		scopingState: ScopingState,
+	): HierarchyLevel | null {
 		// Search from the most recent exchange backwards
 		for (let i = scopingState.conversationHistory.length - 1; i >= 0; i--) {
 			const response = scopingState.conversationHistory[i].assistantResponse;
 			// Match patterns like "**Recommended Level**: roadmap" or "Recommended Level: feature"
-			const match = response.match(/\*?\*?Recommended\s+Level\*?\*?\s*:\s*(roadmap|epic|feature)/i);
+			const match = response.match(
+				/\*?\*?Recommended\s+Level\*?\*?\s*:\s*(roadmap|epic|feature)/i,
+			);
 			if (match) {
 				return match[1].toLowerCase() as HierarchyLevel;
 			}
@@ -654,10 +879,15 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 		state: HierarchyState,
 		level: HierarchyLevel,
 		projectConfig: ProjectConfig,
-		parentContext?: string
+		parentContext?: string,
 	): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
-		const drafterPrompt = level === "roadmap" ? SYSTEM_PROMPTS.roadmapDrafter : SYSTEM_PROMPTS.epicDrafter;
+		const SYSTEM_PROMPTS = createSystemPrompts(
+			buildPromptOptions(projectConfig),
+		);
+		const drafterPrompt =
+			level === "roadmap"
+				? SYSTEM_PROMPTS.roadmapDrafter
+				: SYSTEM_PROMPTS.epicDrafter;
 
 		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
 		const fullDocPath = path.join(activeCwd, state.docPath);
@@ -671,7 +901,10 @@ IMPORTANT: You are in SCOPING MODE. Do NOT write specs, plans, or code. Only ass
 			: "";
 
 		let draftingHistory = "";
-		if (state.drafting?.conversationHistory && state.drafting.conversationHistory.length > 0) {
+		if (
+			state.drafting?.conversationHistory &&
+			state.drafting.conversationHistory.length > 0
+		) {
 			draftingHistory = `\n\n## Drafting Progress\n\nYou have had ${state.drafting.conversationHistory.length} exchanges with the user while drafting this ${level}.\n`;
 		}
 
@@ -710,8 +943,13 @@ IMPORTANT: You are in ${levelLabel.toUpperCase()} DRAFTING MODE. Focus on creati
 	 * Build the brainstorm system prompt injection for before_agent_start.
 	 * This turns the host LLM into a brainstorming thought partner.
 	 */
-	function buildBrainstormPromptInjection(brainstormState: BrainstormState, projectConfig: ProjectConfig): string {
-		const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+	function buildBrainstormPromptInjection(
+		brainstormState: BrainstormState,
+		projectConfig: ProjectConfig,
+	): string {
+		const SYSTEM_PROMPTS = createSystemPrompts(
+			buildPromptOptions(projectConfig),
+		);
 		const brainstormPrompt = SYSTEM_PROMPTS.brainstormAgent;
 
 		let conversationContext = "";
@@ -798,13 +1036,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 		if (!activePipelineState) return;
 
-		const doneCmd = "/discovery-done";  // Unified for all pipeline types
-		const draftDoneCmd = activePipelineKind === "spec" ? "/spec-draft-done" : "/draft-done";
-		const kindLabel = activePipelineKind === "hierarchy" && activeHierarchyLevel
-			? activeHierarchyLevel.charAt(0).toUpperCase() + activeHierarchyLevel.slice(1)
-			: activePipelineKind === "implement"
-				? "Implementation"
-				: "Spec";
+		const doneCmd = "/discovery-done"; // Unified for all pipeline types
+		const draftDoneCmd =
+			activePipelineKind === "spec" ? "/spec-draft-done" : "/draft-done";
+		const kindLabel =
+			activePipelineKind === "hierarchy" && activeHierarchyLevel
+				? activeHierarchyLevel.charAt(0).toUpperCase() +
+					activeHierarchyLevel.slice(1)
+				: activePipelineKind === "implement"
+					? "Implementation"
+					: "Spec";
 
 		if (pipelineMode === "discovery") {
 			ctx.ui.setWidget("spec-pipeline-status", [
@@ -851,7 +1092,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	 */
 	async function endDiscoveryAndStartDrafting(ctx: any): Promise<void> {
 		const specState = getActiveSpecState();
-		if (pipelineMode !== "discovery" || !specState || !activeCwd || !activeProjectConfig) {
+		if (
+			pipelineMode !== "discovery" ||
+			!specState ||
+			!activeCwd ||
+			!activeProjectConfig
+		) {
 			ctx.ui.notify("No active discovery session.", "error");
 			return;
 		}
@@ -861,18 +1107,27 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		const projectConfig = activeProjectConfig;
 
 		// Build the discovery summary from conversation history
-		if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
-			state.discovery.discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+		if (
+			state.discovery &&
+			state.discovery.conversationHistory &&
+			state.discovery.conversationHistory.length > 0
+		) {
+			state.discovery.discoverySummary = generateConversationalDiscoverySummary(
+				state.discovery.conversationHistory,
+			);
 		}
 
 		state.discovery!.completed = true;
 		const discoveryExchanges = exchangeCount;
 
-		ctx.ui.notify(formatStepBanner(
-			"DISCOVERY COMPLETE",
-			`${discoveryExchanges} exchanges recorded. Entering spec drafting mode...`,
-			"✅"
-		), "success");
+		ctx.ui.notify(
+			formatStepBanner(
+				"DISCOVERY COMPLETE",
+				`${discoveryExchanges} exchanges recorded. Entering spec drafting mode...`,
+				"✅",
+			),
+			"success",
+		);
 
 		// Initialize drafting state
 		state.drafting = {
@@ -888,11 +1143,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		// Update widget
 		updateModeWidget(ctx);
 
-		ctx.ui.notify(formatStepBanner(
-			"SPEC DRAFTING MODE",
-			"The LLM will now draft the specification. Guide it conversationally.",
-			"📝"
-		), "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				"SPEC DRAFTING MODE",
+				"The LLM will now draft the specification. Guide it conversationally.",
+				"📝",
+			),
+			"info",
+		);
 		ctx.ui.notify(`Spec file will be written to: ${state.specPath}`, "info");
 		ctx.ui.notify("When satisfied, type /spec-draft-done to proceed.", "info");
 
@@ -904,16 +1162,21 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 		pi.sendUserMessage(
 			`Please create a technical specification for: ${state.description}${discoveryContext}\n\n` +
-			`Write the spec to this exact path: ${fullSpecPath}\n` +
-			`Use spec timestamp: ${state.specTimestamp}\n\n` +
-			`Explore the codebase first to understand existing patterns, then create a comprehensive spec.`
+				`Write the spec to this exact path: ${fullSpecPath}\n` +
+				`Use spec timestamp: ${state.specTimestamp}\n\n` +
+				`Explore the codebase first to understand existing patterns, then create a comprehensive spec.`,
 		);
 	}
 
 	/**
 	 * Enter drafting mode directly (for --quick or after review revisions)
 	 */
-	function enterDraftingMode(state: SpecState, cwd: string, projectConfig: ProjectConfig, ctx: any): void {
+	function enterDraftingMode(
+		state: SpecState,
+		cwd: string,
+		projectConfig: ProjectConfig,
+		ctx: any,
+	): void {
 		// Initialize drafting state if needed
 		if (!state.drafting) {
 			state.drafting = {
@@ -935,7 +1198,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	 */
 	async function endSpecDrafting(ctx: any): Promise<void> {
 		const specState = getActiveSpecState();
-		if (pipelineMode !== "drafting" || !specState || !activeCwd || !activeProjectConfig) {
+		if (
+			pipelineMode !== "drafting" ||
+			!specState ||
+			!activeCwd ||
+			!activeProjectConfig
+		) {
 			ctx.ui.notify("No active drafting session.", "error");
 			return;
 		}
@@ -947,25 +1215,35 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 		// Validate spec file exists
 		if (!fs.existsSync(fullSpecPath)) {
-			ctx.ui.notify(`Spec file not found at: ${state.specPath}\n\nThe LLM needs to write the spec file first. Continue chatting to guide it.`, "error");
+			ctx.ui.notify(
+				`Spec file not found at: ${state.specPath}\n\nThe LLM needs to write the spec file first. Continue chatting to guide it.`,
+				"error",
+			);
 			return;
 		}
 
 		// Read the spec content
 		state.specDraft = fs.readFileSync(fullSpecPath, "utf-8");
 		if (!state.specDraft.trim()) {
-			ctx.ui.notify("Spec file is empty. Continue chatting to guide the LLM.", "error");
+			ctx.ui.notify(
+				"Spec file is empty. Continue chatting to guide the LLM.",
+				"error",
+			);
 			return;
 		}
 
 		// Warn if the spec has no phase table — /implement will fall back to a single phase
-		const { paths: detectedPhases } = extractPhases(state.specDraft, state.specTimestamp, "check");
+		const { paths: detectedPhases } = extractPhases(
+			state.specDraft,
+			state.specTimestamp,
+			"check",
+		);
 		if (detectedPhases.length === 0) {
 			ctx.ui.notify(
 				"⚠️  No phase table found in the spec.\n" +
-				"/implement will treat this as a single phase.\n" +
-				"Add a phases table (| Phase | Focus | Effort |) if you want parallel phase planning.",
-				"warning"
+					"/implement will treat this as a single phase.\n" +
+					"Add a phases table (| Phase | Focus | Effort |) if you want parallel phase planning.",
+				"warning",
 			);
 		}
 
@@ -978,40 +1256,56 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		// Exit drafting mode
 		const { exchangeCount: draftExchanges } = exitMode();
 
-		ctx.ui.notify(formatStepBanner(
-			"SPEC DRAFTING COMPLETE",
-			`${draftExchanges} exchanges. Creating commit...`,
-			"✅"
-		), "success");
+		ctx.ui.notify(
+			formatStepBanner(
+				"SPEC DRAFTING COMPLETE",
+				`${draftExchanges} exchanges. Creating commit...`,
+				"✅",
+			),
+			"success",
+		);
 
 		// Create git commit scoped to the spec file only (dirty tree is OK for doc pipelines)
 		// Extract doc name from filename for better commit messages
 		const { extractDocName } = await import("./commit-agent.ts");
 		const docName = extractDocName(state.specFilename);
-		
+
 		const commitResult = await createAgentCommit(
-			cwd, state,
-			{ role: "specDrafter", modelConfig: projectConfig.models.planDrafter, docName },
+			cwd,
+			state,
+			{
+				role: "specDrafter",
+				modelConfig: projectConfig.models.planDrafter,
+				docName,
+			},
 			projectConfig.models.agentCommitMessageWriter,
 			() => saveSpecState(cwd, state),
 			ctx.ui.notify.bind(ctx.ui),
-			[state.specPath]
+			[state.specPath],
 		);
 
 		if (!commitResult.success) {
-			ctx.ui.notify("Warning: Failed to create commit for spec draft", "warning");
+			ctx.ui.notify(
+				"Warning: Failed to create commit for spec draft",
+				"warning",
+			);
 		}
 
 		// Present approval options to user
-		const specPreview = state.specDraft.length > 3000
-			? state.specDraft.slice(0, 3000) + "\n\n[... truncated — read the file for full content ...]"
-			: state.specDraft;
+		const specPreview =
+			state.specDraft.length > 3000
+				? state.specDraft.slice(0, 3000) +
+					"\n\n[... truncated — read the file for full content ...]"
+				: state.specDraft;
 
-		ctx.ui.notify(formatStepBanner(
-			"User Approval Required",
-			`Review the spec at: ${state.specPath}`,
-			"👤"
-		), "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				"User Approval Required",
+				`Review the spec at: ${state.specPath}`,
+				"👤",
+			),
+			"info",
+		);
 
 		const choices = [
 			"Approve spec and start implementation now",
@@ -1021,7 +1315,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		];
 		const choice = await ctx.ui.select(
 			"How would you like to proceed?",
-			choices
+			choices,
 		);
 
 		if (choice === choices[0] || choice === choices[1]) {
@@ -1031,11 +1325,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			saveSpecState(cwd, state);
 			clearPipelineWidget(ctx);
 
-			ctx.ui.notify(formatStepBanner(
-				"🎉 Spec Creation Complete!",
-				`Spec: ${state.specPath}`,
-				"✅"
-			), "success");
+			ctx.ui.notify(
+				formatStepBanner(
+					"🎉 Spec Creation Complete!",
+					`Spec: ${state.specPath}`,
+					"✅",
+				),
+				"success",
+			);
 
 			if (choice === choices[1]) {
 				ctx.ui.notify(`Run: /implement ${state.specPath}`, "info");
@@ -1053,11 +1350,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			implState.checkpoints = [];
 			saveImplState(cwd, implState);
 
-			ctx.ui.notify(formatStepBanner(
-				"IMPLEMENTATION STARTED",
-				`ID: ${implState.id}`,
-				"🚀"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner("IMPLEMENTATION STARTED", `ID: ${implState.id}`, "🚀"),
+				"info",
+			);
 			updateImplWidget(ctx, implState, "Initializing...");
 
 			await runImplementPipeline(implState, cwd, projectConfig, ctx);
@@ -1077,16 +1373,19 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		state.drafting!.completed = false;
 		enterDraftingMode(state, cwd, projectConfig, ctx);
 
-		ctx.ui.notify(formatStepBanner(
-			"REVISION MODE",
-			"Continue chatting to refine the spec.",
-			"📝"
-		), "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				"REVISION MODE",
+				"Continue chatting to refine the spec.",
+				"📝",
+			),
+			"info",
+		);
 		ctx.ui.notify("Type /spec-draft-done when satisfied.", "info");
 
 		// Kick off revision
 		pi.sendUserMessage(
-			`Please read the current spec at ${fullSpecPath} and let me guide you on revisions.`
+			`Please read the current spec at ${fullSpecPath} and let me guide you on revisions.`,
 		);
 	}
 
@@ -1095,7 +1394,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	 */
 	async function endHierarchyDrafting(ctx: any): Promise<void> {
 		const hierState = getActiveHierarchyState();
-		if (pipelineMode !== "drafting" || !hierState || !activeCwd || !activeProjectConfig) {
+		if (
+			pipelineMode !== "drafting" ||
+			!hierState ||
+			!activeCwd ||
+			!activeProjectConfig
+		) {
 			ctx.ui.notify("No active hierarchy drafting session.", "error");
 			return;
 		}
@@ -1110,14 +1414,20 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 		// Validate document file exists
 		if (!fs.existsSync(fullDocPath)) {
-			ctx.ui.notify(`Document file not found at: ${state.docPath}\n\nThe LLM needs to write the document file first. Continue chatting to guide it.`, "error");
+			ctx.ui.notify(
+				`Document file not found at: ${state.docPath}\n\nThe LLM needs to write the document file first. Continue chatting to guide it.`,
+				"error",
+			);
 			return;
 		}
 
 		// Read the document content
 		state.docContent = fs.readFileSync(fullDocPath, "utf-8");
 		if (!state.docContent.trim()) {
-			ctx.ui.notify("Document file is empty. Continue chatting to guide the LLM.", "error");
+			ctx.ui.notify(
+				"Document file is empty. Continue chatting to guide the LLM.",
+				"error",
+			);
 			return;
 		}
 
@@ -1131,41 +1441,56 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		// Exit drafting mode
 		const { exchangeCount: draftExchanges } = exitMode();
 
-		ctx.ui.notify(formatStepBanner(
-			`${levelLabel.toUpperCase()} DRAFTING COMPLETE`,
-			`${draftExchanges} exchanges. Creating commit...`,
-			"✅"
-		), "success");
+		ctx.ui.notify(
+			formatStepBanner(
+				`${levelLabel.toUpperCase()} DRAFTING COMPLETE`,
+				`${draftExchanges} exchanges. Creating commit...`,
+				"✅",
+			),
+			"success",
+		);
 
 		// Create git commit scoped to the doc file only (dirty tree is OK for doc pipelines)
 		const drafterRole = level === "roadmap" ? "roadmapDrafter" : "epicDrafter";
-		
+
 		// Extract doc name from filename for better commit messages
 		const { extractDocName } = await import("./commit-agent.ts");
 		const docName = extractDocName(state.docFilename);
-		
+
 		const commitResult = await createAgentCommit(
-			cwd, state,
-			{ role: drafterRole, modelConfig: projectConfig.models.planDrafter, docName },
+			cwd,
+			state,
+			{
+				role: drafterRole,
+				modelConfig: projectConfig.models.planDrafter,
+				docName,
+			},
 			projectConfig.models.agentCommitMessageWriter,
 			() => {
-				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+				if (state.level === "roadmap")
+					saveRoadmapState(cwd, state as RoadmapState);
 				else saveEpicState(cwd, state as EpicState);
 			},
 			ctx.ui.notify.bind(ctx.ui),
-			[state.docPath]
+			[state.docPath],
 		);
 
 		if (!commitResult.success) {
-			ctx.ui.notify("Warning: Failed to create commit for document draft", "warning");
+			ctx.ui.notify(
+				"Warning: Failed to create commit for document draft",
+				"warning",
+			);
 		}
 
 		// Present approval options to user
-		ctx.ui.notify(formatStepBanner(
-			"User Approval Required",
-			`Review the ${level} document at: ${state.docPath}`,
-			"👤"
-		), "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				"User Approval Required",
+				`Review the ${level} document at: ${state.docPath}`,
+				"👤",
+			),
+			"info",
+		);
 
 		const choices = [
 			`Approve ${level}`,
@@ -1174,13 +1499,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		];
 		const choice = await ctx.ui.select(
 			"How would you like to proceed?",
-			choices
+			choices,
 		);
 
 		if (choice === choices[0]) {
 			// Approve — continue to child extraction and completion
 			state.docApproved = true;
-			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			if (state.level === "roadmap")
+				saveRoadmapState(cwd, state as RoadmapState);
 			else saveEpicState(cwd, state as EpicState);
 
 			// Run the hierarchy pipeline for child extraction and completion
@@ -1191,7 +1517,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		if (choice === choices[2]) {
 			// Cancel
 			state.stage = "cancelled";
-			if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+			if (state.level === "roadmap")
+				saveRoadmapState(cwd, state as RoadmapState);
 			else saveEpicState(cwd, state as EpicState);
 			clearPipelineWidget(ctx);
 			ctx.ui.notify("Pipeline cancelled.", "info");
@@ -1204,19 +1531,29 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
 		else saveEpicState(cwd, state as EpicState);
 
-		enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
+		enterHierarchyMode(
+			"drafting",
+			state,
+			level,
+			cwd,
+			projectConfig,
+			parentContext,
+		);
 		updateModeWidget(ctx);
 
-		ctx.ui.notify(formatStepBanner(
-			"REVISION MODE",
-			`Continue chatting to refine the ${level} document.`,
-			"📝"
-		), "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				"REVISION MODE",
+				`Continue chatting to refine the ${level} document.`,
+				"📝",
+			),
+			"info",
+		);
 		ctx.ui.notify("Type /draft-done when satisfied.", "info");
 
 		// Kick off revision
 		pi.sendUserMessage(
-			`Please read the current ${level} document at ${fullDocPath} and let me guide you on revisions.`
+			`Please read the current ${level} document at ${fullDocPath} and let me guide you on revisions.`,
 		);
 	}
 
@@ -1237,49 +1574,60 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		let contextLabel: string;
 
 		if (pipelineMode === "scoping" && activeScopingState) {
-			injection = buildScopingPromptInjection(activeScopingState, activeProjectConfig);
+			injection = buildScopingPromptInjection(
+				activeScopingState,
+				activeProjectConfig,
+			);
 			customType = "spec-scoping-context";
 			contextLabel = `[SCOPING MODE ACTIVE - Assessing scope for: ${activeScopingState.description}]`;
 		} else if (pipelineMode === "discovery" && activePipelineState) {
 			let sessionLabel = "Spec";
 			let nextStep = "proceed to spec drafting";
-			
+
 			if (activePipelineKind === "spec") {
 				sessionLabel = "Spec";
 				nextStep = "proceed to spec drafting";
 			} else if (activePipelineKind === "hierarchy") {
-				sessionLabel = activeHierarchyLevel!.charAt(0).toUpperCase() + activeHierarchyLevel!.slice(1);
+				sessionLabel =
+					activeHierarchyLevel!.charAt(0).toUpperCase() +
+					activeHierarchyLevel!.slice(1);
 				nextStep = `proceed to ${activeHierarchyLevel} drafting`;
 			} else if (activePipelineKind === "implement") {
 				sessionLabel = "Implementation";
 				nextStep = "proceed to implementation";
 			}
-			
+
 			injection = buildUnifiedDiscoveryPrompt(
 				activePipelineState,
 				activeProjectConfig,
 				"/discovery-done",
 				sessionLabel,
 				nextStep,
-				activeParentContext
+				activeParentContext,
 			);
 			customType = "spec-discovery-context";
 			contextLabel = `[DISCOVERY MODE ACTIVE - Exploring requirements for: ${activePipelineState.description}]`;
 		} else if (pipelineMode === "drafting" && activePipelineState) {
 			if (activePipelineKind === "spec") {
-				injection = buildDraftingPromptInjection(activePipelineState as SpecState, activeProjectConfig);
+				injection = buildDraftingPromptInjection(
+					activePipelineState as SpecState,
+					activeProjectConfig,
+				);
 			} else {
 				injection = buildHierarchyDraftingPromptInjection(
 					activePipelineState as HierarchyState,
 					activeHierarchyLevel!,
 					activeProjectConfig,
-					activeParentContext
+					activeParentContext,
 				);
 			}
 			customType = "spec-drafting-context";
 			contextLabel = `[DRAFTING MODE ACTIVE - Creating ${activePipelineKind === "spec" ? "spec" : activeHierarchyLevel} for: ${activePipelineState.description}]`;
 		} else if (pipelineMode === "brainstorm" && activeBrainstormState) {
-			injection = buildBrainstormPromptInjection(activeBrainstormState, activeProjectConfig);
+			injection = buildBrainstormPromptInjection(
+				activeBrainstormState,
+				activeProjectConfig,
+			);
 			customType = "spec-brainstorm-context";
 			contextLabel = `[BRAINSTORM MODE ACTIVE - Exploring: ${activeBrainstormState.description}]`;
 		} else {
@@ -1360,14 +1708,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					activePipelineState.discovery!.conversationHistory = [];
 				}
 				activePipelineState.discovery!.conversationHistory.push(exchange);
-				exchangeCount = activePipelineState.discovery!.conversationHistory.length;
+				exchangeCount =
+					activePipelineState.discovery!.conversationHistory.length;
 				activeStateSaveFn?.();
 			} else if (pipelineMode === "drafting" && activePipelineState) {
 				if (!activePipelineState.drafting!.conversationHistory) {
 					activePipelineState.drafting!.conversationHistory = [];
 				}
 				activePipelineState.drafting!.conversationHistory.push(exchange);
-				exchangeCount = activePipelineState.drafting!.conversationHistory.length;
+				exchangeCount =
+					activePipelineState.drafting!.conversationHistory.length;
 				activeStateSaveFn?.();
 			}
 
@@ -1411,7 +1761,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		description: "End spec drafting and proceed to approval",
 		handler: async (_args, ctx) => {
 			if (pipelineMode !== "drafting" || activePipelineKind !== "spec") {
-				ctx.ui.notify("No active spec drafting session. Use /spec to start one.", "error");
+				ctx.ui.notify(
+					"No active spec drafting session. Use /spec to start one.",
+					"error",
+				);
 				return;
 			}
 
@@ -1420,9 +1773,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	});
 
 	pi.registerCommand("discovery-done", {
-		description: "End discovery and proceed to next phase (spec drafting, hierarchy drafting, or implementation)",
+		description:
+			"End discovery and proceed to next phase (spec drafting, hierarchy drafting, or implementation)",
 		handler: async (_args, ctx) => {
-			if (pipelineMode !== "discovery" || !activePipelineKind || !activePipelineState || !activeCwd || !activeProjectConfig) {
+			if (
+				pipelineMode !== "discovery" ||
+				!activePipelineKind ||
+				!activePipelineState ||
+				!activeCwd ||
+				!activeProjectConfig
+			) {
 				ctx.ui.notify("No active discovery session.", "error");
 				return;
 			}
@@ -1430,7 +1790,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (exchangeCount === 0) {
 				const proceed = await ctx.ui.confirm(
 					"No Discovery Exchanges",
-					"No conversation exchanges recorded yet. Proceed anyway?"
+					"No conversation exchanges recorded yet. Proceed anyway?",
 				);
 				if (!proceed) return;
 			}
@@ -1448,8 +1808,15 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 
 				// Build the discovery summary from conversation history
-				if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
-					state.discovery.discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+				if (
+					state.discovery &&
+					state.discovery.conversationHistory &&
+					state.discovery.conversationHistory.length > 0
+				) {
+					state.discovery.discoverySummary =
+						generateConversationalDiscoverySummary(
+							state.discovery.conversationHistory,
+						);
 				}
 
 				state.discovery!.completed = true;
@@ -1461,11 +1828,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				const parentContext = activeParentContext;
 				const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
 
-				ctx.ui.notify(formatStepBanner(
-					"DISCOVERY COMPLETE",
-					`${discoveryExchanges} exchanges recorded. Entering ${level} drafting mode...`,
-					"✅"
-				), "success");
+				ctx.ui.notify(
+					formatStepBanner(
+						"DISCOVERY COMPLETE",
+						`${discoveryExchanges} exchanges recorded. Entering ${level} drafting mode...`,
+						"✅",
+					),
+					"success",
+				);
 
 				// Initialize drafting state and transition to drafting mode
 				state.drafting = {
@@ -1473,20 +1843,34 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					completed: false,
 				};
 				state.stage = "drafting";
-				if (state.level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
+				if (state.level === "roadmap")
+					saveRoadmapState(cwd, state as RoadmapState);
 				else saveEpicState(cwd, state as EpicState);
 
 				// Enter hierarchy drafting mode
-				enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
+				enterHierarchyMode(
+					"drafting",
+					state,
+					level,
+					cwd,
+					projectConfig,
+					parentContext,
+				);
 				updateModeWidget(ctx);
 
-				ctx.ui.notify(formatStepBanner(
-					`${levelLabel.toUpperCase()} DRAFTING MODE`,
-					`The LLM will draft the ${level} document. Guide it conversationally.`,
-					"📝"
-				), "info");
+				ctx.ui.notify(
+					formatStepBanner(
+						`${levelLabel.toUpperCase()} DRAFTING MODE`,
+						`The LLM will draft the ${level} document. Guide it conversationally.`,
+						"📝",
+					),
+					"info",
+				);
 				ctx.ui.notify(`Document will be written to: ${state.docPath}`, "info");
-				ctx.ui.notify("When satisfied, type /draft-done to proceed to approval.", "info");
+				ctx.ui.notify(
+					"When satisfied, type /draft-done to proceed to approval.",
+					"info",
+				);
 
 				// Send the kickoff message
 				const fullDocPath = path.join(cwd, state.docPath);
@@ -1496,9 +1880,9 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 				pi.sendUserMessage(
 					`Please create a ${level} document for: ${state.description}${discoveryContext}\n\n` +
-					`Write the document to this exact path: ${fullDocPath}\n` +
-					`Use document timestamp: ${state.docTimestamp}\n\n` +
-					`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`
+						`Write the document to this exact path: ${fullDocPath}\n` +
+						`Use document timestamp: ${state.docTimestamp}\n\n` +
+						`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`,
 				);
 			} else if (activePipelineKind === "implement") {
 				// Implement-discovery → implementation transition
@@ -1508,85 +1892,111 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				const flags = pendingImplementFlags!;
 				const shortName = pendingImplementShortName!;
 				const timestamp = pendingImplementTimestamp!;
-				
+
 				// Build discovery summary
 				let discoverySummary = "";
-				if (state.discovery && state.discovery.conversationHistory && state.discovery.conversationHistory.length > 0) {
-					discoverySummary = generateConversationalDiscoverySummary(state.discovery.conversationHistory);
+				if (
+					state.discovery &&
+					state.discovery.conversationHistory &&
+					state.discovery.conversationHistory.length > 0
+				) {
+					discoverySummary = generateConversationalDiscoverySummary(
+						state.discovery.conversationHistory,
+					);
 				}
-				
+
 				const discoveryExchanges = exchangeCount;
-				
-				ctx.ui.notify(formatStepBanner(
-					"DISCOVERY COMPLETE",
-					`${discoveryExchanges} exchanges recorded. Checking git status...`,
-					"✅"
-				), "success");
-				
+
+				ctx.ui.notify(
+					formatStepBanner(
+						"DISCOVERY COMPLETE",
+						`${discoveryExchanges} exchanges recorded. Checking git status...`,
+						"✅",
+					),
+					"success",
+				);
+
 				// NOW check git clean (deferred from /implement invocation)
 				const gitClean = await checkGitClean(cwd);
 				if (!gitClean.clean) {
-					ctx.ui.notify(formatStepBanner(
-						"UNCOMMITTED CHANGES DETECTED",
-						"The implementation pipeline requires a clean working tree.",
-						"⚠️"
-					), "warning");
+					ctx.ui.notify(
+						formatStepBanner(
+							"UNCOMMITTED CHANGES DETECTED",
+							"The implementation pipeline requires a clean working tree.",
+							"⚠️",
+						),
+						"warning",
+					);
 					ctx.ui.notify("Uncommitted changes:\n" + gitClean.status, "warning");
-					ctx.ui.notify("\nPlease commit or stash your changes, then run /discovery-done again.", "info");
+					ctx.ui.notify(
+						"\nPlease commit or stash your changes, then run /discovery-done again.",
+						"info",
+					);
 					ctx.ui.notify("Your discovery session will remain active.", "info");
 					// Do NOT exit mode - leave discovery session active
 					return;
 				}
-				
+
 				// Exit discovery mode (clears all state including pendingImplementFlags)
 				exitMode();
 				clearPipelineWidget(ctx);
-				
+
 				ctx.ui.notify("Writing discovery summary...", "info");
-				
+
 				// Write discovery summary file to specsDir
 				const discoveryFilename = `${timestamp}_discovery_${shortName}.md`;
-				const discoveryContent = discoverySummary || `# Discovery Summary\n\n${state.description}\n\nNo discovery exchanges recorded.`;
-				
+				const discoveryContent =
+					discoverySummary ||
+					`# Discovery Summary\n\n${state.description}\n\nNo discovery exchanges recorded.`;
+
 				// Resolve absolute path to specsDir (handle both absolute and relative configs)
 				const fullSpecsDir = path.isAbsolute(projectConfig.specsDir)
 					? projectConfig.specsDir
 					: path.join(cwd, projectConfig.specsDir);
-				
+
 				// Ensure specsDir exists
 				if (!fs.existsSync(fullSpecsDir)) {
 					fs.mkdirSync(fullSpecsDir, { recursive: true });
 				}
-				
+
 				// Write file to absolute path, compute relative path for display/state
 				const fullDiscoveryPath = path.join(fullSpecsDir, discoveryFilename);
 				const discoveryPath = path.relative(cwd, fullDiscoveryPath);
 				fs.writeFileSync(fullDiscoveryPath, discoveryContent, "utf-8");
-				
-				ctx.ui.notify(`Discovery summary written to: ${discoveryPath}`, "success");
-				ctx.ui.notify(formatStepBanner(
-					"STARTING IMPLEMENTATION",
-					`From discovery file: ${discoveryPath}`,
-					"🚀"
-				), "info");
-				
+
+				ctx.ui.notify(
+					`Discovery summary written to: ${discoveryPath}`,
+					"success",
+				);
+				ctx.ui.notify(
+					formatStepBanner(
+						"STARTING IMPLEMENTATION",
+						`From discovery file: ${discoveryPath}`,
+						"🚀",
+					),
+					"info",
+				);
+
 				// Create implementation state (using discovery file as "spec")
 				const implTimestamp = generateTimestamp();
 				const implState = createInitialImplState(
 					discoveryPath,
 					discoveryContent,
 					implTimestamp,
-					flags.noPlan
+					flags.noPlan,
 				);
-				
+
 				implState.checkpoints = [];
 				saveImplState(cwd, implState);
-				
-				ctx.ui.notify(formatStepBanner(
-					"IMPLEMENTATION STARTED",
-					`ID: ${implState.id}`,
-					"🚀"
-				), "info");
+
+				ctx.ui.notify(
+					formatStepBanner(
+						"IMPLEMENTATION STARTED",
+						`ID: ${implState.id}`,
+						"🚀",
+					),
+					"info",
+				);
 				ctx.ui.notify(`Spec: ${discoveryPath}`, "info");
 				if (flags.noPlan) {
 					ctx.ui.notify("⚡ Skipping plan generation (--no-plan)", "info");
@@ -1594,9 +2004,9 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (flags.noReview) {
 					ctx.ui.notify("⚡ Skipping reviews (--no-review)", "info");
 				}
-				
+
 				updateImplWidget(ctx, implState, "Initializing...");
-				
+
 				// Apply --no-review flag if present (clone config to avoid mutation)
 				let effectiveConfig = projectConfig;
 				if (flags.noReview) {
@@ -1605,7 +2015,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 						reviewCycles: 0,
 					};
 				}
-				
+
 				// Run implementation pipeline
 				await runImplementPipeline(implState, cwd, effectiveConfig, ctx);
 			}
@@ -1616,7 +2026,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		description: "End hierarchy drafting and proceed to approval",
 		handler: async (_args, ctx) => {
 			if (pipelineMode !== "drafting" || activePipelineKind !== "hierarchy") {
-				ctx.ui.notify("No active hierarchy drafting session. Use /roadmap or /epic to start one.", "error");
+				ctx.ui.notify(
+					"No active hierarchy drafting session. Use /roadmap or /epic to start one.",
+					"error",
+				);
 				return;
 			}
 
@@ -1633,7 +2046,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 
 			if (pipelineMode === "brainstorm") {
-				ctx.ui.notify("Cannot start /spec while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
+				ctx.ui.notify(
+					"Cannot start /spec while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.",
+					"error",
+				);
 				return;
 			}
 
@@ -1643,9 +2059,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				.replace("--quick", "")
 				.replace(/\s+/g, " ")
 				.trim();
-			
+
 			if (!description) {
-				ctx.ui.notify("Usage: /spec [--quick] <description of what you want to build>", "error");
+				ctx.ui.notify(
+					"Usage: /spec [--quick] <description of what you want to build>",
+					"error",
+				);
 				return;
 			}
 
@@ -1656,10 +2075,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (existingPipeline) {
 				const resume = await ctx.ui.confirm(
 					"Active Spec Pipeline Found",
-					`There's an active spec pipeline:\n${formatSpecState(existingPipeline)}\n\nDo you want to continue with a NEW pipeline? (No = cancel)`
+					`There's an active spec pipeline:\n${formatSpecState(existingPipeline)}\n\nDo you want to continue with a NEW pipeline? (No = cancel)`,
 				);
 				if (!resume) {
-					ctx.ui.notify("Use /spec-resume to continue the existing pipeline", "info");
+					ctx.ui.notify(
+						"Use /spec-resume to continue the existing pipeline",
+						"info",
+					);
 					return;
 				}
 			}
@@ -1670,7 +2092,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				ctx.ui.notify(gitValidation.error!, "error");
 				return;
 			}
-			
+
 			// Load config
 			const configResult = loadPipelineConfig(cwd);
 			if (!configResult.success) {
@@ -1679,10 +2101,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 			const projectConfig = configResult.config;
 
-			ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+			ctx.ui.notify(
+				formatEffectiveConfig(projectConfig, configResult.fromFile),
+				"info",
+			);
 			ctx.ui.notify("Starting spec creation...", "info");
 			if (projectConfig.contextFiles.length > 0) {
-				ctx.ui.notify(`Using context from: ${projectConfig.contextFiles.join(", ")}`, "info");
+				ctx.ui.notify(
+					`Using context from: ${projectConfig.contextFiles.join(", ")}`,
+					"info",
+				);
 			}
 
 			// Generate names and timestamps
@@ -1696,29 +2124,31 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				shortName,
 				projectConfig.specsDir,
 				isQuick,
-				projectConfig.specFormat
+				projectConfig.specFormat,
 			);
-			
+
 			state.checkpoints = [];
 			saveSpecState(cwd, state);
-			
-			ctx.ui.notify(formatStepBanner(
-				"SPEC CREATION STARTED",
-				`ID: ${state.id}`,
-				"📝"
-			), "info");
-			
+
+			ctx.ui.notify(
+				formatStepBanner("SPEC CREATION STARTED", `ID: ${state.id}`, "📝"),
+				"info",
+			);
+
 			if (isQuick) {
 				ctx.ui.notify("Skipping discovery phase (--quick mode)", "info");
 			}
-			
+
 			updateSpecWidget(ctx, state, "Initializing...");
 
 			// Consume any pending scoping context from /plan → feature route
 			const scopingContext = pendingScopingContext;
 			pendingScopingContext = undefined;
 			if (scopingContext) {
-				ctx.ui.notify("📎 Including scoping context from /plan session.", "info");
+				ctx.ui.notify(
+					"📎 Including scoping context from /plan session.",
+					"info",
+				);
 			}
 
 			// If discovery is enabled (not --quick), enter conversational discovery mode
@@ -1740,30 +2170,50 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				// Show discovery widget
 				updateModeWidget(ctx);
 
-				ctx.ui.notify(formatStepBanner(
-					"DISCOVERY MODE",
-					"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
-					"🔍"
-				), "info");
-				ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
-				ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed to spec drafting.", "info");
+				ctx.ui.notify(
+					formatStepBanner(
+						"DISCOVERY MODE",
+						"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
+						"🔍",
+					),
+					"info",
+				);
+				ctx.ui.notify(
+					"The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.",
+					"info",
+				);
+				ctx.ui.notify(
+					"When you're satisfied with the discovery, type /discovery-done to proceed to spec drafting.",
+					"info",
+				);
 
 				// Send the initial discovery message to kick off the conversation
 				const scopingNote = scopingContext
 					? `\n\nThe following context was gathered during a scoping assessment:\n\n${scopingContext}\n\nPlease take this into account when forming your assumptions.`
 					: "";
-				pi.sendUserMessage(`I want to build the following feature: ${description}${scopingNote}\n\nPlease explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`);
+				pi.sendUserMessage(
+					`I want to build the following feature: ${description}${scopingNote}\n\nPlease explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`,
+				);
 			} else {
 				// --quick mode: enter conversational drafting directly
 				enterDraftingMode(state, cwd, projectConfig, ctx);
 
-				ctx.ui.notify(formatStepBanner(
-					"SPEC DRAFTING MODE",
-					"The LLM will draft the specification. Guide it conversationally.",
-					"📝"
-				), "info");
-				ctx.ui.notify(`Spec file will be written to: ${state.specPath}`, "info");
-				ctx.ui.notify("When satisfied, type /spec-draft-done to proceed.", "info");
+				ctx.ui.notify(
+					formatStepBanner(
+						"SPEC DRAFTING MODE",
+						"The LLM will draft the specification. Guide it conversationally.",
+						"📝",
+					),
+					"info",
+				);
+				ctx.ui.notify(
+					`Spec file will be written to: ${state.specPath}`,
+					"info",
+				);
+				ctx.ui.notify(
+					"When satisfied, type /spec-draft-done to proceed.",
+					"info",
+				);
 
 				// Send the kickoff message
 				const fullSpecPath = path.join(cwd, state.specPath);
@@ -1772,9 +2222,9 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					: "";
 				pi.sendUserMessage(
 					`Please create a technical specification for: ${description}${scopingNote}\n\n` +
-					`Write the spec to this exact path: ${fullSpecPath}\n` +
-					`Use spec timestamp: ${state.specTimestamp}\n\n` +
-					`Explore the codebase first to understand existing patterns, then create a comprehensive spec.`
+						`Write the spec to this exact path: ${fullSpecPath}\n` +
+						`Use spec timestamp: ${state.specTimestamp}\n\n` +
+						`Explore the codebase first to understand existing patterns, then create a comprehensive spec.`,
 				);
 			}
 		},
@@ -1801,7 +2251,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			} else {
 				state = getLatestActiveSpecPipeline(cwd);
 				if (!state) {
-					ctx.ui.notify("No active spec pipeline found. Use /spec to start one.", "error");
+					ctx.ui.notify(
+						"No active spec pipeline found. Use /spec to start one.",
+						"error",
+					);
 					return;
 				}
 			}
@@ -1814,12 +2267,18 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (state.stage === "cancelled") {
 				const restart = await ctx.ui.confirm(
 					"Pipeline Cancelled",
-					"This pipeline was cancelled. Restart from where it left off?"
+					"This pipeline was cancelled. Restart from where it left off?",
 				);
 				if (!restart) return;
-				
-				if (state.stageBeforeCancellation && state.stageBeforeCancellation !== "cancelled") {
-					ctx.ui.notify(`Resuming from saved stage: ${formatSpecStage(state.stageBeforeCancellation)}`, "info");
+
+				if (
+					state.stageBeforeCancellation &&
+					state.stageBeforeCancellation !== "cancelled"
+				) {
+					ctx.ui.notify(
+						`Resuming from saved stage: ${formatSpecStage(state.stageBeforeCancellation)}`,
+						"info",
+					);
 					state.stage = state.stageBeforeCancellation;
 					state.stageBeforeCancellation = undefined;
 				} else {
@@ -1845,29 +2304,31 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				ctx.ui.notify(gitValidation.error!, "error");
 				return;
 			}
-			
+
 			// Clean up error stash if present
 			if (state.errorStash) {
 				const stashStillExists = await stashExists(cwd, state.errorStash);
 				if (stashStillExists) {
-					ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+					ctx.ui.notify(
+						"Dropping stashed changes from previous error...",
+						"info",
+					);
 					await dropStash(cwd, state.errorStash);
 				}
 				state.errorStash = undefined;
 				saveSpecState(cwd, state);
 			}
 
-			ctx.ui.notify(formatStepBanner(
-				"RESUMING SPEC PIPELINE",
-				`ID: ${state.id}`,
-				"🔄"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner("RESUMING SPEC PIPELINE", `ID: ${state.id}`, "🔄"),
+				"info",
+			);
 			ctx.ui.notify(`Current stage: ${formatSpecStage(state.stage)}`, "info");
-			
+
 			if (state.discovery?.skipped) {
 				ctx.ui.notify("📌 Discovery was skipped (--quick)", "info");
 			}
-			
+
 			updateSpecWidget(ctx, state, "Resuming...");
 
 			const configResult = loadPipelineConfig(cwd);
@@ -1880,34 +2341,42 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			// Handle error retry
 			if (state.lastError) {
 				if (typeof state.lastError === "string") {
-					ctx.ui.notify(`Previous error (legacy): ${state.lastError.slice(0, 200)}`, "warning");
+					ctx.ui.notify(
+						`Previous error (legacy): ${state.lastError.slice(0, 200)}`,
+						"warning",
+					);
 					state.lastError = undefined;
 					saveSpecState(cwd, state);
 				} else if (state.lastError.agentTask) {
 					const errorDisplay = formatErrorForRetry(state.lastError, state);
 					ctx.ui.notify(errorDisplay, "info");
-					
+
 					const shouldRetry = await ctx.ui.confirm(
 						"Retry Failed Operation?",
-						`The pipeline failed at ${state.lastError.role}.\n\nRetry the same operation?`
+						`The pipeline failed at ${state.lastError.role}.\n\nRetry the same operation?`,
 					);
-					
+
 					if (!shouldRetry) {
 						ctx.ui.notify("Resume cancelled.", "info");
 						return;
 					}
-					
+
 					const retrySuccess = await retryFailedOperation(
-						state, cwd, projectConfig,
+						state,
+						cwd,
+						projectConfig,
 						() => saveSpecState(cwd, state),
-						ctx
+						ctx,
 					);
-					
+
 					if (!retrySuccess) {
-						ctx.ui.notify("Retry failed. Run /spec-resume to try again.", "info");
+						ctx.ui.notify(
+							"Retry failed. Run /spec-resume to try again.",
+							"info",
+						);
 						return;
 					}
-					
+
 					ctx.ui.notify("Retry successful! Continuing pipeline...", "success");
 				} else {
 					state.lastError = undefined;
@@ -1920,28 +2389,43 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				enterSpecMode("discovery", state, cwd, projectConfig);
 				updateModeWidget(ctx);
 
-				ctx.ui.notify(formatStepBanner(
-					"DISCOVERY MODE RESUMED",
-					`${exchangeCount} previous exchanges. Continue chatting to refine requirements.`,
-					"🔍"
-				), "info");
-				ctx.ui.notify("Type /discovery-done when ready to proceed to spec drafting.", "info");
+				ctx.ui.notify(
+					formatStepBanner(
+						"DISCOVERY MODE RESUMED",
+						`${exchangeCount} previous exchanges. Continue chatting to refine requirements.`,
+						"🔍",
+					),
+					"info",
+				);
+				ctx.ui.notify(
+					"Type /discovery-done when ready to proceed to spec drafting.",
+					"info",
+				);
 
 				// Send a resume message to kick off the conversation
-				pi.sendUserMessage(`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`);
+				pi.sendUserMessage(
+					`I'm resuming the discovery session for: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`,
+				);
 				return;
 			}
 
 			// If resuming in conversational drafting mode, re-enter drafting mode
-			if (state.stage === "spec_drafting" && state.drafting && !state.drafting.completed) {
+			if (
+				state.stage === "spec_drafting" &&
+				state.drafting &&
+				!state.drafting.completed
+			) {
 				enterSpecMode("drafting", state, cwd, projectConfig);
 				updateModeWidget(ctx);
 
-				ctx.ui.notify(formatStepBanner(
-					"DRAFTING MODE RESUMED",
-					`${exchangeCount} previous exchanges. Continue guiding the spec.`,
-					"📝"
-				), "info");
+				ctx.ui.notify(
+					formatStepBanner(
+						"DRAFTING MODE RESUMED",
+						`${exchangeCount} previous exchanges. Continue guiding the spec.`,
+						"📝",
+					),
+					"info",
+				);
 				ctx.ui.notify(`Spec file: ${state.specPath}`, "info");
 				ctx.ui.notify("Type /spec-draft-done when satisfied.", "info");
 
@@ -1949,8 +2433,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				const fullSpecPath = path.join(cwd, state.specPath);
 				pi.sendUserMessage(
 					`I'm resuming the spec drafting session for: ${state.description}\n\n` +
-					`Spec file path: ${fullSpecPath}\n\n` +
-					`Please review the current state and continue drafting.`
+						`Spec file path: ${fullSpecPath}\n\n` +
+						`Please review the current state and continue drafting.`,
 				);
 				return;
 			}
@@ -1977,7 +2461,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (!state) {
 					const states = listSpecStates(cwd);
 					if (states.length === 0) {
-						ctx.ui.notify("No spec pipelines found. Use /spec to start one.", "info");
+						ctx.ui.notify(
+							"No spec pipelines found. Use /spec to start one.",
+							"info",
+						);
 						return;
 					}
 					state = states[0];
@@ -1985,13 +2472,19 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 
 			ctx.ui.notify(formatSpecState(state), "info");
-			
+
 			if (state.stage === "completed") {
-				ctx.ui.notify(`\n✅ Spec completed. Run: /implement ${state.specPath}`, "success");
+				ctx.ui.notify(
+					`\n✅ Spec completed. Run: /implement ${state.specPath}`,
+					"success",
+				);
 			} else if (state.stage === "cancelled") {
 				ctx.ui.notify("\n🚫 Cancelled. Use /spec-resume to restart.", "info");
 			} else if (state.lastError) {
-				ctx.ui.notify("\n❌ Stopped due to error. Use /spec-resume to retry.", "warning");
+				ctx.ui.notify(
+					"\n❌ Stopped due to error. Use /spec-resume to retry.",
+					"warning",
+				);
 			} else {
 				ctx.ui.notify("\n▶️ Active. Use /spec-resume to continue.", "info");
 			}
@@ -2005,7 +2498,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const states = listSpecStates(cwd);
 
 			if (states.length === 0) {
-				ctx.ui.notify("No spec pipelines found. Use /spec to start one.", "info");
+				ctx.ui.notify(
+					"No spec pipelines found. Use /spec to start one.",
+					"info",
+				);
 				return;
 			}
 
@@ -2022,7 +2518,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				else if (state.stage === "cancelled") statusIcon = "🚫";
 				else if (hasError) statusIcon = "❌";
 				else statusIcon = "▶️";
-				
+
 				lines.push(`${statusIcon} ${state.id || "unknown"}`);
 				const desc = state.description || "(no description)";
 				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
@@ -2072,7 +2568,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			const confirm = await ctx.ui.confirm(
 				"Cancel Spec Pipeline?",
-				`Cancel spec pipeline ${state.id}?\n\nYou can resume later with /spec-resume.`
+				`Cancel spec pipeline ${state.id}?\n\nYou can resume later with /spec-resume.`,
 			);
 
 			if (confirm) {
@@ -2081,12 +2577,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 				state.stage = "cancelled";
 				saveSpecState(cwd, state);
-				
+
 				// Clean up conversational mode if active
 				if (pipelineMode !== "idle" && activePipelineState?.id === state.id) {
 					exitMode();
 				}
-				
+
 				clearPipelineWidget(ctx);
 				ctx.ui.notify("Pipeline cancelled. Resume with /spec-resume", "info");
 			}
@@ -2098,7 +2594,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	// ============================================
 
 	pi.registerCommand("implement", {
-		description: "Start implementation from a spec file OR text description (text enters discovery mode). Use --no-plan to skip plan generation, --no-review to skip reviews.",
+		description:
+			"Start implementation from a spec file OR text description (text enters discovery mode). Use --no-plan to skip plan generation, --no-review to skip reviews.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -2106,7 +2603,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 
 			if (pipelineMode === "brainstorm") {
-				ctx.ui.notify("Cannot start /implement while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
+				ctx.ui.notify(
+					"Cannot start /implement while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.",
+					"error",
+				);
 				return;
 			}
 
@@ -2118,9 +2618,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				.replace("--no-review", "")
 				.replace(/\s+/g, " ")
 				.trim();
-			
+
 			if (!argWithoutFlags) {
-				ctx.ui.notify("Usage: /implement [--no-plan] [--no-review] <spec-file-or-description>", "error");
+				ctx.ui.notify(
+					"Usage: /implement [--no-plan] [--no-review] <spec-file-or-description>",
+					"error",
+				);
 				return;
 			}
 
@@ -2130,12 +2633,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const fullPath = path.isAbsolute(argWithoutFlags)
 				? argWithoutFlags
 				: path.join(cwd, argWithoutFlags);
-			
+
 			// Check if it's an existing file first (handles edge cases like "fix/bug-123" or files without extensions)
 			const isFile = fs.existsSync(fullPath) && fs.statSync(fullPath).isFile();
 
 			// Heuristic: if it looks like a file path but doesn't exist, show error
-			const looksLikeFilePath = argWithoutFlags.includes("/") || /\.(md|typ)$/i.test(argWithoutFlags);
+			const looksLikeFilePath =
+				argWithoutFlags.includes("/") || /\.(md|typ)$/i.test(argWithoutFlags);
 			if (looksLikeFilePath && !isFile) {
 				ctx.ui.notify(`Spec file not found: ${argWithoutFlags}`, "error");
 				return;
@@ -2162,10 +2666,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (existingPipeline) {
 					const resume = await ctx.ui.confirm(
 						"Active Implementation Found",
-						`There's an active implementation:\n${formatImplState(existingPipeline)}\n\nStart a NEW implementation? (No = cancel)`
+						`There's an active implementation:\n${formatImplState(existingPipeline)}\n\nStart a NEW implementation? (No = cancel)`,
 					);
 					if (!resume) {
-						ctx.ui.notify("Use /implement-resume to continue the existing implementation", "info");
+						ctx.ui.notify(
+							"Use /implement-resume to continue the existing implementation",
+							"info",
+						);
 						return;
 					}
 				}
@@ -2176,16 +2683,22 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					ctx.ui.notify(gitValidation.error!, "error");
 					return;
 				}
-				
+
 				const gitClean = await checkGitClean(cwd);
 				if (!gitClean.clean) {
-					ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
+					ctx.ui.notify(
+						"Working directory has uncommitted changes. Please commit or stash first.",
+						"error",
+					);
 					if (gitClean.status) {
-						ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
+						ctx.ui.notify(
+							`Changed files:\n${gitClean.status.slice(0, 500)}`,
+							"info",
+						);
 					}
 					return;
 				}
-				
+
 				// Load config
 				const configResult = loadPipelineConfig(cwd);
 				if (!configResult.success) {
@@ -2202,17 +2715,26 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					projectConfig.reviewCycles = 0;
 				}
 
-				ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
-				
+				ctx.ui.notify(
+					formatEffectiveConfig(projectConfig, configResult.fromFile),
+					"info",
+				);
+
 				if (noPlan) {
-					ctx.ui.notify("⏭️ Plan generation will be skipped (--no-plan flag)", "info");
+					ctx.ui.notify(
+						"⏭️ Plan generation will be skipped (--no-plan flag)",
+						"info",
+					);
 				}
 
 				if (noReview) {
 					ctx.ui.notify("⏭️ Reviews will be skipped (--no-review flag)", "info");
 				}
 
-				ctx.ui.notify(`Starting implementation from: ${relativeSpecPath}`, "info");
+				ctx.ui.notify(
+					`Starting implementation from: ${relativeSpecPath}`,
+					"info",
+				);
 
 				// Generate timestamp and names
 				const implTimestamp = generateTimestamp();
@@ -2222,46 +2744,48 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					relativeSpecPath,
 					specContent,
 					implTimestamp,
-					noPlan
+					noPlan,
 				);
-				
+
 				state.checkpoints = [];
 				saveImplState(cwd, state);
-				
-				ctx.ui.notify(formatStepBanner(
-					"IMPLEMENTATION STARTED",
-					`ID: ${state.id}`,
-					"🚀"
-				), "info");
+
+				ctx.ui.notify(
+					formatStepBanner("IMPLEMENTATION STARTED", `ID: ${state.id}`, "🚀"),
+					"info",
+				);
 				ctx.ui.notify(`Spec: ${relativeSpecPath}`, "info");
-				
+
 				updateImplWidget(ctx, state, "Initializing...");
 
 				await runImplementPipeline(state, cwd, projectConfig, ctx);
 			} else {
 				// *** NEW: DISCOVERY MODE ENTRY ***
 				const description = argWithoutFlags;
-				
+
 				// Check for existing active implement pipeline
 				const existingPipeline = getLatestActiveImplPipeline(cwd);
 				if (existingPipeline) {
 					const proceed = await ctx.ui.confirm(
 						"Active Implementation Pipeline Found",
-						`There's an active implementation pipeline:\n${formatImplState(existingPipeline)}\n\nDo you want to continue with a NEW pipeline? (No = cancel)`
+						`There's an active implementation pipeline:\n${formatImplState(existingPipeline)}\n\nDo you want to continue with a NEW pipeline? (No = cancel)`,
 					);
 					if (!proceed) {
-						ctx.ui.notify("Use /implement-resume to continue the existing pipeline", "info");
+						ctx.ui.notify(
+							"Use /implement-resume to continue the existing pipeline",
+							"info",
+						);
 						return;
 					}
 				}
-				
+
 				// Git validation (repo must exist, but don't check clean yet - deferred to /discovery-done)
 				const gitValidation = await validateGitRepo(cwd);
 				if (!gitValidation.valid) {
 					ctx.ui.notify(gitValidation.error!, "error");
 					return;
 				}
-				
+
 				// Load config
 				const configResult = loadPipelineConfig(cwd);
 				if (!configResult.success) {
@@ -2269,17 +2793,23 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					return;
 				}
 				const projectConfig = configResult.config;
-				
-				ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+
+				ctx.ui.notify(
+					formatEffectiveConfig(projectConfig, configResult.fromFile),
+					"info",
+				);
 				ctx.ui.notify("Starting implementation discovery...", "info");
 				if (projectConfig.contextFiles.length > 0) {
-					ctx.ui.notify(`Using context from: ${projectConfig.contextFiles.join(", ")}`, "info");
+					ctx.ui.notify(
+						`Using context from: ${projectConfig.contextFiles.join(", ")}`,
+						"info",
+					);
 				}
-				
+
 				// Generate timestamp and prompt for short name
 				const timestamp = generateTimestamp();
 				const { shortName } = await promptForShortName(ctx, description);
-				
+
 				// Create ephemeral conversational state (not persisted to disk)
 				const discoveryState: ConversationalPipelineState = {
 					id: generatePipelineId(),
@@ -2290,31 +2820,56 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 						completed: false,
 					},
 				};
-				
+
 				// Enter implement-discovery mode
-				enterImplementDiscoveryMode(cwd, projectConfig, discoveryState, { noPlan, noReview }, shortName, timestamp);
+				enterImplementDiscoveryMode(
+					cwd,
+					projectConfig,
+					discoveryState,
+					{ noPlan, noReview },
+					shortName,
+					timestamp,
+				);
 				updateModeWidget(ctx);
-				
-				ctx.ui.notify(formatStepBanner(
-					"IMPLEMENTATION DISCOVERY MODE",
-					"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
-					"🔍"
-				), "info");
-				ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
-				ctx.ui.notify("(This is the same discovery process as /spec - conversational and iterative)", "info");
-				ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed to implementation.", "info");
-				
+
+				ctx.ui.notify(
+					formatStepBanner(
+						"IMPLEMENTATION DISCOVERY MODE",
+						"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
+						"🔍",
+					),
+					"info",
+				);
+				ctx.ui.notify(
+					"The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.",
+					"info",
+				);
+				ctx.ui.notify(
+					"(This is the same discovery process as /spec - conversational and iterative)",
+					"info",
+				);
+				ctx.ui.notify(
+					"When you're satisfied with the discovery, type /discovery-done to proceed to implementation.",
+					"info",
+				);
+
 				if (noPlan) {
-					ctx.ui.notify("⚡ --no-plan flag will be applied after discovery", "info");
+					ctx.ui.notify(
+						"⚡ --no-plan flag will be applied after discovery",
+						"info",
+					);
 				}
 				if (noReview) {
-					ctx.ui.notify("⚡ --no-review flag will be applied after discovery", "info");
+					ctx.ui.notify(
+						"⚡ --no-review flag will be applied after discovery",
+						"info",
+					);
 				}
-				
+
 				// Send the initial discovery message
 				pi.sendUserMessage(
 					`I want to implement the following: ${description}\n\n` +
-					`Please explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`
+						`Please explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`,
 				);
 			}
 		},
@@ -2341,7 +2896,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			} else {
 				state = getLatestActiveImplPipeline(cwd);
 				if (!state) {
-					ctx.ui.notify("No active implementation found. Use /implement to start one.", "error");
+					ctx.ui.notify(
+						"No active implementation found. Use /implement to start one.",
+						"error",
+					);
 					return;
 				}
 			}
@@ -2354,12 +2912,18 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (state.stage === "cancelled") {
 				const restart = await ctx.ui.confirm(
 					"Implementation Cancelled",
-					"This implementation was cancelled. Restart from where it left off?"
+					"This implementation was cancelled. Restart from where it left off?",
 				);
 				if (!restart) return;
-				
-				if (state.stageBeforeCancellation && state.stageBeforeCancellation !== "cancelled") {
-					ctx.ui.notify(`Resuming from saved stage: ${formatImplStage(state.stageBeforeCancellation)}`, "info");
+
+				if (
+					state.stageBeforeCancellation &&
+					state.stageBeforeCancellation !== "cancelled"
+				) {
+					ctx.ui.notify(
+						`Resuming from saved stage: ${formatImplStage(state.stageBeforeCancellation)}`,
+						"info",
+					);
 					state.stage = state.stageBeforeCancellation;
 					state.stageBeforeCancellation = undefined;
 				} else {
@@ -2376,38 +2940,46 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				ctx.ui.notify(gitValidation.error!, "error");
 				return;
 			}
-			
+
 			const gitClean = await checkGitClean(cwd);
 			if (!gitClean.clean) {
-				ctx.ui.notify("Working directory has uncommitted changes. Please commit or stash first.", "error");
+				ctx.ui.notify(
+					"Working directory has uncommitted changes. Please commit or stash first.",
+					"error",
+				);
 				if (gitClean.status) {
-					ctx.ui.notify(`Changed files:\n${gitClean.status.slice(0, 500)}`, "info");
+					ctx.ui.notify(
+						`Changed files:\n${gitClean.status.slice(0, 500)}`,
+						"info",
+					);
 				}
 				return;
 			}
-			
+
 			// Clean up error stash if present
 			if (state.errorStash) {
 				const stashStillExists = await stashExists(cwd, state.errorStash);
 				if (stashStillExists) {
-					ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+					ctx.ui.notify(
+						"Dropping stashed changes from previous error...",
+						"info",
+					);
 					await dropStash(cwd, state.errorStash);
 				}
 				state.errorStash = undefined;
 				saveImplState(cwd, state);
 			}
 
-			ctx.ui.notify(formatStepBanner(
-				"RESUMING IMPLEMENTATION",
-				`ID: ${state.id}`,
-				"🔄"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner("RESUMING IMPLEMENTATION", `ID: ${state.id}`, "🔄"),
+				"info",
+			);
 			ctx.ui.notify(`Current stage: ${formatImplStage(state.stage)}`, "info");
-			
+
 			if (state.skipPlanGeneration) {
 				ctx.ui.notify("📌 Plan generation is skipped (--no-plan)", "info");
 			}
-			
+
 			updateImplWidget(ctx, state, "Resuming...");
 
 			const configResult = loadPipelineConfig(cwd);
@@ -2420,34 +2992,42 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			// Handle error retry
 			if (state.lastError) {
 				if (typeof state.lastError === "string") {
-					ctx.ui.notify(`Previous error (legacy): ${state.lastError.slice(0, 200)}`, "warning");
+					ctx.ui.notify(
+						`Previous error (legacy): ${state.lastError.slice(0, 200)}`,
+						"warning",
+					);
 					state.lastError = undefined;
 					saveImplState(cwd, state);
 				} else if (state.lastError.agentTask) {
 					const errorDisplay = formatErrorForRetry(state.lastError, state);
 					ctx.ui.notify(errorDisplay, "info");
-					
+
 					const shouldRetry = await ctx.ui.confirm(
 						"Retry Failed Operation?",
-						`The implementation failed at ${state.lastError.role}.\n\nRetry the same operation?`
+						`The implementation failed at ${state.lastError.role}.\n\nRetry the same operation?`,
 					);
-					
+
 					if (!shouldRetry) {
 						ctx.ui.notify("Resume cancelled.", "info");
 						return;
 					}
-					
+
 					const retrySuccess = await retryFailedOperation(
-						state, cwd, projectConfig,
+						state,
+						cwd,
+						projectConfig,
 						() => saveImplState(cwd, state),
-						ctx
+						ctx,
 					);
-					
+
 					if (!retrySuccess) {
-						ctx.ui.notify("Retry failed. Run /implement-resume to try again.", "info");
+						ctx.ui.notify(
+							"Retry failed. Run /implement-resume to try again.",
+							"info",
+						);
 						return;
 					}
-					
+
 					ctx.ui.notify("Retry successful! Continuing pipeline...", "success");
 				} else {
 					state.lastError = undefined;
@@ -2477,7 +3057,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (!state) {
 					const states = listImplStates(cwd);
 					if (states.length === 0) {
-						ctx.ui.notify("No implementations found. Use /implement to start one.", "info");
+						ctx.ui.notify(
+							"No implementations found. Use /implement to start one.",
+							"info",
+						);
 						return;
 					}
 					state = states[0];
@@ -2485,13 +3068,19 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 
 			ctx.ui.notify(formatImplState(state), "info");
-			
+
 			if (state.stage === "completed") {
 				ctx.ui.notify("\n✅ Implementation completed.", "success");
 			} else if (state.stage === "cancelled") {
-				ctx.ui.notify("\n🚫 Cancelled. Use /implement-resume to restart.", "info");
+				ctx.ui.notify(
+					"\n🚫 Cancelled. Use /implement-resume to restart.",
+					"info",
+				);
 			} else if (state.lastError) {
-				ctx.ui.notify("\n❌ Stopped due to error. Use /implement-resume to retry.", "warning");
+				ctx.ui.notify(
+					"\n❌ Stopped due to error. Use /implement-resume to retry.",
+					"warning",
+				);
 			} else {
 				ctx.ui.notify("\n▶️ Active. Use /implement-resume to continue.", "info");
 			}
@@ -2505,7 +3094,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const states = listImplStates(cwd);
 
 			if (states.length === 0) {
-				ctx.ui.notify("No implementations found. Use /implement to start one.", "info");
+				ctx.ui.notify(
+					"No implementations found. Use /implement to start one.",
+					"info",
+				);
 				return;
 			}
 
@@ -2522,13 +3114,15 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				else if (state.stage === "cancelled") statusIcon = "🚫";
 				else if (hasError) statusIcon = "❌";
 				else statusIcon = "▶️";
-				
+
 				lines.push(`${statusIcon} ${state.id || "unknown"}`);
 				lines.push(`   Spec: ${state.specPath}`);
 				lines.push(`   Stage: ${formatImplStage(state.stage)}`);
 				const phases = state.phases || [];
 				if (phases.length > 0) {
-					lines.push(`   Phases: ${state.currentPhaseIndex + 1}/${phases.length}`);
+					lines.push(
+						`   Phases: ${state.currentPhaseIndex + 1}/${phases.length}`,
+					);
 				}
 				lines.push(`   Updated: ${state.updatedAt}`);
 				lines.push("");
@@ -2546,7 +3140,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
 				return;
 			}
-			
+
 			// Check if we're in implement-discovery mode (ephemeral, not persisted)
 			if (pipelineMode === "discovery" && activePipelineKind === "implement") {
 				exitMode();
@@ -2580,7 +3174,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			const confirm = await ctx.ui.confirm(
 				"Cancel Implementation?",
-				`Cancel implementation ${state.id}?\n\nYou can resume later with /implement-resume.`
+				`Cancel implementation ${state.id}?\n\nYou can resume later with /implement-resume.`,
 			);
 
 			if (confirm) {
@@ -2589,9 +3183,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 				state.stage = "cancelled";
 				saveImplState(cwd, state);
-				
+
 				clearPipelineWidget(ctx);
-				ctx.ui.notify("Implementation cancelled. Resume with /implement-resume", "info");
+				ctx.ui.notify(
+					"Implementation cancelled. Resume with /implement-resume",
+					"info",
+				);
 			}
 		},
 	});
@@ -2603,9 +3200,11 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const pipelineId = (args || "").trim();
 
 			let statesToExport: ImplementationState[] = [];
-			
+
 			if (pipelineId === "--all") {
-				statesToExport = listImplStates(cwd).filter(s => s.stage === "completed" && s.metrics);
+				statesToExport = listImplStates(cwd).filter(
+					(s) => s.stage === "completed" && s.metrics,
+				);
 			} else if (pipelineId) {
 				const state = loadImplState(cwd, pipelineId);
 				if (!state) {
@@ -2615,14 +3214,22 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (state.metrics) {
 					statesToExport = [state];
 				} else {
-					ctx.ui.notify(`Implementation ${pipelineId} has no metrics`, "warning");
+					ctx.ui.notify(
+						`Implementation ${pipelineId} has no metrics`,
+						"warning",
+					);
 					return;
 				}
 			} else {
 				const states = listImplStates(cwd);
-				const completed = states.filter(s => s.stage === "completed" && s.metrics);
+				const completed = states.filter(
+					(s) => s.stage === "completed" && s.metrics,
+				);
 				if (completed.length === 0) {
-					ctx.ui.notify("No completed implementations with metrics found.", "info");
+					ctx.ui.notify(
+						"No completed implementations with metrics found.",
+						"info",
+					);
 					return;
 				}
 				statesToExport = [completed[0]];
@@ -2635,22 +3242,32 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			const lines: string[] = [];
 			lines.push(formatDivider(70));
-			lines.push(`  📊 Implementation Metrics (${statesToExport.length} pipeline${statesToExport.length > 1 ? 's' : ''})`);
+			lines.push(
+				`  📊 Implementation Metrics (${statesToExport.length} pipeline${statesToExport.length > 1 ? "s" : ""})`,
+			);
 			lines.push(formatDivider(70));
 			lines.push("");
 
-			lines.push("| ID | Plan Gen | Duration | Code Review Cycles | First Pass |");
-			lines.push("|-----|----------|----------|--------------------|------------|");
+			lines.push(
+				"| ID | Plan Gen | Duration | Code Review Cycles | First Pass |",
+			);
+			lines.push(
+				"|-----|----------|----------|--------------------|------------|",
+			);
 
 			for (const state of statesToExport) {
 				const m = state.metrics!;
-				const durationMins = m.totalDurationMs ? Math.round(m.totalDurationMs / 60000) : "?";
+				const durationMins = m.totalDurationMs
+					? Math.round(m.totalDurationMs / 60000)
+					: "?";
 				const planGen = m.skipPlanGeneration ? "SKIP" : "YES";
 				const codeReview = String(m.codeReviewCycles);
 				const firstPass = `${m.codeReviewFirstPassRate}%`;
-				
+
 				const stateId = state.id || "unknown";
-				lines.push(`| ${stateId.slice(0, 16)} | ${planGen.padEnd(8)} | ${String(durationMins).padEnd(8)} | ${codeReview.padEnd(17)} | ${firstPass.padEnd(10)} |`);
+				lines.push(
+					`| ${stateId.slice(0, 16)} | ${planGen.padEnd(8)} | ${String(durationMins).padEnd(8)} | ${codeReview.padEnd(17)} | ${firstPass.padEnd(10)} |`,
+				);
 			}
 
 			lines.push("");
@@ -2658,7 +3275,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (statesToExport.length === 1) {
 				const state = statesToExport[0];
 				const m = state.metrics!;
-				
+
 				lines.push("📋 Detailed Metrics:");
 				lines.push("");
 				lines.push(formatKeyValue("  Pipeline ID", state.id || "unknown"));
@@ -2666,19 +3283,38 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				lines.push(formatKeyValue("  Status", state.stage));
 				lines.push("");
 				lines.push("  Configuration:");
-				lines.push(formatKeyValue("    Skip Plan Generation", m.skipPlanGeneration ? "Yes (A/B test)" : "No (normal)"));
+				lines.push(
+					formatKeyValue(
+						"    Skip Plan Generation",
+						m.skipPlanGeneration ? "Yes (A/B test)" : "No (normal)",
+					),
+				);
 				lines.push("");
 				lines.push("  Timing:");
 				if (m.totalDurationMs) {
-					lines.push(formatKeyValue("    Total Duration", `${Math.round(m.totalDurationMs / 60000)} minutes`));
+					lines.push(
+						formatKeyValue(
+							"    Total Duration",
+							`${Math.round(m.totalDurationMs / 60000)} minutes`,
+						),
+					);
 				}
-				lines.push(formatKeyValue("    Agent Calls", String(m.agentCalls.length)));
+				lines.push(
+					formatKeyValue("    Agent Calls", String(m.agentCalls.length)),
+				);
 				lines.push("");
 				lines.push("  Review Cycles:");
-				lines.push(formatKeyValue("    Code Review", String(m.codeReviewCycles)));
+				lines.push(
+					formatKeyValue("    Code Review", String(m.codeReviewCycles)),
+				);
 				lines.push("");
 				lines.push("  Quality:");
-				lines.push(formatKeyValue("    First Pass Rate", `${m.codeReviewFirstPassRate}%`));
+				lines.push(
+					formatKeyValue(
+						"    First Pass Rate",
+						`${m.codeReviewFirstPassRate}%`,
+					),
+				);
 				lines.push("");
 
 				const callsByRole: Record<string, number> = {};
@@ -2693,13 +3329,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			lines.push("");
 			lines.push(formatDivider(70));
-			
+
 			const stateDir = getStateDir(cwd);
 			if (!fs.existsSync(stateDir)) {
 				fs.mkdirSync(stateDir, { recursive: true });
 			}
 			const exportPath = path.join(stateDir, "metrics-export.json");
-			const exportData = statesToExport.map(s => ({
+			const exportData = statesToExport.map((s) => ({
 				id: s.id,
 				specPath: s.specPath,
 				stage: s.stage,
@@ -2727,7 +3363,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		ctx: any,
 		parentId?: string,
 		parentType?: "roadmap",
-		scopingSummary?: string
+		scopingSummary?: string,
 	): Promise<void> {
 		const cwd = ctx.cwd;
 
@@ -2746,7 +3382,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		}
 		const projectConfig = configResult.config;
 
-		ctx.ui.notify(formatEffectiveConfig(projectConfig, configResult.fromFile), "info");
+		ctx.ui.notify(
+			formatEffectiveConfig(projectConfig, configResult.fromFile),
+			"info",
+		);
 		ctx.ui.notify(`Starting ${level} creation...`, "info");
 
 		// Generate names and timestamps
@@ -2757,16 +3396,23 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		let state: HierarchyState;
 		if (level === "roadmap") {
 			state = createInitialRoadmapState(
-				description, docTimestamp, shortName,
+				description,
+				docTimestamp,
+				shortName,
 				projectConfig.specsDir,
-				isQuick, projectConfig.specFormat
+				isQuick,
+				projectConfig.specFormat,
 			);
 		} else {
 			state = createInitialEpicState(
-				description, docTimestamp, shortName,
+				description,
+				docTimestamp,
+				shortName,
 				projectConfig.specsDir,
-				isQuick, projectConfig.specFormat,
-				parentId, parentType
+				isQuick,
+				projectConfig.specFormat,
+				parentId,
+				parentType,
 			);
 		}
 
@@ -2779,11 +3425,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		}
 
 		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
-		ctx.ui.notify(formatStepBanner(
-			`${levelLabel.toUpperCase()} CREATION STARTED`,
-			`ID: ${state.id}`,
-			level === "roadmap" ? "🗺️" : "📋"
-		), "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				`${levelLabel.toUpperCase()} CREATION STARTED`,
+				`ID: ${state.id}`,
+				level === "roadmap" ? "🗺️" : "📋",
+			),
+			"info",
+		);
 
 		if (isQuick) {
 			ctx.ui.notify("Skipping discovery phase (--quick mode)", "info");
@@ -2803,7 +3452,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 		// Append scoping context if available (from /plan command)
 		if (scopingSummary) {
-			parentContext = (parentContext ? parentContext + "\n\n" : "") + scopingSummary;
+			parentContext =
+				(parentContext ? parentContext + "\n\n" : "") + scopingSummary;
 		}
 
 		// If discovery is enabled (not --quick), enter conversational discovery mode
@@ -2816,24 +3466,42 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			else saveEpicState(cwd, state as EpicState);
 
 			// Enter hierarchy discovery mode
-			enterHierarchyMode("discovery", state, level, cwd, projectConfig, parentContext);
+			enterHierarchyMode(
+				"discovery",
+				state,
+				level,
+				cwd,
+				projectConfig,
+				parentContext,
+			);
 
 			// Show discovery widget
 			updateModeWidget(ctx);
 
-			ctx.ui.notify(formatStepBanner(
-				`${levelLabel.toUpperCase()} DISCOVERY MODE`,
-				"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
-				"🔍"
-			), "info");
-			ctx.ui.notify("The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.", "info");
-			ctx.ui.notify("When you're satisfied with the discovery, type /discovery-done to proceed.", "info");
+			ctx.ui.notify(
+				formatStepBanner(
+					`${levelLabel.toUpperCase()} DISCOVERY MODE`,
+					"The LLM will explore the codebase, propose assumptions, and ask you to confirm.",
+					"🔍",
+				),
+				"info",
+			);
+			ctx.ui.notify(
+				"The LLM will propose what it thinks is the best approach for each aspect, one at a time. Confirm or correct each assumption.",
+				"info",
+			);
+			ctx.ui.notify(
+				"When you're satisfied with the discovery, type /discovery-done to proceed.",
+				"info",
+			);
 
 			// Send the initial discovery message
-			const parentNote = parentContext ? "\n\nRelevant parent context has been provided." : "";
+			const parentNote = parentContext
+				? "\n\nRelevant parent context has been provided."
+				: "";
 			pi.sendUserMessage(
 				`I want to create a ${level} for the following: ${description}${parentNote}\n\n` +
-				`Please explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`
+					`Please explore the codebase, identify the most important ambiguity or decision point, and propose your best assumption for how it should work.`,
 			);
 		} else {
 			// --quick mode or discovery disabled: enter conversational drafting directly
@@ -2845,25 +3513,40 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (level === "roadmap") saveRoadmapState(cwd, state as RoadmapState);
 			else saveEpicState(cwd, state as EpicState);
 
-			enterHierarchyMode("drafting", state, level, cwd, projectConfig, parentContext);
+			enterHierarchyMode(
+				"drafting",
+				state,
+				level,
+				cwd,
+				projectConfig,
+				parentContext,
+			);
 			updateModeWidget(ctx);
 
-			ctx.ui.notify(formatStepBanner(
-				`${levelLabel.toUpperCase()} DRAFTING MODE`,
-				`The LLM will draft the ${level} document. Guide it conversationally.`,
-				"📝"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner(
+					`${levelLabel.toUpperCase()} DRAFTING MODE`,
+					`The LLM will draft the ${level} document. Guide it conversationally.`,
+					"📝",
+				),
+				"info",
+			);
 			ctx.ui.notify(`Document will be written to: ${state.docPath}`, "info");
-			ctx.ui.notify("When satisfied, type /draft-done to proceed to approval.", "info");
+			ctx.ui.notify(
+				"When satisfied, type /draft-done to proceed to approval.",
+				"info",
+			);
 
 			// Send the kickoff message
 			const fullDocPath = path.join(cwd, state.docPath);
-			const parentNote = parentContext ? "\n\nRelevant parent context has been provided." : "";
+			const parentNote = parentContext
+				? "\n\nRelevant parent context has been provided."
+				: "";
 			pi.sendUserMessage(
 				`Please create a ${level} document for: ${description}${parentNote}\n\n` +
-				`Write the document to this exact path: ${fullDocPath}\n` +
-				`Use document timestamp: ${state.docTimestamp}\n\n` +
-				`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`
+					`Write the document to this exact path: ${fullDocPath}\n` +
+					`Use document timestamp: ${state.docTimestamp}\n\n` +
+					`Explore the codebase first to understand existing patterns, then create a comprehensive ${level} document.`,
 			);
 		}
 	}
@@ -2874,22 +3557,34 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	async function resumeHierarchyPipeline(
 		level: HierarchyLevel,
 		pipelineId: string | undefined,
-		ctx: any
+		ctx: any,
 	): Promise<void> {
 		const cwd = ctx.cwd;
 		const levelLabel = level.charAt(0).toUpperCase() + level.slice(1);
 
 		let state: HierarchyState | null;
 		if (pipelineId) {
-			state = level === "roadmap" ? loadRoadmapState(cwd, pipelineId) : loadEpicState(cwd, pipelineId);
+			state =
+				level === "roadmap"
+					? loadRoadmapState(cwd, pipelineId)
+					: loadEpicState(cwd, pipelineId);
 			if (!state) {
-				ctx.ui.notify(`${levelLabel} pipeline not found: ${pipelineId}`, "error");
+				ctx.ui.notify(
+					`${levelLabel} pipeline not found: ${pipelineId}`,
+					"error",
+				);
 				return;
 			}
 		} else {
-			state = level === "roadmap" ? getLatestActiveRoadmapPipeline(cwd) : getLatestActiveEpicPipeline(cwd);
+			state =
+				level === "roadmap"
+					? getLatestActiveRoadmapPipeline(cwd)
+					: getLatestActiveEpicPipeline(cwd);
 			if (!state) {
-				ctx.ui.notify(`No active ${level} pipeline found. Use /${level} to start one.`, "error");
+				ctx.ui.notify(
+					`No active ${level} pipeline found. Use /${level} to start one.`,
+					"error",
+				);
 				return;
 			}
 		}
@@ -2902,12 +3597,18 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		if (state.stage === "cancelled") {
 			const restart = await ctx.ui.confirm(
 				`${levelLabel} Cancelled`,
-				`This ${level} was cancelled. Restart from where it left off?`
+				`This ${level} was cancelled. Restart from where it left off?`,
 			);
 			if (!restart) return;
 
-			if (state.stageBeforeCancellation && state.stageBeforeCancellation !== "cancelled") {
-				ctx.ui.notify(`Resuming from saved stage: ${formatHierarchyStage(state.stageBeforeCancellation)}`, "info");
+			if (
+				state.stageBeforeCancellation &&
+				state.stageBeforeCancellation !== "cancelled"
+			) {
+				ctx.ui.notify(
+					`Resuming from saved stage: ${formatHierarchyStage(state.stageBeforeCancellation)}`,
+					"info",
+				);
 				state.stage = state.stageBeforeCancellation;
 				state.stageBeforeCancellation = undefined;
 			} else {
@@ -2939,7 +3640,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		if (state.errorStash) {
 			const stashStillExists = await stashExists(cwd, state.errorStash);
 			if (stashStillExists) {
-				ctx.ui.notify("Dropping stashed changes from previous error...", "info");
+				ctx.ui.notify(
+					"Dropping stashed changes from previous error...",
+					"info",
+				);
 				await dropStash(cwd, state.errorStash);
 			}
 			state.errorStash = undefined;
@@ -2947,12 +3651,18 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			else saveEpicState(cwd, state as EpicState);
 		}
 
-		ctx.ui.notify(formatStepBanner(
-			`RESUMING ${levelLabel.toUpperCase()}`,
-			`ID: ${state.id}`,
-			"🔄"
-		), "info");
-		ctx.ui.notify(`Current stage: ${formatHierarchyStage(state.stage)}`, "info");
+		ctx.ui.notify(
+			formatStepBanner(
+				`RESUMING ${levelLabel.toUpperCase()}`,
+				`ID: ${state.id}`,
+				"🔄",
+			),
+			"info",
+		);
+		ctx.ui.notify(
+			`Current stage: ${formatHierarchyStage(state.stage)}`,
+			"info",
+		);
 
 		const configResult = loadPipelineConfig(cwd);
 		if (!configResult.success) {
@@ -2962,31 +3672,47 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		const projectConfig = configResult.config;
 
 		// If resuming in conversational discovery mode, re-enter discovery mode
-		if (state.stage === "discovery" && state.discovery && !state.discovery.completed) {
+		if (
+			state.stage === "discovery" &&
+			state.discovery &&
+			!state.discovery.completed
+		) {
 			enterHierarchyMode("discovery", state, level, cwd, projectConfig);
 			updateModeWidget(ctx);
 
-			ctx.ui.notify(formatStepBanner(
-				`${levelLabel.toUpperCase()} DISCOVERY MODE RESUMED`,
-				`${exchangeCount} previous exchanges. Continue chatting to refine requirements.`,
-				"🔍"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner(
+					`${levelLabel.toUpperCase()} DISCOVERY MODE RESUMED`,
+					`${exchangeCount} previous exchanges. Continue chatting to refine requirements.`,
+					"🔍",
+				),
+				"info",
+			);
 			ctx.ui.notify("Type /discovery-done when ready to proceed.", "info");
 
-			pi.sendUserMessage(`I'm resuming the discovery session for this ${level}: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`);
+			pi.sendUserMessage(
+				`I'm resuming the discovery session for this ${level}: ${state.description}\n\nPlease review what we've discussed so far and continue with the next most important assumption to verify.`,
+			);
 			return;
 		}
 
 		// If resuming in conversational drafting mode, re-enter drafting mode
-		if (state.stage === "drafting" && state.drafting && !state.drafting.completed) {
+		if (
+			state.stage === "drafting" &&
+			state.drafting &&
+			!state.drafting.completed
+		) {
 			enterHierarchyMode("drafting", state, level, cwd, projectConfig);
 			updateModeWidget(ctx);
 
-			ctx.ui.notify(formatStepBanner(
-				`${levelLabel.toUpperCase()} DRAFTING MODE RESUMED`,
-				`${exchangeCount} previous exchanges. Continue guiding the ${level} document.`,
-				"📝"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner(
+					`${levelLabel.toUpperCase()} DRAFTING MODE RESUMED`,
+					`${exchangeCount} previous exchanges. Continue guiding the ${level} document.`,
+					"📝",
+				),
+				"info",
+			);
 			ctx.ui.notify(`Document: ${state.docPath}`, "info");
 			ctx.ui.notify("Type /draft-done when satisfied.", "info");
 
@@ -2994,8 +3720,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const fullDocPath = path.join(cwd, state.docPath);
 			pi.sendUserMessage(
 				`I'm resuming the ${level} drafting session for: ${state.description}\n\n` +
-				`Document file path: ${fullDocPath}\n\n` +
-				`Please review the current state and continue drafting.`
+					`Document file path: ${fullDocPath}\n\n` +
+					`Please review the current state and continue drafting.`,
 			);
 			return;
 		}
@@ -3007,7 +3733,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	// ---- /plan command ----
 
 	pi.registerCommand("plan", {
-		description: "Unified entry point for planning. Assesses scope and recommends roadmap/epic/feature level. Flags: --quick, --roadmap, --epic, --feature",
+		description:
+			"Unified entry point for planning. Assesses scope and recommends roadmap/epic/feature level. Flags: --quick, --roadmap, --epic, --feature",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -3029,7 +3756,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				.trim();
 
 			if (!description) {
-				ctx.ui.notify("Usage: /plan [--quick] [--roadmap|--epic|--feature] <description>", "error");
+				ctx.ui.notify(
+					"Usage: /plan [--quick] [--roadmap|--epic|--feature] <description>",
+					"error",
+				);
 				return;
 			}
 
@@ -3044,18 +3774,27 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 			if (forceFeature) {
 				// Delegate to existing /spec command — notify user to run it
-				ctx.ui.notify(`Recommendation: Feature level. Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`, "info");
+				ctx.ui.notify(
+					`Recommendation: Feature level. Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`,
+					"info",
+				);
 				return;
 			}
 
 			// Check for existing active scoping session
 			if (pipelineMode === "scoping") {
-				ctx.ui.notify("A scoping session is already active. Use /plan-done to finish it, or /plan-cancel to cancel.", "error");
+				ctx.ui.notify(
+					"A scoping session is already active. Use /plan-done to finish it, or /plan-cancel to cancel.",
+					"error",
+				);
 				return;
 			}
 
 			if (pipelineMode === "brainstorm") {
-				ctx.ui.notify("Cannot start /plan while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
+				ctx.ui.notify(
+					"Cannot start /plan while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.",
+					"error",
+				);
 				return;
 			}
 
@@ -3082,29 +3821,47 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			// Show scoping widget
 			updateModeWidget(ctx);
 
-			ctx.ui.notify(formatStepBanner(
-				"SCOPING MODE",
-				"The agent will explore the codebase and ask questions to assess the right planning level.",
-				"🔎"
-			), "info");
-			ctx.ui.notify("Chat naturally to help the agent understand the scope. It will recommend Roadmap, Epic, or Feature.", "info");
-			ctx.ui.notify("Type /plan-done when ready to proceed with the recommendation.", "info");
+			ctx.ui.notify(
+				formatStepBanner(
+					"SCOPING MODE",
+					"The agent will explore the codebase and ask questions to assess the right planning level.",
+					"🔎",
+				),
+				"info",
+			);
+			ctx.ui.notify(
+				"Chat naturally to help the agent understand the scope. It will recommend Roadmap, Epic, or Feature.",
+				"info",
+			);
+			ctx.ui.notify(
+				"Type /plan-done when ready to proceed with the recommendation.",
+				"info",
+			);
 
 			// Send the initial scoping message
 			pi.sendUserMessage(
 				`I want to build the following: ${description}\n\n` +
-				`Please explore the codebase and assess what level of planning this needs ` +
-				`(roadmap for large multi-epic initiatives, epic for medium multi-feature efforts, or feature for a single spec). ` +
-				`Ask me scoping questions if needed.`
+					`Please explore the codebase and assess what level of planning this needs ` +
+					`(roadmap for large multi-epic initiatives, epic for medium multi-feature efforts, or feature for a single spec). ` +
+					`Ask me scoping questions if needed.`,
 			);
 		},
 	});
 
 	pi.registerCommand("plan-done", {
-		description: "End scoping assessment and proceed with the recommended level",
+		description:
+			"End scoping assessment and proceed with the recommended level",
 		handler: async (_args, ctx) => {
-			if (pipelineMode !== "scoping" || !activeScopingState || !activeCwd || !activeProjectConfig) {
-				ctx.ui.notify("No active scoping session. Use /plan to start one.", "error");
+			if (
+				pipelineMode !== "scoping" ||
+				!activeScopingState ||
+				!activeCwd ||
+				!activeProjectConfig
+			) {
+				ctx.ui.notify(
+					"No active scoping session. Use /plan to start one.",
+					"error",
+				);
 				return;
 			}
 
@@ -3116,7 +3873,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (scopingExchanges === 0) {
 				const proceed = await ctx.ui.confirm(
 					"No Scoping Exchanges",
-					"No conversation exchanges recorded yet. Proceed anyway?"
+					"No conversation exchanges recorded yet. Proceed anyway?",
 				);
 				if (!proceed) return;
 			}
@@ -3133,11 +3890,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			exitMode();
 			clearPipelineWidget(ctx);
 
-			ctx.ui.notify(formatStepBanner(
-				"SCOPING COMPLETE",
-				`${scopingExchanges} exchange${scopingExchanges !== 1 ? "s" : ""} recorded.`,
-				"✅"
-			), "success");
+			ctx.ui.notify(
+				formatStepBanner(
+					"SCOPING COMPLETE",
+					`${scopingExchanges} exchange${scopingExchanges !== 1 ? "s" : ""} recorded.`,
+					"✅",
+				),
+				"success",
+			);
 
 			// Present recommendation or let user choose
 			let chosenLevel: HierarchyLevel;
@@ -3151,7 +3911,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 				const confirmed = await ctx.ui.confirm(
 					"Scoping Recommendation",
-					`The agent recommends: **${levelLabels[recommendedLevel]}**\n\nAccept this recommendation?`
+					`The agent recommends: **${levelLabels[recommendedLevel]}**\n\nAccept this recommendation?`,
 				);
 
 				if (confirmed) {
@@ -3166,7 +3926,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 					const choice = await ctx.ui.select(
 						"Override: Select the planning level",
-						levelChoices
+						levelChoices,
 					);
 
 					if (choice === levelChoices[0]) {
@@ -3179,7 +3939,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 			} else {
 				// No recommendation found — let user choose
-				ctx.ui.notify("The agent didn't provide a clear recommendation. Please choose a level.", "warning");
+				ctx.ui.notify(
+					"The agent didn't provide a clear recommendation. Please choose a level.",
+					"warning",
+				);
 
 				const levelChoices = [
 					"Roadmap (large initiative → multiple epics, months of work)",
@@ -3189,7 +3952,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 				const choice = await ctx.ui.select(
 					"Select the planning level",
-					levelChoices
+					levelChoices,
 				);
 
 				if (choice === levelChoices[0]) {
@@ -3201,8 +3964,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 			}
 
-			const levelLabel = chosenLevel.charAt(0).toUpperCase() + chosenLevel.slice(1);
-			ctx.ui.notify(`Selected: ${levelLabel} level. Starting pipeline...`, "info");
+			const levelLabel =
+				chosenLevel.charAt(0).toUpperCase() + chosenLevel.slice(1);
+			ctx.ui.notify(
+				`Selected: ${levelLabel} level. Starting pipeline...`,
+				"info",
+			);
 
 			// Route to the appropriate pipeline, forwarding scoping context
 			if (chosenLevel === "feature") {
@@ -3210,12 +3977,26 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (scopingSummary) {
 					pendingScopingContext = scopingSummary;
 				}
-				ctx.ui.notify(`Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`, "info");
+				ctx.ui.notify(
+					`Run:\n  /spec ${isQuick ? "--quick " : ""}${description}`,
+					"info",
+				);
 				if (scopingSummary) {
-					ctx.ui.notify("✅ Scoping context saved — it will be automatically included when you run /spec.", "info");
+					ctx.ui.notify(
+						"✅ Scoping context saved — it will be automatically included when you run /spec.",
+						"info",
+					);
 				}
 			} else {
-				await startHierarchyPipeline(chosenLevel, description, isQuick, ctx, undefined, undefined, scopingSummary);
+				await startHierarchyPipeline(
+					chosenLevel,
+					description,
+					isQuick,
+					ctx,
+					undefined,
+					undefined,
+					scopingSummary,
+				);
 			}
 		},
 	});
@@ -3237,7 +4018,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	// ---- /roadmap commands ----
 
 	pi.registerCommand("roadmap", {
-		description: "Create a roadmap (high-level initiative → epics). Use --quick to skip discovery.",
+		description:
+			"Create a roadmap (high-level initiative → epics). Use --quick to skip discovery.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -3245,13 +4027,19 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 
 			if (pipelineMode === "brainstorm") {
-				ctx.ui.notify("Cannot start /roadmap while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
+				ctx.ui.notify(
+					"Cannot start /roadmap while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.",
+					"error",
+				);
 				return;
 			}
 
 			const argsStr = args || "";
 			const isQuick = argsStr.includes("--quick");
-			const description = argsStr.replace("--quick", "").replace(/\s+/g, " ").trim();
+			const description = argsStr
+				.replace("--quick", "")
+				.replace(/\s+/g, " ")
+				.trim();
 
 			if (!description) {
 				ctx.ui.notify("Usage: /roadmap [--quick] <description>", "error");
@@ -3264,10 +4052,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (existingPipeline) {
 				const resume = await ctx.ui.confirm(
 					"Active Roadmap Found",
-					`There's an active roadmap:\n${formatRoadmapState(existingPipeline)}\n\nStart a NEW roadmap? (No = cancel)`
+					`There's an active roadmap:\n${formatRoadmapState(existingPipeline)}\n\nStart a NEW roadmap? (No = cancel)`,
 				);
 				if (!resume) {
-					ctx.ui.notify("Use /roadmap-resume to continue the existing roadmap", "info");
+					ctx.ui.notify(
+						"Use /roadmap-resume to continue the existing roadmap",
+						"info",
+					);
 					return;
 				}
 			}
@@ -3283,7 +4074,11 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
 				return;
 			}
-			await resumeHierarchyPipeline("roadmap", (args || "").trim() || undefined, ctx);
+			await resumeHierarchyPipeline(
+				"roadmap",
+				(args || "").trim() || undefined,
+				ctx,
+			);
 		},
 	});
 
@@ -3305,7 +4100,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (!state) {
 					const states = listRoadmapStates(cwd);
 					if (states.length === 0) {
-						ctx.ui.notify("No roadmaps found. Use /roadmap to start one.", "info");
+						ctx.ui.notify(
+							"No roadmaps found. Use /roadmap to start one.",
+							"info",
+						);
 						return;
 					}
 					state = states[0];
@@ -3320,9 +4118,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					if (child.childPipelineId) {
 						const epicState = loadEpicState(cwd, child.childPipelineId);
 						if (epicState) {
-							child.childStatus = epicState.stage === "completed" ? "completed"
-								: epicState.stage === "cancelled" ? "cancelled"
-								: "in_progress";
+							child.childStatus =
+								epicState.stage === "completed"
+									? "completed"
+									: epicState.stage === "cancelled"
+										? "cancelled"
+										: "in_progress";
 						}
 					}
 				}
@@ -3361,8 +4162,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
 				lines.push(`   Stage: ${formatHierarchyStage(state.stage)}`);
 				if (state.children.length > 0) {
-					const completed = state.children.filter(c => c.childStatus === "completed").length;
-					lines.push(`   Children: ${completed}/${state.children.length} completed`);
+					const completed = state.children.filter(
+						(c) => c.childStatus === "completed",
+					).length;
+					lines.push(
+						`   Children: ${completed}/${state.children.length} completed`,
+					);
 				}
 				lines.push(`   Updated: ${state.updatedAt}`);
 				lines.push("");
@@ -3406,7 +4211,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			const confirm = await ctx.ui.confirm(
 				"Cancel Roadmap?",
-				`Cancel roadmap ${state.id}?\n\nYou can resume later with /roadmap-resume.`
+				`Cancel roadmap ${state.id}?\n\nYou can resume later with /roadmap-resume.`,
 			);
 
 			if (confirm) {
@@ -3430,7 +4235,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	// ---- /epic commands ----
 
 	pi.registerCommand("epic", {
-		description: "Create an epic (medium effort → feature specs). Use --quick to skip discovery, --roadmap <id> to link to a roadmap.",
+		description:
+			"Create an epic (medium effort → feature specs). Use --quick to skip discovery, --roadmap <id> to link to a roadmap.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -3438,7 +4244,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 
 			if (pipelineMode === "brainstorm") {
-				ctx.ui.notify("Cannot start /epic while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.", "error");
+				ctx.ui.notify(
+					"Cannot start /epic while a brainstorm session is active. Use /brainstorm-cancel to cancel it first.",
+					"error",
+				);
 				return;
 			}
 
@@ -3459,7 +4268,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				.trim();
 
 			if (!description) {
-				ctx.ui.notify("Usage: /epic [--quick] [--roadmap <id>] <description>", "error");
+				ctx.ui.notify(
+					"Usage: /epic [--quick] [--roadmap <id>] <description>",
+					"error",
+				);
 				return;
 			}
 
@@ -3469,10 +4281,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			if (existingPipeline) {
 				const resume = await ctx.ui.confirm(
 					"Active Epic Found",
-					`There's an active epic:\n${formatEpicState(existingPipeline)}\n\nStart a NEW epic? (No = cancel)`
+					`There's an active epic:\n${formatEpicState(existingPipeline)}\n\nStart a NEW epic? (No = cancel)`,
 				);
 				if (!resume) {
-					ctx.ui.notify("Use /epic-resume to continue the existing epic", "info");
+					ctx.ui.notify(
+						"Use /epic-resume to continue the existing epic",
+						"info",
+					);
 					return;
 				}
 			}
@@ -3490,7 +4305,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 			}
 
-			await startHierarchyPipeline("epic", description, isQuick, ctx, parentId, parentId ? "roadmap" : undefined);
+			await startHierarchyPipeline(
+				"epic",
+				description,
+				isQuick,
+				ctx,
+				parentId,
+				parentId ? "roadmap" : undefined,
+			);
 		},
 	});
 
@@ -3501,7 +4323,11 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
 				return;
 			}
-			await resumeHierarchyPipeline("epic", (args || "").trim() || undefined, ctx);
+			await resumeHierarchyPipeline(
+				"epic",
+				(args || "").trim() || undefined,
+				ctx,
+			);
 		},
 	});
 
@@ -3538,9 +4364,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					if (child.childPipelineId) {
 						const specState = loadSpecState(cwd, child.childPipelineId);
 						if (specState) {
-							child.childStatus = specState.stage === "completed" ? "completed"
-								: specState.stage === "cancelled" ? "cancelled"
-								: "in_progress";
+							child.childStatus =
+								specState.stage === "completed"
+									? "completed"
+									: specState.stage === "cancelled"
+										? "cancelled"
+										: "in_progress";
 						}
 					}
 				}
@@ -3577,10 +4406,15 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				const desc = state.description || "(no description)";
 				lines.push(`   ${desc.slice(0, 55)}${desc.length > 55 ? "..." : ""}`);
 				lines.push(`   Stage: ${formatHierarchyStage(state.stage)}`);
-				if (state.parentId) lines.push(`   Parent: ${state.parentType}:${state.parentId}`);
+				if (state.parentId)
+					lines.push(`   Parent: ${state.parentType}:${state.parentId}`);
 				if (state.children.length > 0) {
-					const completed = state.children.filter(c => c.childStatus === "completed").length;
-					lines.push(`   Children: ${completed}/${state.children.length} completed`);
+					const completed = state.children.filter(
+						(c) => c.childStatus === "completed",
+					).length;
+					lines.push(
+						`   Children: ${completed}/${state.children.length} completed`,
+					);
 				}
 				lines.push(`   Updated: ${state.updatedAt}`);
 				lines.push("");
@@ -3624,7 +4458,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			const confirm = await ctx.ui.confirm(
 				"Cancel Epic?",
-				`Cancel epic ${state.id}?\n\nYou can resume later with /epic-resume.`
+				`Cancel epic ${state.id}?\n\nYou can resume later with /epic-resume.`,
 			);
 
 			if (confirm) {
@@ -3648,7 +4482,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	// ---- /plan-overview command ----
 
 	pi.registerCommand("plan-overview", {
-		description: "Show full hierarchy tree from any level. Usage: /plan-overview [id]",
+		description:
+			"Show full hierarchy tree from any level. Usage: /plan-overview [id]",
 		handler: async (args, ctx) => {
 			const cwd = ctx.cwd;
 			const targetId = (args || "").trim();
@@ -3700,7 +4535,9 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				// Check if it's a spec
 				const spec = loadSpecState(cwd, targetId);
 				if (spec) {
-					lines.push(`  📄 Feature: ${spec.description?.slice(0, 50) || "(no description)"}`);
+					lines.push(
+						`  📄 Feature: ${spec.description?.slice(0, 50) || "(no description)"}`,
+					);
 					lines.push(`     Stage: ${formatSpecStage(spec.stage)}`);
 					lines.push(`     Spec: ${spec.specPath}`);
 					lines.push("");
@@ -3715,7 +4552,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			// No ID specified — show all hierarchies
 			if (roadmaps.length === 0 && epics.length === 0 && specs.length === 0) {
-				ctx.ui.notify("No pipelines found. Use /plan, /roadmap, /epic, or /spec to get started.", "info");
+				ctx.ui.notify(
+					"No pipelines found. Use /plan, /roadmap, /epic, or /spec to get started.",
+					"info",
+				);
 				return;
 			}
 
@@ -3726,7 +4566,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			}
 
 			// Show standalone epics (not under a roadmap)
-			const standaloneEpics = epics.filter(e => !e.parentId);
+			const standaloneEpics = epics.filter((e) => !e.parentId);
 			for (const epic of standaloneEpics) {
 				renderEpicTree(lines, epic, cwd, "");
 				lines.push("");
@@ -3736,15 +4576,23 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const epicChildSpecIds = new Set<string>();
 			for (const epic of epics) {
 				for (const child of epic.children) {
-					if (child.childPipelineId) epicChildSpecIds.add(child.childPipelineId);
+					if (child.childPipelineId)
+						epicChildSpecIds.add(child.childPipelineId);
 				}
 			}
-			const standaloneSpecs = specs.filter(s => !epicChildSpecIds.has(s.id));
+			const standaloneSpecs = specs.filter((s) => !epicChildSpecIds.has(s.id));
 			if (standaloneSpecs.length > 0) {
 				lines.push("  📄 Standalone Features:");
 				for (const spec of standaloneSpecs.slice(0, 10)) {
-					const stageIcon = spec.stage === "completed" ? "✅" : spec.stage === "cancelled" ? "🚫" : "▶️";
-					lines.push(`     ${stageIcon} ${spec.description?.slice(0, 45) || spec.id} (${formatSpecStage(spec.stage)})`);
+					const stageIcon =
+						spec.stage === "completed"
+							? "✅"
+							: spec.stage === "cancelled"
+								? "🚫"
+								: "▶️";
+					lines.push(
+						`     ${stageIcon} ${spec.description?.slice(0, 45) || spec.id} (${formatSpecStage(spec.stage)})`,
+					);
 				}
 				if (standaloneSpecs.length > 10) {
 					lines.push(`     ... and ${standaloneSpecs.length - 10} more`);
@@ -3758,10 +4606,23 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	});
 
 	/** Helper: render a roadmap tree into lines */
-	function renderRoadmapTree(lines: string[], roadmap: RoadmapState, cwd: string): void {
-		const stageIcon = roadmap.stage === "completed" ? "✅" : roadmap.stage === "cancelled" ? "🚫" : "▶️";
-		lines.push(`  ${stageIcon} 🗺️ Roadmap: ${roadmap.description?.slice(0, 45) || roadmap.id}`);
-		lines.push(`     Stage: ${formatHierarchyStage(roadmap.stage)} | ID: ${roadmap.id}`);
+	function renderRoadmapTree(
+		lines: string[],
+		roadmap: RoadmapState,
+		cwd: string,
+	): void {
+		const stageIcon =
+			roadmap.stage === "completed"
+				? "✅"
+				: roadmap.stage === "cancelled"
+					? "🚫"
+					: "▶️";
+		lines.push(
+			`  ${stageIcon} 🗺️ Roadmap: ${roadmap.description?.slice(0, 45) || roadmap.id}`,
+		);
+		lines.push(
+			`     Stage: ${formatHierarchyStage(roadmap.stage)} | ID: ${roadmap.id}`,
+		);
 
 		if (roadmap.children.length > 0) {
 			for (let i = 0; i < roadmap.children.length; i++) {
@@ -3774,33 +4635,64 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					const epicState = loadEpicState(cwd, child.childPipelineId);
 					if (epicState) {
 						// Update status
-						child.childStatus = epicState.stage === "completed" ? "completed"
-							: epicState.stage === "cancelled" ? "cancelled"
-							: (epicState.stage !== "approved" && epicState.stage !== "in_progress") ? "pending" : "in_progress";
+						child.childStatus =
+							epicState.stage === "completed"
+								? "completed"
+								: epicState.stage === "cancelled"
+									? "cancelled"
+									: epicState.stage !== "approved" &&
+											epicState.stage !== "in_progress"
+										? "pending"
+										: "in_progress";
 
-						const epicIcon = child.childStatus === "completed" ? "✅"
-							: child.childStatus === "in_progress" ? "🔄"
-							: child.childStatus === "cancelled" ? "🚫"
-							: "⬜";
-						lines.push(`${prefix}${epicIcon} ${child.number}. ${child.name} [${child.priority}]`);
+						const epicIcon =
+							child.childStatus === "completed"
+								? "✅"
+								: child.childStatus === "in_progress"
+									? "🔄"
+									: child.childStatus === "cancelled"
+										? "🚫"
+										: "⬜";
+						lines.push(
+							`${prefix}${epicIcon} ${child.number}. ${child.name} [${child.priority}]`,
+						);
 						renderEpicTree(lines, epicState, cwd, childPrefix);
 						continue;
 					}
 				}
 
 				// Child not yet created
-				const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
-				lines.push(`${prefix}⬜ ${child.number}. ${child.name} [${child.priority}]${deps} — not started`);
+				const deps =
+					child.dependencies.length > 0
+						? ` (deps: ${child.dependencies.join(", ")})`
+						: "";
+				lines.push(
+					`${prefix}⬜ ${child.number}. ${child.name} [${child.priority}]${deps} — not started`,
+				);
 			}
 		}
 	}
 
 	/** Helper: render an epic tree into lines */
-	function renderEpicTree(lines: string[], epic: EpicState, cwd: string, indent: string): void {
+	function renderEpicTree(
+		lines: string[],
+		epic: EpicState,
+		cwd: string,
+		indent: string,
+	): void {
 		if (!indent) {
-			const stageIcon = epic.stage === "completed" ? "✅" : epic.stage === "cancelled" ? "🚫" : "▶️";
-			lines.push(`  ${stageIcon} 📋 Epic: ${epic.description?.slice(0, 45) || epic.id}`);
-			lines.push(`     Stage: ${formatHierarchyStage(epic.stage)} | ID: ${epic.id}`);
+			const stageIcon =
+				epic.stage === "completed"
+					? "✅"
+					: epic.stage === "cancelled"
+						? "🚫"
+						: "▶️";
+			lines.push(
+				`  ${stageIcon} 📋 Epic: ${epic.description?.slice(0, 45) || epic.id}`,
+			);
+			lines.push(
+				`     Stage: ${formatHierarchyStage(epic.stage)} | ID: ${epic.id}`,
+			);
 			indent = "  ";
 		}
 
@@ -3813,20 +4705,34 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (child.childPipelineId) {
 					const specState = loadSpecState(cwd, child.childPipelineId);
 					if (specState) {
-						child.childStatus = specState.stage === "completed" ? "completed"
-							: specState.stage === "cancelled" ? "cancelled"
-							: "in_progress";
-						const specIcon = child.childStatus === "completed" ? "✅"
-							: child.childStatus === "in_progress" ? "🔄"
-							: child.childStatus === "cancelled" ? "🚫"
-							: "⬜";
-						lines.push(`${prefix}${specIcon} ${child.number}. ${child.name} [${child.priority}]`);
+						child.childStatus =
+							specState.stage === "completed"
+								? "completed"
+								: specState.stage === "cancelled"
+									? "cancelled"
+									: "in_progress";
+						const specIcon =
+							child.childStatus === "completed"
+								? "✅"
+								: child.childStatus === "in_progress"
+									? "🔄"
+									: child.childStatus === "cancelled"
+										? "🚫"
+										: "⬜";
+						lines.push(
+							`${prefix}${specIcon} ${child.number}. ${child.name} [${child.priority}]`,
+						);
 						continue;
 					}
 				}
 
-				const deps = child.dependencies.length > 0 ? ` (deps: ${child.dependencies.join(", ")})` : "";
-				lines.push(`${prefix}⬜ ${child.number}. ${child.name} [${child.priority}]${deps} — not started`);
+				const deps =
+					child.dependencies.length > 0
+						? ` (deps: ${child.dependencies.join(", ")})`
+						: "";
+				lines.push(
+					`${prefix}⬜ ${child.number}. ${child.name} [${child.priority}]${deps} — not started`,
+				);
 			}
 		}
 	}
@@ -3836,7 +4742,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 	// ============================================
 
 	pi.registerCommand("brainstorm", {
-		description: "Start a brainstorming session for open-ended idea exploration.",
+		description:
+			"Start a brainstorming session for open-ended idea exploration.",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
@@ -3845,7 +4752,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			const description = (args || "").trim();
 			if (!description) {
-				ctx.ui.notify("Usage: /brainstorm <description of what you want to explore>", "error");
+				ctx.ui.notify(
+					"Usage: /brainstorm <description of what you want to explore>",
+					"error",
+				);
 				return;
 			}
 
@@ -3860,8 +4770,8 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				};
 				ctx.ui.notify(
 					`Cannot start brainstorm: a ${modeLabels[pipelineMode]} is already active.\n` +
-					`Finish or cancel the current session first.`,
-					"error"
+						`Finish or cancel the current session first.`,
+					"error",
 				);
 				return;
 			}
@@ -3874,13 +4784,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				const proceed = await ctx.ui.confirm(
 					"Active Brainstorm Found",
 					`There's an active brainstorm:\n` +
-					`  Description: ${existingPipeline.description.slice(0, 60)}${existingPipeline.description.length > 60 ? "..." : ""}\n` +
-					`  Stage: ${existingPipeline.stage}\n` +
-					`  Exchanges: ${existingPipeline.conversationHistory.length}\n\n` +
-					`Start a NEW brainstorm? (No = cancel)`
+						`  Description: ${existingPipeline.description.slice(0, 60)}${existingPipeline.description.length > 60 ? "..." : ""}\n` +
+						`  Stage: ${existingPipeline.stage}\n` +
+						`  Exchanges: ${existingPipeline.conversationHistory.length}\n\n` +
+						`Start a NEW brainstorm? (No = cancel)`,
 				);
 				if (!proceed) {
-					ctx.ui.notify("Existing brainstorm is still active. Cancel it with /brainstorm-cancel if needed.", "info");
+					ctx.ui.notify(
+						"Existing brainstorm is still active. Cancel it with /brainstorm-cancel if needed.",
+						"info",
+					);
 					return;
 				}
 			}
@@ -3910,15 +4823,14 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				docTimestamp,
 				shortName,
 				projectConfig.specsDir,
-				projectConfig.specFormat
+				projectConfig.specFormat,
 			);
 			saveBrainstormState(cwd, state);
 
-			ctx.ui.notify(formatStepBanner(
-				"BRAINSTORM STARTED",
-				`ID: ${state.id}`,
-				"🧠"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner("BRAINSTORM STARTED", `ID: ${state.id}`, "🧠"),
+				"info",
+			);
 
 			// Enter brainstorm mode
 			enterBrainstormMode(cwd, projectConfig, state);
@@ -3926,14 +4838,20 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			// Show widget
 			updateModeWidget(ctx);
 
-			ctx.ui.notify("Explore ideas freely. The LLM will ask one question at a time to help you think things through.", "info");
-			ctx.ui.notify("Type /brainstorm-done when you're ready to capture the ideas.", "info");
+			ctx.ui.notify(
+				"Explore ideas freely. The LLM will ask one question at a time to help you think things through.",
+				"info",
+			);
+			ctx.ui.notify(
+				"Type /brainstorm-done when you're ready to capture the ideas.",
+				"info",
+			);
 
 			// Send the initial brainstorm message to kick off the session
 			pi.sendUserMessage(
 				`I want to brainstorm the following idea: ${description}\n\n` +
-				`Please explore the codebase to understand the current state, then start with ONE question or angle to kick things off. ` +
-				`We'll explore the problem space one step at a time.`
+					`Please explore the codebase to understand the current state, then start with ONE question or angle to kick things off. ` +
+					`We'll explore the problem space one step at a time.`,
 			);
 		},
 	});
@@ -3946,8 +4864,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 		// handlers must return synchronously — they cannot await async pi events.
 		handler: async (_args, ctx) => {
 			const brainstormState = getActiveBrainstormState();
-			if (pipelineMode !== "brainstorm" || !brainstormState || !activeCwd || !activeProjectConfig) {
-				ctx.ui.notify("No active brainstorm session. Use /brainstorm to start one.", "error");
+			if (
+				pipelineMode !== "brainstorm" ||
+				!brainstormState ||
+				!activeCwd ||
+				!activeProjectConfig
+			) {
+				ctx.ui.notify(
+					"No active brainstorm session. Use /brainstorm to start one.",
+					"error",
+				);
 				return;
 			}
 
@@ -3971,64 +4897,90 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					exitMode();
 					clearPipelineWidget(ctx);
 
-					ctx.ui.notify(formatStepBanner(
-						"BRAINSTORM CAPTURED",
-						`${brainstormExchanges} exchanges. Creating commit...`,
-						"✅"
-					), "info");
+					ctx.ui.notify(
+						formatStepBanner(
+							"BRAINSTORM CAPTURED",
+							`${brainstormExchanges} exchanges. Creating commit...`,
+							"✅",
+						),
+						"info",
+					);
 
 					// Create git commit scoped to the brainstorm file
 					const { extractDocName } = await import("./commit-agent.ts");
 					const docName = extractDocName(state.docFilename);
 
 					const commitResult = await createAgentCommit(
-						cwd, state,
-						{ role: "brainstormAgent", modelConfig: projectConfig.models.planDrafter, docName },
+						cwd,
+						state,
+						{
+							role: "brainstormAgent",
+							modelConfig: projectConfig.models.planDrafter,
+							docName,
+						},
 						projectConfig.models.agentCommitMessageWriter,
 						() => saveBrainstormState(cwd, state),
-						ctx.ui.notify.bind(ctx.ui) as (msg: string, type: "info" | "error" | "success" | "warning") => void,
-						[state.docPath]
+						ctx.ui.notify.bind(ctx.ui) as (
+							msg: string,
+							type: "info" | "error" | "success" | "warning",
+						) => void,
+						[state.docPath],
 					);
 
 					if (!commitResult.success) {
-						ctx.ui.notify("Warning: Failed to create commit for brainstorm document", "warning");
+						ctx.ui.notify(
+							"Warning: Failed to create commit for brainstorm document",
+							"warning",
+						);
 					}
 
 					// Success notification — no approval dialog
-					ctx.ui.notify(formatStepBanner(
-						"🎉 Brainstorm Complete!",
-						`Document: ${state.docPath}`,
-						"✅"
-					), "info");
-					ctx.ui.notify(`You can reference this document in /spec, /epic, or /roadmap commands.`, "info");
+					ctx.ui.notify(
+						formatStepBanner(
+							"🎉 Brainstorm Complete!",
+							`Document: ${state.docPath}`,
+							"✅",
+						),
+						"info",
+					);
+					ctx.ui.notify(
+						`You can reference this document in /spec, /epic, or /roadmap commands.`,
+						"info",
+					);
 					return;
 				}
 			}
 
 			// Document not ready yet — send synthesis message
-			ctx.ui.notify(formatStepBanner(
-				"SYNTHESIZING BRAINSTORM",
-				"The LLM will now capture the ideas into a document...",
-				"📝"
-			), "info");
+			ctx.ui.notify(
+				formatStepBanner(
+					"SYNTHESIZING BRAINSTORM",
+					"The LLM will now capture the ideas into a document...",
+					"📝",
+				),
+				"info",
+			);
 
 			// Send synthesis message to the LLM — it will write the file
 			pi.sendUserMessage(
 				`Please synthesize our brainstorm conversation into a document and write it to this exact path: ${fullDocPath}\n\n` +
-				`Use the brainstorm document format with these sections:\n` +
-				`- Problem / Opportunity\n` +
-				`- Context & Background\n` +
-				`- Proposed Directions (with tradeoffs for each option)\n` +
-				`- Out of Scope\n` +
-				`- Open Questions\n` +
-				`- Rough Scope Assessment\n\n` +
-				`Use timestamp: ${state.docTimestamp}\n` +
-				`Title: ${state.description}\n\n` +
-				`Write the complete document to the file now.\n\n` +
-				`After writing the file, the user will type /brainstorm-done again to finalize.`
+					`Use the brainstorm document format with these sections:\n` +
+					`- Problem / Opportunity\n` +
+					`- Context & Background\n` +
+					`- Proposed Directions (with tradeoffs for each option)\n` +
+					`- Out of Scope\n` +
+					`- Open Questions\n` +
+					`- Rough Scope Assessment\n\n` +
+					`Use timestamp: ${state.docTimestamp}\n` +
+					`Title: ${state.description}\n\n` +
+					`Write the complete document to the file now.\n\n` +
+					`After writing the file, the user will type /brainstorm-done again to finalize.`,
 			);
 
-			ctx.ui.notify("Once the LLM finishes writing, type /brainstorm-done again to finalize.", "info");
+			ctx.ui.notify(
+				"Once the LLM finishes writing, type /brainstorm-done again to finalize.",
+				"info",
+			);
 		},
 	});
 
@@ -4050,7 +5002,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				if (!state) {
 					const states = listBrainstormStates(cwd);
 					if (states.length === 0) {
-						ctx.ui.notify("No brainstorm sessions found. Use /brainstorm to start one.", "info");
+						ctx.ui.notify(
+							"No brainstorm sessions found. Use /brainstorm to start one.",
+							"info",
+						);
 						return;
 					}
 					state = states[0];
@@ -4064,17 +5019,26 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			lines.push("");
 			lines.push("📋 Basic Information");
 			const description = state.description || "(no description)";
-			lines.push(formatKeyValue("  Description", description.slice(0, 50) + (description.length > 50 ? "..." : "")));
+			lines.push(
+				formatKeyValue(
+					"  Description",
+					description.slice(0, 50) + (description.length > 50 ? "..." : ""),
+				),
+			);
 
 			const stageLabels: Record<string, string> = {
 				brainstorming: "🧠 Brainstorming",
 				completed: "✅ Completed",
 				cancelled: "❌ Cancelled",
 			};
-			lines.push(formatKeyValue("  Stage", stageLabels[state.stage] || state.stage));
+			lines.push(
+				formatKeyValue("  Stage", stageLabels[state.stage] || state.stage),
+			);
 			lines.push(formatKeyValue("  Created", state.createdAt));
 			lines.push(formatKeyValue("  Updated", state.updatedAt));
-			lines.push(formatKeyValue("  Exchanges", String(state.conversationHistory.length)));
+			lines.push(
+				formatKeyValue("  Exchanges", String(state.conversationHistory.length)),
+			);
 			lines.push(formatKeyValue("  Document", state.docFilename));
 
 			if (state.stage === "completed") {
@@ -4087,7 +5051,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			ctx.ui.notify(lines.join("\n"), "info");
 
 			if (state.stage === "completed") {
-				ctx.ui.notify(`\n✅ Brainstorm completed. Document at: ${state.docPath}`, "info");
+				ctx.ui.notify(
+					`\n✅ Brainstorm completed. Document at: ${state.docPath}`,
+					"info",
+				);
 			} else if (state.stage === "cancelled") {
 				ctx.ui.notify("\n🚫 Cancelled.", "info");
 			} else {
@@ -4103,7 +5070,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const states = listBrainstormStates(cwd);
 
 			if (states.length === 0) {
-				ctx.ui.notify("No brainstorm sessions found. Use /brainstorm to start one.", "info");
+				ctx.ui.notify(
+					"No brainstorm sessions found. Use /brainstorm to start one.",
+					"info",
+				);
 				return;
 			}
 
@@ -4193,5 +5163,4 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			ctx.ui.notify("Brainstorm session cancelled.", "info");
 		},
 	});
-
 }
