@@ -405,11 +405,12 @@ Your plan must be executable with minimal interpretation:
 - **Before/After**: Show actual changes for modifications
 - **Verification**: Real commands that work
 
-## File Writing
+## Output Format
 
-After creating the plan content, use the \`write\` tool to save it to the EXACT path provided in your task.
-Do NOT use different filenames or locations.
-The write tool creates parent directories automatically.`,
+Return the plan markdown as your final assistant message. Do NOT call any write/edit tool.
+Start directly with the plan content (a markdown heading) — no conversational preamble,
+no "Here is the plan:", no triple-backtick code fence wrapping the whole document.
+The pipeline captures your stdout verbatim and persists it; you do not have write tools.`,
 
 		implementer: `You are implementing a phase of a specification.
 

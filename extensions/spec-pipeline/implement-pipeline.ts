@@ -475,7 +475,18 @@ async function _runImplementPipelineInner(
 		// ========================================
 		// STEP 1: Plan Generation (per phase)
 		// ========================================
-		if (!effectiveSkipPlanGeneration && !state.phasesGenerated[phaseIdx]) {
+		if (
+			!effectiveSkipPlanGeneration &&
+			(!state.phasesGenerated[phaseIdx] || !fs.existsSync(fullPhasePath))
+		) {
+			if (state.phasesGenerated[phaseIdx]) {
+				ctx.ui.notify(
+					`Plan file missing from temp dir (${fullPhasePath}); regenerating`,
+					"info",
+				);
+				state.phasesGenerated[phaseIdx] = false;
+				save();
+			}
 			updateImplWidget(
 				ctx,
 				state,
@@ -497,18 +508,20 @@ async function _runImplementPipelineInner(
 				"info",
 			);
 
-			const planTask = `Create detailed implementation plan for Phase ${phaseIdx + 1}.
+			const planTask = `Create a detailed implementation plan for Phase ${phaseIdx + 1}.
 
 ${specFileRef}
 
-IMPORTANT: Write the plan file to this EXACT path: ${fullPhasePath}
+You have READ-ONLY tools. Do NOT modify any source files; the implementer agent
+will do that in the next step from your plan.
 
-Explore the codebase first to understand:
+Explore the codebase first (read, ls, grep, find, bash with read-only commands):
 - Project structure and conventions
 - Similar existing implementations
 - Test patterns used
 
-Then create a detailed, executable plan and save it to the path above.`;
+Then output the plan markdown as your final assistant message. The pipeline will
+capture it and save it for the implementer. Do NOT call write/edit tools.`;
 
 			const planStartTime = new Date();
 
@@ -571,56 +584,17 @@ Then create a detailed, executable plan and save it to the path above.`;
 				"info",
 			);
 
-			if (!fs.existsSync(fullPhasePath)) {
-				// Agent didn't use write tool — try to salvage plan from text output
-				const agentOutput = planDraftResult.output || "";
-				if (agentOutput.trim().length > 50) {
-					ctx.ui.notify(
-						"⚠️ Plan drafter didn't write file — extracting plan from agent output",
-						"warning",
-					);
-					fs.mkdirSync(path.dirname(fullPhasePath), { recursive: true });
-					fs.writeFileSync(fullPhasePath, agentOutput, "utf-8");
-				} else {
-					const errorMsg = `Plan file was not created at ${fullPhasePath} and agent output was empty`;
-					state.lastError = errorMsg;
-					save();
-					clearPipelineWidget(ctx);
-					ctx.ui.notify(errorMsg, "error");
-					return;
-				}
+			const agentOutput = (planDraftResult.output || "").trim();
+			if (agentOutput.length < 50) {
+				const errorMsg = `Plan drafter returned empty/too-short output (${agentOutput.length} chars); cannot proceed`;
+				state.lastError = errorMsg;
+				save();
+				clearPipelineWidget(ctx);
+				ctx.ui.notify(errorMsg, "error");
+				return;
 			}
-
-			// Create commit after plan drafting
-			const commitResult = await createAgentCommit(
-				cwd,
-				state,
-				{
-					role: "planDrafter",
-					modelConfig: planDrafterConfig,
-					phase: phaseIdx + 1,
-					phaseName,
-					docName,
-				},
-				projectConfig.models.agentCommitMessageWriter,
-				save,
-				ctx.ui.notify.bind(ctx.ui),
-			);
-
-			if (!commitResult.success) {
-				if (commitResult.usedFallback) {
-					state.lastError = "Commit message generation failed - fallback used";
-					save();
-					clearPipelineWidget(ctx);
-					return;
-				} else {
-					state.lastError = undefined;
-					save();
-					clearPipelineWidget(ctx);
-					ctx.ui.notify("Failed to create agent commit", "error");
-					return;
-				}
-			}
+			fs.mkdirSync(path.dirname(fullPhasePath), { recursive: true });
+			fs.writeFileSync(fullPhasePath, agentOutput, "utf-8");
 
 			state.phasesGenerated[phaseIdx] = true;
 			save();

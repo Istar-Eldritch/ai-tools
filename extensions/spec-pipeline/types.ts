@@ -534,13 +534,13 @@ export const MAX_SPEC_ITERATIONS = 5;
 export const PIPELINE_WIDGET_ID = "spec-pipeline-status";
 
 // Roles that need write/edit access to modify files
-export const WRITE_ROLES = new Set([
-	"planDrafter",
-	"implementer",
-	"addressReview",
-]);
+export const WRITE_ROLES = new Set(["implementer", "addressReview"]);
 // Roles that only need to read and analyze (no write/edit access)
-export const READ_ONLY_ROLES = new Set(["codeReviewer", "commitMessageWriter"]);
+export const READ_ONLY_ROLES = new Set([
+	"planDrafter",
+	"codeReviewer",
+	"commitMessageWriter",
+]);
 
 // ============================================
 // Hierarchy Types (Roadmaps & Epics)
