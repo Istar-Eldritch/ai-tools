@@ -1047,9 +1047,13 @@ IMPORTANT: You are in DISCOVERY MODE.
 			followUp.agentAnswer = answer || "(Discovery agent returned no answer.)";
 			persistDiscoveryLoopState();
 
+			if (!answer && result.error) {
+				console.error("[spec-pipeline] Discovery follow-up error:", result.error);
+			}
+
 			pi.sendMessage({
 				customType: "spec-discovery-qa",
-				content: `💬 Follow-up answer\n\n${followUp.agentAnswer}\n\n➔ Ask another follow-up or give your final confirmation/correction for this topic:`,
+				content: `💬 Follow-up answer\n\n${followUp.agentAnswer}${result.error ? "\n\n⚠️ Error: " + result.error.split("\n")[0] : ""}\n\n➔ Ask another follow-up or give your final confirmation/correction for this topic:`,
 				display: true,
 			});
 		} catch (error) {
@@ -1113,10 +1117,18 @@ IMPORTANT: You are in DISCOVERY MODE.
 		discoveryLoopAbort = null;
 
 		if (!result.output.trim()) {
+			const errorDetail = result.error
+				? `\n\nDetails: ${result.error.split("\n")[0].slice(0, 200)}`
+				: result.exitCode !== 0
+					? `\n\nExit code: ${result.exitCode}${result.finishReason ? ` (finish reason: ${result.finishReason})` : ""}`
+					: "";
+			console.error("[spec-pipeline] Discovery step empty output. error=", result.error, "exitCode=", result.exitCode, "finishReason=", result.finishReason);
 			pi.sendMessage({
 				customType: "spec-discovery-qa",
 				content:
-					"⚠️ Discovery agent returned empty output. Type /discovery-done to proceed.",
+					"⚠️ Discovery agent returned empty output." +
+					`${errorDetail}\n\n` +
+					"Type /discovery-done to proceed.",
 				display: true,
 			});
 			return;

@@ -593,6 +593,34 @@ function buildProjectConfig(
 }
 
 /**
+ * Try to resolve the main git repository path when running inside a worktree.
+ * Git worktrees have a `.git` file (not directory) containing `gitdir: <path>`.
+ * Returns the main repo root or null if not a worktree.
+ */
+function resolveMainRepoFromWorktree(cwd: string): string | null {
+	const gitFile = path.join(cwd, ".git");
+	try {
+		const stat = fs.statSync(gitFile);
+		if (stat.isDirectory()) return null; // normal repo
+		const content = fs.readFileSync(gitFile, "utf-8").trim();
+		// e.g. gitdir: /home/user/project/.git/worktrees/branch-name
+		const match = content.match(/^gitdir:\s*(.+)$/m);
+		if (!match) return null;
+		const gitDir = match[1].trim();
+		// Navigate from .git/worktrees/<name> up to the repo root
+		const parts = gitDir.split(path.sep);
+		// Remove .git/worktrees/<name> → go up 3 levels
+		if (parts.length >= 3) {
+			const mainRepo = path.join(...parts.slice(0, -3));
+			return path.isAbsolute(mainRepo) ? mainRepo : path.resolve(cwd, mainRepo);
+		}
+	} catch {
+		/* ignore */
+	}
+	return null;
+}
+
+/**
  * Load and validate pipeline configuration
  * Returns error if config is corrupt or invalid (R4)
  */
@@ -600,12 +628,32 @@ export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 	const configPath = path.join(cwd, ".pi", "spec-pipeline.json");
 	let rawConfig: unknown = {};
 	let fromFile = false;
+	let resolvedPath = configPath;
 
 	if (fs.existsSync(configPath)) {
 		fromFile = true;
+	} else {
+		// Worktree fallback: untracked `.pi/` is not copied by `git worktree add`,
+		// so look in the main repo for the config.
+		const mainRepo = resolveMainRepoFromWorktree(cwd);
+		if (mainRepo) {
+			const fallbackPath = path.join(mainRepo, ".pi", "spec-pipeline.json");
+			if (fs.existsSync(fallbackPath)) {
+				fromFile = true;
+				resolvedPath = fallbackPath;
+			}
+		}
+	}
+
+	if (fromFile) {
 		try {
-			const content = fs.readFileSync(configPath, "utf-8");
+			const content = fs.readFileSync(resolvedPath, "utf-8");
 			rawConfig = JSON.parse(content);
+			if (resolvedPath !== configPath) {
+				console.log(
+					`ℹ️  spec-pipeline: using config from main repo (${path.relative(cwd, resolvedPath)}) because this worktree does not have its own .pi/spec-pipeline.json.`,
+				);
+			}
 		} catch (e) {
 			// JSON parse error - return error (R4)
 			const parseError = e instanceof Error ? e.message : "Unknown parse error";
