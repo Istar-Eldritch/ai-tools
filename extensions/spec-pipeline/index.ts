@@ -1047,10 +1047,11 @@ IMPORTANT: You are in DISCOVERY MODE.
 			followUp.agentAnswer = answer || "(Discovery agent returned no answer.)";
 			persistDiscoveryLoopState();
 
-			ctx.ui.notify(
-				`\n💬 Follow-up answer\n\n${followUp.agentAnswer}\n\n➔ Ask another follow-up or give your final confirmation/correction for this topic:`,
-				"info",
-			);
+			pi.sendMessage({
+				customType: "spec-discovery-qa",
+				content: `💬 Follow-up answer\n\n${followUp.agentAnswer}\n\n➔ Ask another follow-up or give your final confirmation/correction for this topic:`,
+				display: true,
+			});
 		} catch (error) {
 			if (discoveryLoopAbort === followUpAbort) {
 				discoveryLoopAbort = null;
@@ -1112,10 +1113,12 @@ IMPORTANT: You are in DISCOVERY MODE.
 		discoveryLoopAbort = null;
 
 		if (!result.output.trim()) {
-			ctx.ui.notify(
-				"Discovery agent returned empty output. Type /discovery-done to proceed.",
-				"warning",
-			);
+			pi.sendMessage({
+				customType: "spec-discovery-qa",
+				content:
+					"⚠️ Discovery agent returned empty output. Type /discovery-done to proceed.",
+				display: true,
+			});
 			return;
 		}
 
@@ -1136,8 +1139,9 @@ IMPORTANT: You are in DISCOVERY MODE.
 			return;
 		}
 
-		// It's a question — display via notify only (no pi.sendUserMessage, which
-		// would trigger a host agent turn to reply to it).
+		// It's a question — append as a custom message so it persists in the
+		// session and renders conversationally, but filter it from LLM context
+		// so the host agent does not react to it.
 		activeDiscoveryTopic = {
 			question: output,
 			followUps: [],
@@ -1146,10 +1150,11 @@ IMPORTANT: You are in DISCOVERY MODE.
 		};
 		persistDiscoveryLoopState();
 
-		ctx.ui.notify(
-			`\n💬 Question ${discoveryTopics.length + 1}\n\n${output}\n\n➔ Type your answer below:`,
-			"info",
-		);
+		pi.sendMessage({
+			customType: "spec-discovery-qa",
+			content: `💬 Question ${discoveryTopics.length + 1}\n\n${output}\n\n➔ Type your answer below:`,
+			display: true,
+		});
 	}
 
 	/**
@@ -2181,9 +2186,20 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 
 				if (classification === "followup") {
+					pi.sendMessage({
+						customType: "spec-discovery-qa",
+						content: `❓ Follow-up: ${answer}`,
+						display: true,
+					});
 					await runFollowUpStep(ctx, answer, topicAtClassification);
 					return { action: "handled" as const };
 				}
+
+				pi.sendMessage({
+					customType: "spec-discovery-qa",
+					content: `👤 Decision: ${answer}`,
+					display: true,
+				});
 
 				const closedTopic: DiscoveryTopic = {
 					...activeDiscoveryTopic,
@@ -2300,6 +2316,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				}
 				if (m.customType === "spec-brainstorm-context") {
 					return pipelineMode === "brainstorm";
+				}
+				// Discovery QA display messages are UI-only; never feed them to the LLM.
+				if (m.customType === "spec-discovery-qa") {
+					return false;
 				}
 				return true;
 			}),
