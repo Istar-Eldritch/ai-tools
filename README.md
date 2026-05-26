@@ -85,6 +85,7 @@ Skills are instruction files that teach pi how to perform specific tasks. They a
 | **gh-cli** | GitHub CLI for repos, issues, PRs, releases, and workflows |
 | **kagi-search** | Web search using Kagi Search API |
 | **pass-secrets** | Securely inject secrets from pass password store into commands |
+| **pi-worktree** | Manage git worktrees for parallel agentic workflows |
 | **plane** | Project management via Plane.so CLI |
 
 ## Claude Sandbox
