@@ -212,6 +212,9 @@ export interface ProjectConfig {
 	skipPlanGeneration: boolean;
 	// Project-level default for streaming idle-timeout watchdog (ms). undefined → fall back to env / 90s.
 	streamIdleTimeoutMs?: number;
+	// True when models were not configured and the pipeline is falling back to
+	// the user's current/default model (omitting --model/--thinking on subagent calls).
+	usingDefaultModels?: boolean;
 }
 
 // ============================================

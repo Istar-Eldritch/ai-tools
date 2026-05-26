@@ -10,7 +10,6 @@ import type {
 	ImplementationState,
 	RoadmapState,
 	EpicState,
-	HierarchyState,
 	ModelConfig,
 	ProjectConfig,
 	WidgetUIContext,
@@ -127,7 +126,9 @@ export function formatStepBanner(
  * Format model config for display
  */
 export function formatModelConfig(config: ModelConfig): string {
-	return `${config.model}/${config.thinking}`;
+	return config.model === "$default"
+		? "(user default)"
+		: `${config.model}/${config.thinking}`;
 }
 
 /**
@@ -145,6 +146,19 @@ export function formatEffectiveConfig(
 	);
 	lines.push(formatDivider(60));
 	lines.push("");
+
+	if (config.usingDefaultModels) {
+		lines.push(
+			"  ⚠️  No .pi/spec-pipeline.json found. All pipeline roles will use your",
+		);
+		lines.push(
+			"     current default model (no --model override). Create .pi/spec-pipeline.json",
+		);
+		lines.push(
+			"     to configure specific models per role.",
+		);
+		lines.push("");
+	}
 
 	// Model configurations
 	lines.push("  Model Configurations:");

@@ -269,16 +269,16 @@ function spawnPiCommitJob(
 		const promptPath = path.join(tmpDir, "system.md");
 		fs.writeFileSync(promptPath, systemPrompt, { encoding: "utf-8", mode: 0o600 });
 
-		const args = [
+		const args: string[] = [
 			"--mode", "json",
 			"-p",
 			"--no-session",
 			"--no-tools",
-			"--model", model,
-			"--thinking", thinking,
-			"--append-system-prompt", promptPath,
-			userPrompt,
 		];
+		if (model !== "$default") {
+			args.push("--model", model, "--thinking", thinking);
+		}
+		args.push("--append-system-prompt", promptPath, userPrompt);
 
 		let output = "";
 		let error = "";

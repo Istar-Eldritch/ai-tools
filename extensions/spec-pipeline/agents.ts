@@ -255,16 +255,16 @@ export async function runAgentWithConfig(
 	onOutput?: (event: AgentOutputEvent) => void,
 	role?: string,
 ): Promise<AgentResult> {
+	const useSystemDefault = modelConfig.model === "$default";
 	const args: string[] = [
 		"--mode",
 		"json",
 		"-p",
 		"--no-session",
-		"--model",
-		modelConfig.model,
-		"--thinking",
-		modelConfig.thinking,
 	];
+	if (!useSystemDefault) {
+		args.push("--model", modelConfig.model, "--thinking", modelConfig.thinking);
+	}
 
 	// Restrict tools based on role. The two strings below are intentionally
 	// constants — varying the --tools allowlist changes pi's tool-schema prefix

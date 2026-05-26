@@ -1048,7 +1048,10 @@ IMPORTANT: You are in DISCOVERY MODE.
 			persistDiscoveryLoopState();
 
 			if (!answer && result.error) {
-				console.error("[spec-pipeline] Discovery follow-up error:", result.error);
+				console.error(
+					"[spec-pipeline] Discovery follow-up error:",
+					result.error,
+				);
 			}
 
 			pi.sendMessage({
@@ -1122,7 +1125,14 @@ IMPORTANT: You are in DISCOVERY MODE.
 				: result.exitCode !== 0
 					? `\n\nExit code: ${result.exitCode}${result.finishReason ? ` (finish reason: ${result.finishReason})` : ""}`
 					: "";
-			console.error("[spec-pipeline] Discovery step empty output. error=", result.error, "exitCode=", result.exitCode, "finishReason=", result.finishReason);
+			console.error(
+				"[spec-pipeline] Discovery step empty output. error=",
+				result.error,
+				"exitCode=",
+				result.exitCode,
+				"finishReason=",
+				result.finishReason,
+			);
 			pi.sendMessage({
 				customType: "spec-discovery-qa",
 				content:

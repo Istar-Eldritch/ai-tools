@@ -676,9 +676,22 @@ export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 	// Cast to typed config after validation
 	const typedConfig = rawConfig as Static<typeof SpecPipelineConfigSchema>;
 
+	const projectConfig = buildProjectConfig(cwd, typedConfig);
+
+	// When no config file exists (including worktree fallback), all model roles
+	// fall back to the user's current default model instead of hardcoded ones.
+	// Runtimes spawn pi without --model/--thinking so the subagent inherits the
+	// user's default.
+	if (!fromFile) {
+		projectConfig.usingDefaultModels = true;
+		for (const role of Object.keys(projectConfig.models) as Array<keyof typeof projectConfig.models>) {
+			projectConfig.models[role] = { model: "$default", thinking: "off" };
+		}
+	}
+
 	return {
 		success: true,
-		config: buildProjectConfig(cwd, typedConfig),
+		config: projectConfig,
 		fromFile,
 	};
 }
