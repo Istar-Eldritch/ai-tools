@@ -256,12 +256,7 @@ export async function runAgentWithConfig(
 	role?: string,
 ): Promise<AgentResult> {
 	const useSystemDefault = modelConfig.model === "$default";
-	const args: string[] = [
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-	];
+	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (!useSystemDefault) {
 		args.push("--model", modelConfig.model, "--thinking", modelConfig.thinking);
 	}

@@ -154,9 +154,7 @@ export function formatEffectiveConfig(
 		lines.push(
 			"     current default model (no --model override). Create .pi/spec-pipeline.json",
 		);
-		lines.push(
-			"     to configure specific models per role.",
-		);
+		lines.push("     to configure specific models per role.");
 		lines.push("");
 	}
 

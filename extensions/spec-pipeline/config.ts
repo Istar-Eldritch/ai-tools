@@ -684,7 +684,9 @@ export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 	// user's default.
 	if (!fromFile) {
 		projectConfig.usingDefaultModels = true;
-		for (const role of Object.keys(projectConfig.models) as Array<keyof typeof projectConfig.models>) {
+		for (const role of Object.keys(projectConfig.models) as Array<
+			keyof typeof projectConfig.models
+		>) {
 			projectConfig.models[role] = { model: "$default", thinking: "off" };
 		}
 	}

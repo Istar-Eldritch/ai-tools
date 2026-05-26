@@ -1108,6 +1108,25 @@ IMPORTANT: You are in DISCOVERY MODE.
 			activeParentContext,
 		);
 
+		if (process.env.SPEC_DISCOVERY_DEBUG) {
+			try {
+				const dumpDir = path.join(
+					cwd,
+					".pi",
+					"spec-pipeline",
+					"discovery-debug",
+				);
+				fs.mkdirSync(dumpDir, { recursive: true });
+				const ts = new Date().toISOString().replace(/[:.]/g, "-");
+				fs.writeFileSync(
+					path.join(dumpDir, `q${discoveryTopics.length + 1}-${ts}.md`),
+					`# Discovery prompt for question ${discoveryTopics.length + 1}\n\nTopics in history: ${discoveryTopics.length}\n\n---\n\n${systemPrompt}\n`,
+				);
+			} catch (e) {
+				console.error("[spec-pipeline] discovery debug dump failed:", e);
+			}
+		}
+
 		const result = await runAgentWithConfig(
 			projectConfig.models.planDrafter,
 			`Conduct one step of requirements discovery for: ${state.description}`,

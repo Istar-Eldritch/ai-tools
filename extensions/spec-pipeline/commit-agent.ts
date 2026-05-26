@@ -69,7 +69,9 @@ export function extractPhaseName(phasePath: string): string | undefined {
 export function extractDocName(filename: string): string | undefined {
 	const name = filename.split("/").pop();
 	if (!name) return undefined;
-	const match = name.match(/^\d+_(?:spec|roadmap|epic|discovery|brainstorm|fix|guide)_(.+)\.(md|typ)$/);
+	const match = name.match(
+		/^\d+_(?:spec|roadmap|epic|discovery|brainstorm|fix|guide)_(.+)\.(md|typ)$/,
+	);
 	if (!match) return undefined;
 	return match[1].replace(/_/g, " ");
 }
@@ -129,9 +131,10 @@ function generateFallbackMessage(context: CommitMessageContext): string {
 			subject = `feat(${scope}): implement phase changes`;
 			break;
 		case "addressReview":
-			subject = cycle !== undefined
-				? `fix(${scope}): address review feedback (cycle ${cycle})`
-				: `fix(${scope}): address review feedback`;
+			subject =
+				cycle !== undefined
+					? `fix(${scope}): address review feedback (cycle ${cycle})`
+					: `fix(${scope}): address review feedback`;
 			break;
 		case "codeReviewer":
 			subject = `refactor(${scope}): apply code review changes`;
@@ -180,24 +183,43 @@ function buildSystemPrompt(): string {
 }
 
 function buildUserPrompt(context: CommitMessageContext): string {
-	const { role, files, phase, phaseName, docName, cycle, reviewFeedback, diff } = context;
+	const {
+		role,
+		files,
+		phase,
+		phaseName,
+		docName,
+		cycle,
+		reviewFeedback,
+		diff,
+	} = context;
 	const parts: string[] = ["Context for this commit:"];
 
 	switch (role) {
 		case "brainstormAgent":
-			parts.push("- Stage: brainstorm capture (a brainstorm document was written)");
+			parts.push(
+				"- Stage: brainstorm capture (a brainstorm document was written)",
+			);
 			break;
 		case "planDrafter":
-			parts.push(`- Stage: implementation plan for phase ${phase ?? "?"}${phaseName ? ` (${phaseName})` : ""}`);
+			parts.push(
+				`- Stage: implementation plan for phase ${phase ?? "?"}${phaseName ? ` (${phaseName})` : ""}`,
+			);
 			break;
 		case "implementer":
-			parts.push(`- Stage: implementation of phase ${phase ?? "?"}${phaseName ? ` (${phaseName})` : ""}`);
+			parts.push(
+				`- Stage: implementation of phase ${phase ?? "?"}${phaseName ? ` (${phaseName})` : ""}`,
+			);
 			break;
 		case "addressReview":
-			parts.push(`- Stage: addressing review feedback${cycle ? ` (cycle ${cycle})` : ""}`);
+			parts.push(
+				`- Stage: addressing review feedback${cycle ? ` (cycle ${cycle})` : ""}`,
+			);
 			if (reviewFeedback) {
 				const snippet = reviewFeedback.slice(0, 400);
-				parts.push(`- Review feedback excerpt: ${snippet}${reviewFeedback.length > 400 ? "..." : ""}`);
+				parts.push(
+					`- Review feedback excerpt: ${snippet}${reviewFeedback.length > 400 ? "..." : ""}`,
+				);
 			}
 			break;
 		case "codeReviewer":
@@ -229,9 +251,13 @@ function buildUserPrompt(context: CommitMessageContext): string {
 	if (docName) {
 		parts.push(`Scope MUST be: ${docName}`);
 	} else if (phaseName && phaseName.length <= MAX_PHASE_NAME_IN_SCOPE) {
-		parts.push(`Suggested scope: a short component name from the diff (e.g. 'auth', 'jobs', 'billing'). If nothing better fits, use 'phase-${phase}'.`);
+		parts.push(
+			`Suggested scope: a short component name from the diff (e.g. 'auth', 'jobs', 'billing'). If nothing better fits, use 'phase-${phase}'.`,
+		);
 	} else {
-		parts.push("Suggested scope: a short component name (1–2 words, lowercase) derived from what the diff actually changes — e.g. 'auth', 'jobs', 'billing', 'files'. Avoid invented or overly specific scopes.");
+		parts.push(
+			"Suggested scope: a short component name (1–2 words, lowercase) derived from what the diff actually changes — e.g. 'auth', 'jobs', 'billing', 'files'. Avoid invented or overly specific scopes.",
+		);
 	}
 	parts.push("Output the commit message and nothing else.");
 
@@ -265,12 +291,18 @@ function spawnPiCommitJob(
 	cwd: string,
 ): Promise<PiResult> {
 	return new Promise((resolve) => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-commit-"));
+		const tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "spec-pipeline-commit-"),
+		);
 		const promptPath = path.join(tmpDir, "system.md");
-		fs.writeFileSync(promptPath, systemPrompt, { encoding: "utf-8", mode: 0o600 });
+		fs.writeFileSync(promptPath, systemPrompt, {
+			encoding: "utf-8",
+			mode: 0o600,
+		});
 
 		const args: string[] = [
-			"--mode", "json",
+			"--mode",
+			"json",
 			"-p",
 			"--no-session",
 			"--no-tools",
@@ -284,7 +316,11 @@ function spawnPiCommitJob(
 		let error = "";
 		let timedOut = false;
 
-		const proc = spawn("pi", args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+		const proc = spawn("pi", args, {
+			cwd,
+			shell: false,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 
 		const timeout = setTimeout(() => {
 			timedOut = true;
@@ -349,8 +385,10 @@ function spawnPiCommitJob(
 // Output sanitization & validation
 // ============================================
 
-const CONVENTIONAL_HEADER = /^(feat|fix|docs|refactor|test|chore)\([^)]+\):\s+\S/;
-const CONVENTIONAL_HEADER_NO_SCOPE = /^(feat|fix|docs|refactor|test|chore):\s+\S/;
+const CONVENTIONAL_HEADER =
+	/^(feat|fix|docs|refactor|test|chore)\([^)]+\):\s+\S/;
+const CONVENTIONAL_HEADER_NO_SCOPE =
+	/^(feat|fix|docs|refactor|test|chore):\s+\S/;
 
 /**
  * Strip framing the model sometimes adds: leading "Here is..." preambles,
@@ -378,7 +416,10 @@ function isValidConventionalMessage(message: string): boolean {
 	const firstLine = message.split("\n")[0];
 	if (!firstLine) return false;
 	if (firstLine.length > 120) return false; // sanity cap
-	return CONVENTIONAL_HEADER.test(firstLine) || CONVENTIONAL_HEADER_NO_SCOPE.test(firstLine);
+	return (
+		CONVENTIONAL_HEADER.test(firstLine) ||
+		CONVENTIONAL_HEADER_NO_SCOPE.test(firstLine)
+	);
 }
 
 // ============================================
@@ -400,17 +441,27 @@ export async function generateCommitMessage(
 ): Promise<CommitMessageResult> {
 	try {
 		const model = agentConfig?.model ?? context.modelConfig.model;
-		const thinking = agentConfig?.thinking ?? context.modelConfig.thinking ?? "off";
+		const thinking =
+			agentConfig?.thinking ?? context.modelConfig.thinking ?? "off";
 		const systemPrompt = buildSystemPrompt();
 		const userPrompt = buildUserPrompt(context);
 
-		const result = await spawnPiCommitJob(model, thinking, systemPrompt, userPrompt, cwd ?? process.cwd());
+		const result = await spawnPiCommitJob(
+			model,
+			thinking,
+			systemPrompt,
+			userPrompt,
+			cwd ?? process.cwd(),
+		);
 
 		if (process.env.DEBUG_COMMIT_MESSAGES) {
-			console.error("[commit-agent] pi exit=%d timedOut=%s raw=%s err=%s",
-				result.exitCode, result.timedOut,
+			console.error(
+				"[commit-agent] pi exit=%d timedOut=%s raw=%s err=%s",
+				result.exitCode,
+				result.timedOut,
 				JSON.stringify(result.output.slice(0, 500)),
-				result.error ? result.error.slice(0, 300) : "");
+				result.error ? result.error.slice(0, 300) : "",
+			);
 		}
 
 		if (result.timedOut || result.exitCode !== 0 || !result.output.trim()) {
