@@ -52,6 +52,14 @@ export function getStateDir(cwd: string): string {
 }
 
 /**
+ * Get the directory where subagent session logs are stored for a given pipeline run.
+ * Logs are scoped by state ID so each run's sessions are grouped together.
+ */
+export function getSessionLogDir(cwd: string, stateId: string): string {
+	return path.join(cwd, STATE_DIR, "sessions", stateId);
+}
+
+/**
  * Get path to a specific spec state file
  */
 export function getSpecStatePath(cwd: string, id: string): string {

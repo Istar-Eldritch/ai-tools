@@ -125,6 +125,7 @@ import {
 	getStateDir,
 	getSpecStateDir,
 	getImplStateDir,
+	getSessionLogDir,
 	generateConversationalDiscoverySummary,
 } from "./state.ts";
 
@@ -638,6 +639,7 @@ Output only FOLLOWUP or DECISION. No punctuation. No explanation.`;
 				signal,
 				undefined,
 				"commitMessageWriter",
+				activePipelineState ? getSessionLogDir(cwd, activePipelineState.id) : undefined,
 			);
 
 			const normalized = result.output.trim().toUpperCase();
@@ -1031,6 +1033,7 @@ IMPORTANT: You are in DISCOVERY MODE.
 				followUpAbort.signal,
 				undefined,
 				"brainstormAgent",
+				getSessionLogDir(cwd, state.id),
 			);
 
 			if (discoveryLoopAbort === followUpAbort) {
@@ -1135,6 +1138,7 @@ IMPORTANT: You are in DISCOVERY MODE.
 			discoveryLoopAbort.signal,
 			undefined,
 			"brainstormAgent",
+			getSessionLogDir(cwd, state.id),
 		);
 		discoveryLoopAbort = null;
 

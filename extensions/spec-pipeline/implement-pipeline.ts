@@ -18,7 +18,7 @@ import type {
 	AgentCallMetrics,
 	RoleName,
 } from "./types.ts";
-import { saveImplState } from "./state.ts";
+import { saveImplState, getSessionLogDir } from "./state.ts";
 import { createAgentCommit, createCommit, getModifiedFiles } from "./git.ts";
 import { extractPhaseName, extractDocName } from "./commit-agent.ts";
 import { handleAgentError } from "./errors.ts";
@@ -350,6 +350,8 @@ async function _runImplementPipelineInner(
 	specTmpPath: string,
 	specFileRef: string,
 ): Promise<void> {
+	const sessionDir = getSessionLogDir(cwd, state.id);
+
 	// Initialize or restore metrics
 	if (!state.metrics) {
 		state.metrics = initializeImplMetrics(state.skipPlanGeneration ?? false);
@@ -542,6 +544,7 @@ capture it and save it for the implementer. Do NOT call write/edit tools.`;
 				undefined,
 				planProgressCallback, // ← Pass callback (R17)
 				"planDrafter",
+				sessionDir,
 			);
 			recordAgentCall(
 				metrics,
@@ -692,6 +695,7 @@ Address all issues raised in the review.`;
 				undefined,
 				implProgressCallback, // ← Pass callback (R18)
 				"implementer",
+				sessionDir,
 			);
 			recordAgentCall(
 				metrics,
@@ -852,6 +856,7 @@ Address all issues raised in the review.`;
 				docName,
 				notify: ctx.ui.notify.bind(ctx.ui),
 				onOutput: codeReviewProgressCallback, // ← Add callback (R19, R20)
+				sessionDir,
 				recordCall: ({
 					role,
 					modelConfig,
