@@ -254,9 +254,16 @@ export async function runAgentWithConfig(
 	signal?: AbortSignal,
 	onOutput?: (event: AgentOutputEvent) => void,
 	role?: string,
+	sessionDir?: string,
 ): Promise<AgentResult> {
 	const useSystemDefault = modelConfig.model === "$default";
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	let args: string[];
+	if (sessionDir) {
+		fs.mkdirSync(sessionDir, { recursive: true });
+		args = ["--mode", "json", "-p", "--session-dir", sessionDir];
+	} else {
+		args = ["--mode", "json", "-p", "--no-session"];
+	}
 	if (!useSystemDefault) {
 		args.push("--model", modelConfig.model, "--thinking", modelConfig.thinking);
 	}

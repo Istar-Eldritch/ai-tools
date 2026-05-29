@@ -16,6 +16,7 @@ import type {
 	RoleName,
 } from "./types.ts";
 import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
+import { getSessionLogDir } from "./state.ts";
 import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 
@@ -123,6 +124,7 @@ export interface ReviewContext {
 	notify: (msg: string, type: "info" | "error" | "success" | "warning") => void;
 	onOutput?: (event: AgentOutputEvent) => void;
 	signal?: AbortSignal;
+	sessionDir?: string;
 	/**
 	 * Optional callback invoked after every sub-agent run (review and fix).
 	 * Lets the caller record the agent in its metrics so codeReviewer /
@@ -251,6 +253,7 @@ export async function runReview(
 			signal,
 			onOutput,
 			role,
+			ctx.sessionDir,
 		);
 		recordCall?.({
 			role,
@@ -334,6 +337,7 @@ export async function runReview(
 			signal,
 			onOutput,
 			"addressReview",
+			ctx.sessionDir,
 		);
 		recordCall?.({
 			role: "addressReview",
@@ -498,6 +502,7 @@ export async function retryFailedOperation(
 		undefined,
 		progressCallback,
 		error.role,
+		getSessionLogDir(cwd, state.id),
 	);
 
 	if (result.exitCode !== 0) {
