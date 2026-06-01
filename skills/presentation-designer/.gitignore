@@ -1,9 +1,0 @@
-node_modules/
-*.log
-.DS_Store
-presentation-design.yaml
-presentation-design.json
-presentation-design.md
-*.swp
-*.swo
-*~
