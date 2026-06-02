@@ -1,0 +1,15 @@
+{
+  "env": {
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "ANTHROPIC_MODEL": "kimi-2.5:cloud",
+    "ANTHROPIC_BASE_URL": "https://ai.ruben.io",
+    "ANTHROPIC_AUTH_TOKEN": "ollama",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-2.5:cloud",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "minimax-m3:cloud",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "devstral-small-2:24b-cloud",
+    "OLLAMA_BASE_URL": "http://localhost:11434",
+    "OLLAMA_API_KEY": ""
+  },
+  "model": "minimax-m3:cloud"
+}
